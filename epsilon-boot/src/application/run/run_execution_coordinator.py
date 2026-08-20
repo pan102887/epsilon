@@ -274,7 +274,7 @@ class RunExecutionCoordinator:
                     delegation_depth=int(task_payload.get("delegation_depth", 0)),
                 )
             )
-        return self._task_outcome(response)
+        return self._task_outcome(response, snapshot)
 
     def _chat_outcome(self, response: ChatResponseVO) -> RunExecutionOutcome:
         """把聊天响应转换为 Run outcome。"""
@@ -316,9 +316,14 @@ class RunExecutionCoordinator:
             segment_metadata=self._segment_metadata(response.segment_metadata),
         )
 
-    def _task_outcome(self, response: TaskResult) -> RunExecutionOutcome:
+    def _task_outcome(
+        self,
+        response: TaskResult,
+        snapshot: RunSnapshot,
+    ) -> RunExecutionOutcome:
         """把任务响应转换为 Run outcome。"""
 
+        session_id = _session_id(snapshot)
         kind = TaskStatusMapping.outcome_of(response.status)
         if kind is TaskOutcomeKind.SUCCEEDED:
             status = RunStatus.SUCCEEDED
@@ -339,16 +344,16 @@ class RunExecutionCoordinator:
             "trace": _json_safe(response.trace),
             "latency_ms": response.latency_ms,
             "terminated_reason": response.terminated_reason,
-            "trace_id": _session_id(snapshot),
+            "trace_id": session_id,
             "trace_ref": {
                 "available": True,
-                "trace_id": _session_id(snapshot),
-                "url": f"/api/traces/{_session_id(snapshot)}",
+                "trace_id": session_id,
+                "url": f"/api/traces/{session_id}",
             },
             "artifact_ref": {
                 "available": True,
-                "session_id": _session_id(snapshot),
-                "url": f"/api/artifacts/{_session_id(snapshot)}",
+                "session_id": session_id,
+                "url": f"/api/artifacts/{session_id}",
             },
         }
         error = None

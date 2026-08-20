@@ -111,20 +111,26 @@ def test_session_context_store_port_registered_as_singleton():
 # ---------------------------------------------------------------------------
 
 EXPECTED_TOOL_NAMES = {
-    "read_file",
-    "write_file",
     "edit_file",
-    "list_dir",
+    "git_apply_patch",
+    "git_diff",
+    "git_status",
+    "glob",
+    "grep",
     "http_request",
+    "list_dir",
+    "read_file",
+    "read_many_files",
     "web_fetch",
+    "write_file",
 }
 
 
 async def test_create_tool_registry_returns_registry_with_tools(tmp_path: pathlib.Path) -> None:
     """验证 _create_tool_registry() 返回包含预期工具的 ToolRegistry 实例。
 
-    调用工厂函数后，逐一检查 read_file、write_file、edit_file、list_dir
-    四个工具均已注册到返回的 ToolRegistry 中。
+    调用工厂函数后，逐一检查基础文件、代码检索、Git 与 HTTP 工具均已注册到
+    返回的 ToolRegistry 中。
 
     _create_tool_registry() 为异步函数（内部可能通过容器解析依赖），
     此处通过替换 agent_config 跳过委派工具注册，

@@ -50,6 +50,7 @@ from domain.run.workflow import (
     WorkflowPhase,
     WorkflowPhaseDefinition,
 )
+from infrastructure.run.run_serialization_adapters import GuardrailSerializerAdapter
 from infrastructure.run.run_worker import RunWorker
 from tests.evaluation.errors import SampleExecutionError
 from tests.evaluation.runner.models import (
@@ -117,7 +118,7 @@ def test_real_task_golden_case(case: EvalCase, sample_sink: SampleSink) -> None:
 
     try:
         details = asyncio.run(_run_case(case))
-    except Exception as exc:  # noqa: BLE001 - 单条样本错误不能中断整批评测
+    except Exception as exc:
         sample_sink.append(
             EvalSampleResult(
                 case_id=case.case_id,
@@ -205,6 +206,7 @@ async def _run_recovery_case(case: EvalCase) -> dict[str, Any]:
         retention_policy=CheckpointRetentionPolicy(10, 3600, 4096, 100),
         max_recovery_attempts=3,
         auto_recovery_enabled=True,
+        guardrail_serializer=GuardrailSerializerAdapter(),
     )
 
     recovered = await service.sweep_expired_leases(now=_NOW)

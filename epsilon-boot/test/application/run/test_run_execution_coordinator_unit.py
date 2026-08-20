@@ -272,6 +272,17 @@ async def test_task_first_execution_uses_task_payload_and_maps_trace() -> None:
     assert outcome.status is RunStatus.SUCCEEDED
     assert outcome.result["content"] == "task done"
     assert outcome.result["trace"][0]["action"] == "llm_response"
+    assert outcome.result["trace_id"] == "s-task"
+    assert outcome.result["trace_ref"] == {
+        "available": True,
+        "trace_id": "s-task",
+        "url": "/api/traces/s-task",
+    }
+    assert outcome.result["artifact_ref"] == {
+        "available": True,
+        "session_id": "s-task",
+        "url": "/api/artifacts/s-task",
+    }
     assert task.continue_calls == []
     assert task.execute_calls == [
         Task(

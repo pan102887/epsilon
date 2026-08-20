@@ -15,8 +15,8 @@ from application.api.routers import (
 )
 
 __all__ = [
-    "chat_router",
     "artifacts_router",
+    "chat_router",
     "health_router",
     "models_router",
     "runs_router",
