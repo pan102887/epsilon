@@ -129,7 +129,7 @@ class TestStreamRetry:
         # 构造一个会在迭代中抛异常的 async iterator
         async def failing_stream():
             raise RuntimeError("mid-stream failure")
-            yield  # noqa: unreachable — 使其为 async generator
+            yield  # pragma: no cover - 使其为 async generator
 
         mock_create = AsyncMock(return_value=failing_stream())
         adapter._client.chat.completions.create = mock_create

@@ -10,8 +10,8 @@ from .test_router import router as test_router
 from .traces import router as traces_router
 
 __all__ = [
-    "chat_router",
     "artifacts_router",
+    "chat_router",
     "health_router",
     "models_router",
     "runs_router",

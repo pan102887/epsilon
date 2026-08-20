@@ -59,6 +59,7 @@ def _reset_tier_resolver(
     home_dir.mkdir()
     project_dir.mkdir()
     monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.setenv("USERPROFILE", str(home_dir))
     monkeypatch.chdir(project_dir)
     monkeypatch.setattr(container_config, "_tier_resolver", None)
     yield home_dir

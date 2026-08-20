@@ -23,17 +23,15 @@ from pathlib import Path
 from typing import Any
 
 from domain.agent.exceptions import ToolExecutionError
-from domain.agent.tools import Tool
+from domain.agent.tools import Tool, ToolExecutionResult
 from domain.chat.ports import ContextBuilderPort
 from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import ModelInfo
 from domain.prompt.value_objects import LoadedPrompt
-
 from infrastructure.chat.context_builder_adapter import ContextBuilderAdapter
 from infrastructure.chat.sliding_window_compaction_adapter import (
     SlidingWindowCompactionAdapter,
 )
-
 
 # ---------------------------------------------------------------------------
 # 工具桩
@@ -69,16 +67,17 @@ class FakeEchoTool(Tool):
             "required": ["text"],
         }
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
         """直接返回 ``text`` 参数。
 
         Args:
             **kwargs: 经过 ``cast_params`` / ``validate_params`` 后的参数。
 
         Returns:
-            ``text`` 的字符串形式；若 ``text=""`` 则返回空字符串。
+            ``content`` 为 ``text`` 字符串形式的工具执行结果；若 ``text=""``，
+            则结果内容为空字符串。
         """
-        return str(kwargs.get("text", ""))
+        return ToolExecutionResult(content=str(kwargs.get("text", "")))
 
 
 class FakeFailingTool(Tool):
@@ -105,7 +104,7 @@ class FakeFailingTool(Tool):
         """JSON Schema：允许任意空参数。"""
         return {"type": "object", "properties": {}, "required": []}
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
         """始终抛出 :class:`ToolExecutionError`。
 
         Raises:
