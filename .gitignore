@@ -1,0 +1,61 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*.pyo
+data/
+
+# Virtual environments (uv defaults to .venv)
+.venv/
+.venv-*/
+.env
+.env.local
+# .python-version
+
+# Build and packaging
+build/
+dist/
+wheels/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Testing and coverage
+.pytest_cache/
+.tox/
+.nox/
+.hypothesis/
+.benchmarks/
+.test_deps/
+test-results/
+playwright-report/
+htmlcov/
+.coverage*
+coverage.xml
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+.cache/
+.idea/
+.claude/settings.local.json
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Logs and misc
+*.log
+*.tmp
+.tmp_smoke/
+
+# Local file persistence roots (LOCAL_PERSISTENCE_ROOT template defaults)
+epsilon-boot/.local_persistence/
+.local_persistence/
+
+# Structured agent trace artifacts (TRACE_STORE_DIR default)
+epsilon-boot/.epsilon/
+.epsilon/
+

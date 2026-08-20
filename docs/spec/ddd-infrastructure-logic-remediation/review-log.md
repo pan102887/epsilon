@@ -1,0 +1,13 @@
+# Review Log: DDD Infrastructure Logic Remediation
+
+- Wave 1A / tasks 1.1, 1.2, 2.1 / attempt 1: PASS. Evaluator found no blocking issues; added non-blocking `RunStatus.CANCEL_REQUESTED` unsupported-status test before marking complete.
+- Wave 1B / tasks 1.3, 1.4, 2.2-2.6, checkpoint 3 / attempt 1: FAIL. Blocking issue: cancelled outcome `RUN_CANCELLED` terminal event lost the old top-level `reason` payload shape.
+- Wave 1B / tasks 1.3, 1.4, 2.2-2.6, checkpoint 3 / attempt 2: PASS. Fixed cancelled terminal event payload, tightened cancelled outcome test, and verified focused checkpoint suite plus ruff/diff checks.
+- Wave 2A / tasks 4.1-4.4, 5.1-5.6, checkpoint 6 / attempt 1: PASS. Implemented static import guard and API presenter migration, normalized CRLF line endings from the API slice, verified focused checkpoint suite, ruff, diff check, and full pytest (`3044 passed, 2 skipped`).
+- Wave 3 / tasks 7.1-7.8, 8.1-8.2, checkpoint 9 / attempt 1: FAIL. Blocking issue: `ChatServiceAdapter` still dynamically imported `application.chat.*`, preserving an `infrastructure -> application` production dependency.
+- Wave 3 / tasks 7.1-7.8, 8.1-8.2, checkpoint 9 / attempt 2: FAIL. Blocking issue: stale adapter-private helper logic and characterization tests remained anchored in infrastructure after the application workflow/service split.
+- Wave 3 / tasks 7.1-7.8, 8.1-8.2, checkpoint 9 / attempt 3: FAIL. Blocking issue: new long-lived `ChatSessionContextWorkflow`, `ChatApplicationService`, and `handoff_policy` abstractions had not closed the ADR gate required by `docs/steering/adr.md`.
+- Wave 3 / tasks 7.1-7.8, 8.1-8.2, checkpoint 9 / attempt 4: PASS. Removed infra-to-app import paths, moved chat workflow/service tests to application boundaries, added ADR-0016 for the new first-class abstractions, and verified focused checkpoint/static suites plus full pytest (`3070 passed, 2 skipped, 1 warning`).
+- Wave 4A / tasks 10.1-10.2 / attempt 1: PASS. Integrated `HandoffToAgentTool` with `domain.agent.handoff_policy.decide_handoff`, preserved infrastructure-owned ContextVar/recorder/delegation/tool-result semantics, and verified focused handoff suites plus static guard.
+- Wave 4B / tasks 11.1-11.2 / evaluator skipped: documentation-only slice. Synced architecture, API, domain model, DI, and agent docs; recorded ADR judgment that ADR-0016 covers Chat workflow/service and Handoff policy while Run worker and API presenter changes do not require additional ADRs.
+- Wave 4C / checkpoint 12 / attempt 1: PASS. Final evaluator accepted all tasks against requirements, design, steering, ADR, docs, static boundary, focused regression, and full pytest evidence (`3072 passed, 2 skipped, 1 warning`).

@@ -1,0 +1,43 @@
+Screen {
+    background: #111318;
+    color: #e5e7eb;
+}
+
+#root {
+    height: 1fr;
+}
+
+#messages {
+    height: 1fr;
+    padding: 1 2;
+    border: solid #2f3746;
+}
+
+#status {
+    height: 1;
+    padding: 0 2;
+    color: #a7b0c0;
+    background: #171a21;
+}
+
+#composer {
+    height: 7;
+    min-height: 5;
+    border: solid #3b82f6;
+}
+
+.message {
+    margin-bottom: 1;
+}
+
+.tool {
+    color: #cbd5e1;
+}
+
+.error {
+    color: #fca5a5;
+}
+
+.run {
+    color: #ddd6fe;
+}

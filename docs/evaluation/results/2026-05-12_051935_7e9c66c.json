@@ -1,0 +1,37 @@
+{
+  "run_id": "2026-05-12_051935_7e9c66c",
+  "generated_at": "2026-05-12T05:19:35.274971+00:00",
+  "git_commit": "7e9c66cda6664a2efc314b6e7708320f4da79a0a",
+  "metrics": [
+    {
+      "metric": "tool_call_success_rate",
+      "sample_count": 20,
+      "numerator_sum": 6,
+      "denominator_sum": 20,
+      "ratio": 0.3,
+      "failed_samples": 2,
+      "error_samples": 0
+    },
+    {
+      "metric": "delegation_correctness",
+      "sample_count": 15,
+      "numerator_sum": 6,
+      "denominator_sum": 15,
+      "ratio": 0.4,
+      "failed_samples": 0,
+      "error_samples": 0
+    },
+    {
+      "metric": "context_compaction_effectiveness",
+      "sample_count": 36,
+      "numerator_sum": 36,
+      "denominator_sum": 36,
+      "ratio": 1.0,
+      "failed_samples": 0,
+      "error_samples": 0
+    }
+  ],
+  "dimension_scores": [],
+  "total_score": 0.0,
+  "exit_code": 0
+}

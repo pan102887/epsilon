@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spec-Driven Development"
+  short_description: "Spec pipeline for feature delivery"
+  default_prompt: "Use $spec to turn a feature idea into requirements, design, tasks, implementation, and evaluation artifacts."

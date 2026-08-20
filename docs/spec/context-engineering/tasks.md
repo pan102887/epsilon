@@ -1,0 +1,181 @@
+# 实现计划：Context Engineering
+
+## 概述
+
+本计划按 DDD 依赖顺序拆解：先补领域层 `ContextBuilderResult` 与 `ContextBuilderPort`，再实现基础设施环境上下文 provider 和 `ContextBuilderAdapter`，随后改造应用容器、`ChatServiceAdapter` 与 `ReActAgentAdapter`，最后补齐单元、属性、集成和全量验证。所有路径相对仓库根；后端验证命令均在 `epsilon-boot/` 下执行并使用 `uv`。
+
+## Tasks
+
+- [x] 1. 领域层上下文构建契约
+  - [x] 1.1 创建 `ContextBuilderResult` 值对象
+    - 在 `epsilon-boot/src/domain/chat/value_objects.py` 中创建 `@dataclass(frozen=True) class ContextBuilderResult`
+    - 字段：`serialized_messages: list[dict[str, Any]]`、`usage: dict[str, int] = field(default_factory=dict)`、`summary_created: bool = False`、`environment_injected: bool = False`、`metadata: dict[str, Any] = field(default_factory=dict)`
+    - 补齐 `Any` 导入；保持模块级中文 docstring 风格
+    - `__post_init__(self) -> None` 校验：`serialized_messages` 必须为非空 list；每条消息必须包含 `role` 和 `content`；`usage` key 必须为 str、value 必须为非负 int；`metadata` 必须为 dict；失败抛 `ValueError`
+    - _需求: 1.2, 5.1, 7.1_
+  - [x] 1.2 编写 `ContextBuilderResult` 单元测试
+    - 在 `epsilon-boot/test/domain/chat/test_context_builder_result_unit.py` 中创建测试
+    - 使用 pytest 覆盖：合法构造、默认字段、空 `serialized_messages` 抛错、缺少 `role/content` 抛错、非 str usage key 抛错、非 int / 负数 usage value 抛错、非 dict metadata 抛错
+    - **验证: 需求 1.2, 5.1, 9.1**
+  - [x] 1.3 创建 `ContextBuilderPort`
+    - 在 `epsilon-boot/src/domain/chat/ports.py` 中新增 `class ContextBuilderPort(Protocol)`
+    - 在 `TYPE_CHECKING` 中补充 `ContextBuilderResult`；复用已有 `BaseMessage` 与 `ModelAccessPort` 类型检查导入
+    - 方法签名：`async def build(self, messages: list["BaseMessage"], *, model_access: "ModelAccessPort | None" = None, model: str | None = None) -> "ContextBuilderResult": ...`
+    - docstring 明确：只构建单次模型调用的序列化消息；不保存历史；`model_access/model` 仅透传给压缩策略；不接收 tools
+    - _需求: 1.1, 1.6, 7.1_
+  - [x] 1.4 编写端口签名和领域依赖边界测试
+    - 在 `epsilon-boot/test/domain/chat/test_context_builder_port_signature_static.py` 中创建静态签名测试
+    - 覆盖：`ContextBuilderPort.build` 是 async；参数包含 `messages`、keyword-only `model_access` / `model`；返回注解解析为 `ContextBuilderResult`
+    - 在 `epsilon-boot/test/domain/chat/test_context_builder_import_boundaries.py` 中创建边界测试，读取 `src/domain/chat/ports.py` 与 `src/domain/chat/value_objects.py`，断言不包含 `infrastructure.`、`pydantic_settings`、`fastapi`、`redis`、`sqlalchemy`、`openai`
+    - **验证: 需求 1.1, 7.1, 7.2, 9.7**
+
+- [x] 2. 环境上下文 provider
+  - [x] 2.1 实现 `EnvironmentContextProvider` 与静态 provider
+    - 在 `epsilon-boot/src/infrastructure/chat/environment_context_provider.py` 中创建模块
+    - 定义 `class EnvironmentContextProvider(Protocol)`，方法 `def build(self) -> str`
+    - 定义 `class UnsafeEnvironmentContextError(RuntimeError)` 与 `class EnvironmentContextBuildError(RuntimeError)`
+    - 定义 `_HOST_ABSOLUTE_PATH_PATTERNS: tuple[re.Pattern[str], ...]`，覆盖 `/mnt/...`、`/home/...`、`/Users/...`、`/tmp/...`、`/root/...`、`C:\...` 等常见宿主路径
+    - 实现 `_assert_no_host_absolute_path(text: str) -> None`，命中时抛 `UnsafeEnvironmentContextError`，错误消息不得包含命中文本
+    - 实现 `class StaticEnvironmentContextProvider`，构造签名 `def __init__(self, *, clock: Callable[[], datetime] | None = None, workspace_label: str = "workspace:/") -> None`
+    - `build(self) -> str` 输出 `<environment_context>` 块，包含 `current_date: YYYY-MM-DD`、`workspace: workspace:/`、`path_policy: Use workspace-relative POSIX paths. Do not expose host absolute paths.`
+    - provider 不读取 `os.environ`，不调用 `Workspace.display_root_hint()`，返回前调用 `_assert_no_host_absolute_path`
+    - _需求: 2.1, 2.4, 2.5, 8.1, 8.3, 8.4, 8.6_
+  - [x] 2.2 编写环境上下文 provider 测试
+    - 在 `epsilon-boot/test/infrastructure/chat/test_environment_context_provider_unit.py` 中创建测试
+    - 使用固定 `clock=lambda: datetime(2026, 6, 2, 12, 0, 0)` 断言输出包含 `current_date: 2026-06-02`、`workspace: workspace:/` 和路径披露边界
+    - 覆盖输出不包含 `/mnt/c`、`/home`、`C:\`、环境变量值、密钥样例
+    - 覆盖 `_assert_no_host_absolute_path` 对 `/mnt/c/source/x`、`/home/user/x`、`C:\source\x` 抛 `UnsafeEnvironmentContextError`，且异常字符串不包含原始路径
+    - 覆盖 `workspace_label="/mnt/c/source/x"` 时 `build()` fail-fast
+    - **验证: 需求 2.1, 2.4, 2.5, 8.3, 8.4, 8.6, 9.2**
+
+- [x] 3. 基础设施上下文构建适配器
+  - [x] 3.1 实现 `ContextBuilderAdapter`
+    - 在 `epsilon-boot/src/infrastructure/chat/context_builder_adapter.py` 中创建模块
+    - 实现 `class ContextBuilderAdapter(ContextBuilderPort)`
+    - 构造签名：`def __init__(self, *, compaction: ContextCompactionPort, environment_provider: EnvironmentContextProvider) -> None`
+    - 实现 `async def build(self, messages: list[BaseMessage], *, model_access: ModelAccessPort | None = None, model: str | None = None) -> ContextBuilderResult`
+    - 构建流程：await `self._compaction.compact(messages, model_access=model_access, model=model)`；复制 `compaction_result.messages`；调用 `environment_provider.build()`；构造临时 `SystemMessage(content=environment_text, metadata={"context_kind": "environment"})`；插入最后一条 system 消息之后或无 system 时插入头部；调用现有 `serialize_messages(combined_messages)`；返回 `ContextBuilderResult`
+    - 实现 `_insert_environment_context(self, messages: list[BaseMessage], environment_text: str) -> list[BaseMessage]`
+    - `UnsafeEnvironmentContextError` 记录 warning 后直接向上传播；普通异常记录 warning 并包装为 `EnvironmentContextBuildError`；warning `extra` 只含 `reason_class`、`message_count`、`environment_injected=False`，不得记录环境上下文正文
+    - 不修改传入 `messages` 列表、不写 `ConversationContext`
+    - _需求: 1.3, 1.4, 1.5, 2.1, 2.2, 2.3, 2.6, 3.1, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 7.3, 7.4, 8.5_
+  - [x] 3.2 编写 `ContextBuilderAdapter` 单元测试
+    - 在 `epsilon-boot/test/infrastructure/chat/test_context_builder_adapter_unit.py` 中创建测试
+    - 使用 `AsyncMock` compaction 返回 `ContextCompactionResult(messages=[...], usage={...}, summary_created=True/False)`
+    - 覆盖：调用 compaction 时透传 `model_access` 与 `model`；环境消息插入最后一条 system 后；无 system 时插入头部；环境消息被 `serialize_messages` 输出为 system；`ContextBuilderResult.usage` 等于 compaction usage；`summary_created` 透传；`environment_injected=True`
+    - 覆盖：原输入列表和 compaction 返回列表不被原地修改；metadata 不进入模型消息；provider 抛 `UnsafeEnvironmentContextError` 时阻断；provider 普通异常包装为 `EnvironmentContextBuildError`
+    - **验证: 需求 1.4, 1.5, 2.1, 2.2, 2.3, 2.6, 3.1, 6.1, 6.2, 6.3, 6.4, 6.5, 8.5, 9.1**
+  - [x] 3.3 编写上下文构建属性测试
+    - 在 `epsilon-boot/test/infrastructure/chat/test_context_builder_properties.py` 中创建 Hypothesis 测试
+    - 生成 `SystemMessage`、`UserMessage`、`AssistantMessage`、`ToolMessage` 列表，compaction fake 原样返回或返回生成列表
+    - 验证 Property 2：环境消息位于最后一条 system 之后；非 system 消息相对顺序不变
+    - 验证 Property 3：`ConversationContext.to_dict()` 不包含 `<environment_context>` 或 `context_kind=environment`
+    - **验证: 需求 2.1, 2.2, 2.3, 3.1, 3.2, 3.6, 6.2, 6.3, 6.4, 9.1, 9.5**
+  - [x] 3.4 编写 usage 合并属性测试
+    - 在 `epsilon-boot/test/infrastructure/chat/test_context_builder_usage_properties.py` 中创建 Hypothesis 测试
+    - 生成非负 int usage 字典，验证 `merge_usage(builder_usage, main_usage)` 与逐 key 求和一致
+    - 覆盖 `ContextBuilderResult.usage` 与 `ChatResponseVO` / `StreamingChunk` / `AgentResult` 合并语义将由后续入口测试复用
+    - **验证: 需求 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 9.6**
+
+- [x] 4. 检查点 — 领域契约、provider 与 builder
+  - 在 `epsilon-boot/` 下运行 `UV_CACHE_DIR=../.uv-cache uv run pytest test/domain/chat/test_context_builder_result_unit.py test/domain/chat/test_context_builder_port_signature_static.py test/domain/chat/test_context_builder_import_boundaries.py test/infrastructure/chat/test_environment_context_provider_unit.py test/infrastructure/chat/test_context_builder_adapter_unit.py test/infrastructure/chat/test_context_builder_properties.py test/infrastructure/chat/test_context_builder_usage_properties.py -q`
+  - 在 `epsilon-boot/` 下运行 `UV_CACHE_DIR=../.uv-cache uv run pytest -q`
+  - 所有测试必须通过；如 `uv run` 因依赖下载或网络受限失败，按权限流程请求允许执行对应 `uv` 命令
+
+- [x] 5. 应用容器装配
+  - [x] 5.1 注册 `ContextBuilderPort`
+    - 修改 `epsilon-boot/src/application/container_config.py`
+    - 在 `domain.chat.ports` 导入中加入 `ContextBuilderPort`
+    - 新增 `async def _create_context_builder() -> "ContextBuilderPort"`，内部导入 `ContextBuilderAdapter` 与 `StaticEnvironmentContextProvider`
+    - 工厂中 `compaction = await container.resolve(ContextCompactionPort)`，返回 `ContextBuilderAdapter(compaction=compaction, environment_provider=StaticEnvironmentContextProvider())`
+    - 在 `configure_container()` 中新增 `container.register(ContextBuilderPort, _create_context_builder, Scope.SINGLETON)`
+    - 保留 `ContextCompactionPort` singleton 注册，作为 builder 内部依赖
+    - _需求: 7.3, 7.4, 7.5_
+  - [x] 5.2 更新容器装配测试
+    - 修改 `epsilon-boot/test/application/test_container_config.py`
+    - 覆盖 `ContextBuilderPort` 被注册且 scope 为 `Scope.SINGLETON`
+    - 覆盖 `_create_context_builder()` 解析 `ContextCompactionPort` 并构造 `ContextBuilderAdapter`
+    - 不在本任务断言 `_create_agent()` / `_create_chat_service()` 注入 builder；这些断言分别随 `6.2` / `7.2` 在生产构造签名迁移后补齐
+    - **验证: 需求 7.5, 9.7**
+
+- [x] 6. ChatService 直接模型路径迁移
+  - [x] 6.1 修改 `ChatServiceAdapter` 使用 `ContextBuilderPort`
+    - 修改 `epsilon-boot/src/infrastructure/chat/chat_service_adapter.py`
+    - 构造签名将 `compaction: ContextCompactionPort` 替换为 `context_builder: ContextBuilderPort`
+    - 实例字段从 `self._compaction` 改为 `self._context_builder`
+    - 直接 LLM 路径 `chat()`：调用 `builder_result = await self._context_builder.build(context.get_messages(), model_access=model_access, model=resolved_model)`；`ChatRequest.messages` 使用 `builder_result.serialized_messages`；`response_usage = merge_usage(builder_result.usage, response.usage)`
+    - 直接 LLM 路径 `stream_chat()`：调用 builder；最终 `StreamingChunk` usage 使用 `merge_usage(builder_result.usage, chunk.usage or {})`
+    - 直接 LLM 路径 `stream_chat_events()` 与 `_stream_model_events()`：传入 `builder_result.usage`，`assistant_done.usage` 使用 `merge_usage`
+    - Agent 委托路径不调用 builder，仍通过 `AgentPort` 执行；session 保存逻辑保持完整历史，不写入环境上下文
+    - _需求: 1.6, 3.3, 3.4, 4.1, 4.2, 4.4, 4.5, 4.6, 5.1, 5.2, 5.3, 5.4, 7.6_
+  - [x] 6.2 更新 ChatService 相关测试
+    - 修改 `epsilon-boot/test/infrastructure/chat/test_chat_service_adapter_unit.py`
+    - 修改 `epsilon-boot/test/domain/chat/test_compaction_unit.py` 中与 `ChatServiceAdapter` 集成相关的测试，迁移为 builder mock 或移除过时的 compaction 直接入口断言
+    - 修改 `epsilon-boot/test/infrastructure/chat/test_chat_service_adapter_refactor_property.py`
+    - 修改 `epsilon-boot/test/infrastructure/chat/test_dynamic_model_routing_properties.py`
+    - 修改 `epsilon-boot/test/infrastructure/chat/test_chat_service_hitl_unit.py` 与 `test_workspace_guidance_integration_unit.py` 的构造参数
+    - 修改 `epsilon-boot/test/application/test_container_config.py`，覆盖 `_create_chat_service()` 解析 `ContextBuilderPort` 并传递给 `ChatServiceAdapter`
+    - 使用 `AsyncMock` builder 返回 `ContextBuilderResult(serialized_messages=[...], usage={...}, environment_injected=True)`，断言 `chat`、`stream_chat`、`stream_chat_events` 使用 builder messages、usage 合并正确、保存历史不含 `<environment_context>`
+    - 覆盖 builder 抛 `EnvironmentContextBuildError` 时直接模型调用不发生、session 不保存新助手回复
+    - **验证: 需求 1.6, 2.6, 3.3, 3.4, 4.1, 4.2, 4.6, 5.2, 5.3, 5.4, 9.3, 9.5, 9.6**
+
+- [x] 7. ReAct Agent 模型入口迁移
+  - [x] 7.1 修改 `ReActAgentAdapter.run` 与 `_continue_after_tools`
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - 构造签名将 `compaction: ContextCompactionPort` 替换为 `context_builder: ContextBuilderPort`
+    - 实例字段从 `self._compaction` 改为 `self._context_builder`
+    - 在 `run()` 每轮模型调用前调用 `builder_result = await self._context_builder.build(context.get_messages(), model_access=model_access, model=config.model)`
+    - `ChatRequest.messages` 使用 `builder_result.serialized_messages`，`tools=config.tool_schemas` 保持不变
+    - `total_usage = merge_usage(total_usage, builder_result.usage, response.usage)`
+    - `_continue_after_tools()` 同步迁移，确保 `resume()` 恢复后继续执行时也使用 builder
+    - `_serialize_messages()` 兼容薄壳保留，但生产模型调用点不再使用它
+    - _需求: 1.6, 3.5, 4.3, 4.4, 4.5, 5.1, 5.5, 7.6_
+  - [x] 7.2 更新 Agent 同步与恢复测试
+    - 修改 `epsilon-boot/test/infrastructure/chat/test_agent_loop_sync.py`
+    - 修改 `epsilon-boot/test/infrastructure/chat/test_dynamic_model_routing_properties.py` 中真实 `ReActAgentAdapter` 构造
+    - 修改 `epsilon-boot/test/infrastructure/agent/test_react_agent_permission_properties.py`
+    - 修改 `epsilon-boot/test/application/test_container_config.py`，覆盖 `_create_agent()` 解析 `ContextBuilderPort` 并传递给 `ReActAgentAdapter`
+    - 使用 builder fake / `AsyncMock` 返回 `ContextBuilderResult`，断言每轮模型调用使用 builder messages；`AgentResult.usage` 累加 builder usage；工具 schema、工具授权、审批中断和恢复行为不变
+    - 覆盖 builder 抛 `EnvironmentContextBuildError` 时不执行主模型调用、不追加 assistant/tool 消息
+    - **验证: 需求 1.6, 2.6, 3.5, 4.3, 4.4, 4.5, 5.5, 9.4, 9.6**
+  - [x] 7.3 修改 `ReActAgentAdapter.run_streaming` 与 `run_events`
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - `run_streaming()` 每轮调用 builder；中间同步回复无 tool_calls 时最终 `StreamingChunk.usage` 合并 `builder_result.usage` 与 response usage；最后一轮流式最终 chunk 合并 builder usage；审批 required chunk 合并 builder usage 与 response usage
+    - `run_events()` 每轮调用 builder；`assistant_done.usage` 合并 builder usage；`tool_start`、`tool_result`、`approval_required` 事件结构保持不变
+    - 环境上下文失败时错误向上传播，不执行主模型调用
+    - _需求: 1.6, 3.5, 4.3, 4.4, 5.5, 7.6_
+  - [x] 7.4 更新 Agent 流式与事件测试
+    - 修改 `epsilon-boot/test/infrastructure/chat/test_agent_loop_streaming.py`
+    - 修改 `epsilon-boot/test/infrastructure/agent/test_react_agent_events_unit.py`
+    - 修改 `epsilon-boot/test/infrastructure/task/test_task_agent_tool_subset_properties.py` 中 `ReActAgentAdapter` 或 Agent mock 构造兼容点
+    - 覆盖 `run_streaming` 最终 chunk usage 合并 builder usage；`run_events` 的 `assistant_done.usage` 合并 builder usage；工具事件和审批事件结构不变；builder 失败时不执行主模型调用
+    - **验证: 需求 1.6, 2.6, 4.3, 4.4, 5.5, 9.4, 9.6**
+
+- [x] 8. 集成与最终验证
+  - [x] 8.1 编写 Chat 上下文工程集成测试
+    - 在 `epsilon-boot/test/infrastructure/chat/test_context_engineering_integration_unit.py` 中创建测试
+    - 构造真实 `ContextBuilderAdapter` + fake compaction + fake provider + `ChatServiceAdapter`
+    - 执行 `ChatServiceAdapter.chat(ChatRequestVO(...))`，断言 `model_access.chat` 收到的 `ChatRequest.messages` 包含 `<environment_context>` system 消息
+    - 断言 `session_store.save` 保存的 `ConversationContext.to_dict()` 不包含 `<environment_context>`、`workspace:/`、`context_kind=environment`
+    - 断言 builder usage 与主模型 usage 合并到 `ChatResponseVO.usage`
+    - **验证: 需求 1.6, 2.1, 3.1, 3.2, 3.3, 3.6, 4.1, 5.2, 9.3, 9.5, 9.6**
+  - [x] 8.2 编写 Agent 上下文工程集成测试
+    - 在 `epsilon-boot/test/infrastructure/agent/test_context_engineering_agent_integration_unit.py` 中创建测试
+    - 构造真实 `ReActAgentAdapter` + builder mock + tool registry fake，模拟一次 tool_calls 轮次和一次最终回复轮次
+    - 断言每轮 `model_access.chat` 收到的 messages 来自 `ContextBuilderResult.serialized_messages`
+    - 断言 `AgentResult.usage` 累加两轮 builder usage 与模型 usage
+    - 断言 `ConversationContext.to_dict()` 不包含环境上下文，仍包含 assistant tool_calls 与 tool result
+    - **验证: 需求 1.6, 3.5, 4.3, 4.4, 4.6, 5.5, 9.4, 9.5, 9.6**
+  - [x] 8.3 检查点 — 全量测试与编译
+    - 在 `epsilon-boot/` 下运行 `UV_CACHE_DIR=../.uv-cache uv run pytest test/domain/chat test/infrastructure/chat test/infrastructure/agent test/application/test_container_config.py -q`
+    - 在 `epsilon-boot/` 下运行 `UV_CACHE_DIR=../.uv-cache uv run pytest -q`
+    - 在 `epsilon-boot/` 下运行 `UV_CACHE_DIR=../.uv-cache uv run python -m compileall src`
+    - 所有测试和编译必须通过；若失败，先修复本特性相关问题，不得放宽断言或删除既有行为测试
+    - **验证: 需求 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 9.8**
+
+## 备注
+
+- 本期不新增第三方依赖，不修改 `pyproject.toml` 或 `uv.lock`。
+- 本期不修改 `ConversationContext.to_dict()`、session 存储格式、Redis / DB / 文件持久化结构。
+- `ContextCompactionPort` 保持现有注册与实现，`ContextBuilderAdapter` 只是它的调用方，不替换摘要压缩策略。
+- 环境上下文 provider 失败采用 fail-fast，必须阻断模型调用；这是用户在 design 阶段确认的 `A/A/B` 决策。

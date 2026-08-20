@@ -1,0 +1,125 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  schedule:
+    - cron: "17 19 * * *"
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: epsilon-boot
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Run backend lint gate
+        run: uv run ruff check src test
+
+      - name: Run tests (includes static secret hygiene checks)
+        run: uv run pytest -m "not benchmark"
+
+  evaluation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Sync backend dependencies
+        working-directory: epsilon-boot
+        shell: bash
+        run: uv sync --frozen
+
+      - name: Run offline evaluation self-tests
+        working-directory: epsilon-boot
+        shell: bash
+        run: uv run pytest ../tests/evaluation/self_tests/test_no_external_calls.py ../tests/evaluation/self_tests/test_compare_baseline.py ../tests/evaluation/self_tests/test_end_to_end.py -q --rootdir=..
+
+      - name: Run offline evaluation regression gate
+        working-directory: epsilon-boot
+        shell: bash
+        env:
+          PYTHONPATH: ../:src
+        run: uv run python -m scripts.evaluation.run_eval --metric=all --baseline=../docs/evaluation/results/2026-06-03_110744_feb5ec6.json --regression-threshold=5.0
+
+  evaluation-nightly:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Sync backend dependencies
+        working-directory: epsilon-boot
+        shell: bash
+        run: uv sync --frozen
+
+      - name: Run scheduled offline full evaluation
+        working-directory: epsilon-boot
+        shell: bash
+        env:
+          PYTHONPATH: ../:src
+        run: uv run python -m scripts.evaluation.run_eval --metric=all --output=../docs/evaluation/results/nightly-${{ github.run_id }}.json --baseline=../docs/evaluation/results/2026-06-03_110744_feb5ec6.json --regression-threshold=5.0
+
+      - name: Upload scheduled evaluation result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-evaluation-${{ github.run_id }}
+          path: docs/evaluation/results/nightly-${{ github.run_id }}.json
+          if-no-files-found: warn
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: epsilon-client
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run frontend lint
+        run: bun run lint
+
+      - name: Run frontend typecheck
+        run: bun run typecheck
+
+      - name: Run frontend unit tests
+        run: bun run test
+
+      - name: Install Playwright Chromium
+        run: bun run e2e:install
+
+      - name: Run frontend E2E smoke tests
+        run: bun run e2e
+
+      - name: Run frontend build
+        run: bun run build

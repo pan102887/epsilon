@@ -1,0 +1,41 @@
+"""Backward-compatible Run router import."""
+
+from application.api.routers.runs import (
+    ApprovalDecisionBody,
+    ApprovalResumeRequestBody,
+    ChatRunCreateBody,
+    RunContinueRequestBody,
+    RunCreateRequestBody,
+    RunEventBody,
+    RunEventsResponseBody,
+    RunSnapshotBody,
+    TaskRunCreateBody,
+    approve_run,
+    cancel_run,
+    continue_run,
+    create_run,
+    get_run,
+    get_run_events,
+    router,
+    stream_run_events,
+)
+
+__all__ = [
+    "ApprovalDecisionBody",
+    "ApprovalResumeRequestBody",
+    "ChatRunCreateBody",
+    "RunContinueRequestBody",
+    "RunCreateRequestBody",
+    "RunEventBody",
+    "RunEventsResponseBody",
+    "RunSnapshotBody",
+    "TaskRunCreateBody",
+    "approve_run",
+    "cancel_run",
+    "continue_run",
+    "create_run",
+    "get_run",
+    "get_run_events",
+    "router",
+    "stream_run_events",
+]

@@ -1,0 +1,450 @@
+# 实现计划：Prompt 资产目录与版本化注册（Prompt Version Registry）
+
+## 概述
+
+本实施计划依据 `/workspace/docs/spec/prompt-version-registry/design.md` 与 `/workspace/docs/spec/prompt-version-registry/requirement.md` 拆解为可独立实现 + 独立评审的代码切片。执行顺序遵循：**Prompt 资产文件 → 领域值对象/端口 → 基础设施异常/配置/适配器 → 组合根装配 + 冲突检测 → 消费方（ChatServiceAdapter / TaskAgentAdapter）接入 → API 层 / SSE / OpenAPI schema → 可观测性 → 迁移清理与文档**。每个实现任务配对 validation 任务（pytest 单元/属性测试，使用 `hypothesis`），关键层交汇处插入 checkpoint 任务（运行 `uv run pytest` 指定子树）。
+
+- 所有任务限定后端包 `epsilon-boot/`。
+- 所有新增模块、类、公开函数/方法必须附中文 docstring（[docs/steering/code-documentation.md](../../steering/code-documentation.md)）。
+- 依赖管理仅通过 `uv`（[docs/steering/uv-package-manager.md](../../steering/uv-package-manager.md)），本特性不新增依赖。
+- 配置新增键写入 `epsilon-boot/config.properties`（[docs/steering/config-source.md](../../steering/config-source.md)）。
+- DDD 分层依赖方向严格遵守 [docs/steering/ddd-architecture.md](../../steering/ddd-architecture.md)：`domain/prompt/` 不得导入 `infrastructure/` / `pydantic-settings` / 文件系统 SDK。
+- 命名约定统一使用 design.md 中的 Python 标识符：`LoadedPrompt` / `PromptRegistryPort` / `FilesystemPromptRegistryAdapter` / `PromptVersionConfig` / `ConflictingLegacyPromptConfigError` 等。
+
+## Tasks
+
+- [x] 1. Prompt 资产目录种子文件落地（需求 1、需求 8.4）
+  - [x] 1.1 新增 `epsilon-boot/prompts/chat-default/v1.md` 初始种子
+    - 在 `epsilon-boot/prompts/chat-default/v1.md` 新建文件
+    - 文件内容固定为 `你是一个有用的 AI 助手。`（即原 `ChatConfig.system_prompt` 默认值），**不**含 `_WORKSPACE_PATH_GUIDANCE` 文案
+    - 编码 UTF-8 / 换行 LF / 无 BOM / 无首行 YAML front matter
+    - 同时创建 `epsilon-boot/prompts/.gitkeep`（若 git 自动跟踪子目录后该文件可省略，但按项目约定"新建空目录放 `.gitkeep`"）
+    - _需求：1.1、1.2、1.4、1.6、8.4_
+  - [x] 1.2 新增 `epsilon-boot/prompts/task-template/v1.md` 骨架审计文档
+    - 在 `epsilon-boot/prompts/task-template/v1.md` 新建文件
+    - 文件内容以 Markdown 记录当前 `TaskAgentAdapter.build_system_prompt` 的骨架：`<goal>` → `## 输入数据` → `## 约束条件` → `## 期望输出格式`
+    - 文件开头明确写入："本文件仅作审计审阅，不用于运行期字符串替换（需求 5.1、5.3）"
+    - 编码 UTF-8 / 换行 LF
+    - _需求：1.6、5.1、5.3、5.7_
+  - [x] 1.3（验证）资产文件落地检查
+    - 新增 `epsilon-boot/test/infrastructure/prompt/__init__.py` 空包文件
+    - 新增 `epsilon-boot/test/infrastructure/prompt/test_prompt_assets_unit.py`
+    - 用例：使用 `pathlib.Path.resolve()` 定位到 `epsilon-boot/prompts/`，断言 `chat-default/v1.md` 与 `task-template/v1.md` 均存在、可被 UTF-8 解码、`strip()` 后非空
+    - 断言 `chat-default/v1.md` 文件内容 `strip() == "你是一个有用的 AI 助手。"`
+    - _需求：1.2、1.4、8.4、11.1_
+
+- [x] 2. 领域层 `domain/prompt/` 模块（需求 3、需求 4、需求 10.3；设计 §1–§3）
+  - [x] 2.1 创建 `domain/prompt/` 包骨架
+    - 新增 `epsilon-boot/src/domain/prompt/__init__.py`（空，含模块级中文 docstring 说明本子包为领域层 Prompt 抽象）
+    - _需求：3.6、10.1、10.3_
+  - [x] 2.2 实现 `LoadedPrompt` 值对象
+    - 在 `epsilon-boot/src/domain/prompt/value_objects.py` 按 design.md §1 的代码示例落地
+    - `@dataclass(frozen=True)` 定义 `LoadedPrompt(prompt_id, name, version, content)`
+    - `__post_init__` 校验：`content.strip()` 非空、`version` 匹配 `^v[1-9]\d*$`、`prompt_id == f"{name}@{version}"`、`prompt_id` 整体匹配 `^[a-z][a-z0-9\-]*@v[1-9]\d*$`
+    - 模块级常量 `_VERSION_PATTERN` / `_PROMPT_ID_PATTERN`
+    - 公开符号配中文 docstring（字段含义、校验条件、抛出的 `ValueError`）
+    - 只导入 `dataclasses`、`re`、`__future__`；禁止导入 `pydantic` / `pydantic-settings` / `infrastructure.*`
+    - _需求：3.2、4.1、10.1、10.3_
+  - [x] 2.3 实现 `PromptRegistryPort` 协议
+    - 在 `epsilon-boot/src/domain/prompt/ports.py` 定义 `class PromptRegistryPort(Protocol)`，含 `get(name: str) -> LoadedPrompt` 与 `list_names() -> list[str]` 两个同步方法
+    - 中文 docstring 说明"运行期 get 零 I/O；I/O 已在适配器构造期完成；未注册名字应抛 `PromptNotFoundError`（领域异常，见 2.4）"
+    - 仅导入 `typing.Protocol`、`domain.prompt.value_objects.LoadedPrompt`
+    - _需求：3.1、3.6、10.1、10.3_
+  - [x] 2.4 实现 `PromptNotFoundError` 领域异常
+    - 在 `epsilon-boot/src/domain/prompt/exceptions.py` 定义继承 `RuntimeError` 的 `PromptNotFoundError`
+    - 构造签名：`__init__(self, name: str, registered: list[str])`
+    - 错误消息中文：`Prompt 未注册：name=...，已注册=[...]`
+    - **不**继承 `ConfigurationError`，严格独立于 `common/configuration`（设计 §3 明确）
+    - _需求：3.5、10.1、10.3_
+  - [x] 2.5（验证）`LoadedPrompt` 属性测试
+    - 新增 `epsilon-boot/test/domain/prompt/__init__.py`
+    - 新增 `epsilon-boot/test/domain/prompt/test_loaded_prompt_property.py`
+    - 用 `hypothesis.strategies.from_regex(r"^[a-z][a-z0-9\-]{0,20}$")` 生成合法 `name`、`from_regex(r"^v[1-9]\d{0,3}$")` 生成合法 `version`，断言 `LoadedPrompt(f"{name}@{version}", name, version, "非空文本").prompt_id == f"{name}@{version}"`
+    - 非法样本（`v0` / `v01` / `v1.0.0` / 空 `content` / 空白 `content` / `prompt_id` 与 `name@version` 不一致）断言抛 `ValueError`
+    - 用例头部注释 `# Validates: Requirements 3.2, 4.1`
+    - _需求：3.2、4.1、11.3_
+  - [x] 2.6（验证）`PromptNotFoundError` 单元测试
+    - 新增 `epsilon-boot/test/domain/prompt/test_prompt_exceptions_unit.py`
+    - 断言实例继承自 `RuntimeError`、`err.name` / `err.registered` 字段暴露正确、`str(err)` 包含 `"Prompt 未注册"` 与已注册列表文本
+    - _需求：3.5_
+  - [x] 2.7（checkpoint）domain 层完成
+    - 运行 `uv run pytest epsilon-boot/test/domain/prompt/ -q`，期望 2 个测试模块全部通过
+    - 运行 `uv run pytest epsilon-boot/test/infrastructure/prompt/test_prompt_assets_unit.py -q`，期望通过
+    - 使用 `grep -R "from infrastructure" epsilon-boot/src/domain/prompt/` 应无输出（DDD 分层守卫）
+    - _需求：3.6、10.3_
+
+- [x] 3. 基础设施层：`PromptVersionConfig`（需求 2、需求 9.7；设计 §4）
+  - [x] 3.1 创建 `infrastructure/prompt/` 包骨架
+    - 新增 `epsilon-boot/src/infrastructure/prompt/__init__.py`（空，含中文模块 docstring）
+    - _需求：10.4_
+  - [x] 3.2 实现 `InvalidPromptVersionTagError` + `PromptVersionConfig`
+    - 在 `epsilon-boot/src/infrastructure/prompt/prompt_version_config.py` 按 design.md §4 落地
+    - 定义 `InvalidPromptVersionTagError(ConfigurationError)`
+    - 定义 `class PromptVersionConfig(PropertiesBaseSettings)`，`model_config = SettingsConfigDict(env_prefix="PROMPT_")`
+    - 字段：`chat_default_version: str = "v1"`、`task_template_version: str = "v1"`
+    - `@field_validator("chat_default_version", "task_template_version")` 校验 `^v[1-9]\d*$`；非法抛 `InvalidPromptVersionTagError`，消息含字段名 + 实际取值 + 期望示例
+    - `as_mapping()` 方法返回 `{"chat-default": ..., "task-template": ...}`（字段名去 `_version` 尾 + `_` → `-`）
+    - 模块底部 `prompt_version_config = PromptVersionConfig()` 直接构造（**不**走 `create_config` 工厂，设计决策 #5）
+    - 公开符号附中文 docstring（尤其 "不走 create_config" 的理由注释块）
+    - _需求：2.1、2.2、2.3、2.5、2.6、9.7、10.4、10.6_
+  - [x] 3.3 `config.properties` 追加 `PROMPT_*` 配置块
+    - 修改 `epsilon-boot/config.properties`，在文件尾部按 design.md 数据模型 §`config.properties 新增键` 追加：
+      - 注释块（中文）说明 Prompt Version Registry 的职责与"切换版本需重启、不支持热更新"
+      - `PROMPT_CHAT_DEFAULT_VERSION=v1`
+      - `PROMPT_TASK_TEMPLATE_VERSION=v1`
+    - 在既有 `CHAT_*` 配置块追加中文注释："不再支持 `CHAT_SYSTEM_PROMPT`；迁移请查阅 `PROMPT_CHAT_DEFAULT_VERSION` 注释与 `prompts/chat-default/` 目录"
+    - _需求：2.7、8.3、10.6_
+  - [x] 3.4（验证）`PromptVersionConfig` 单元测试
+    - 新增 `epsilon-boot/test/infrastructure/prompt/test_prompt_version_config_unit.py`
+    - 用例覆盖：默认构造 `chat_default_version == "v1"`、`task_template_version == "v1"`；`PROMPT_CHAT_DEFAULT_VERSION=v3` 环境变量覆盖生效；格式非法（`v0` / `v01` / `V1` / 空串 / `v1.0.0`）抛 `InvalidPromptVersionTagError`；`as_mapping()` 返回 `{"chat-default": ..., "task-template": ...}`
+    - 使用 `monkeypatch.setenv` 设置环境变量后构造新实例，避免污染模块级 `prompt_version_config`
+    - 断言 `PromptVersionConfig.hot_reload is False`（或验证类变量默认值）
+    - _需求：2.1–2.6、11.2_
+  - [x] 3.5（验证）`PromptVersionConfig` 属性测试
+    - 新增 `epsilon-boot/test/infrastructure/prompt/test_prompt_version_config_property.py`
+    - `hypothesis.from_regex(r"^v[1-9]\d{0,3}$")` 生成合法版本，断言构造成功；
+    - 自定义非法样本（`v0`、`v01`、`v1.0.0`、`V1`、空串、`"v"`、`"v-1"`）断言抛 `InvalidPromptVersionTagError`
+    - 用例头部注释 `# Validates: Property 4 / Requirements 2.6, 9.7`
+    - _需求：2.6、9.7、11.2_
+
+- [x] 4. 基础设施层：异常家族 + `FilesystemPromptRegistryAdapter` + `append_workspace_path_guidance`（需求 3、需求 6、需求 9；设计 §5–§7）
+  - [x] 4.1 实现 `infrastructure/prompt/exceptions.py` 异常家族
+    - 按 design.md §6 新增以下异常，全部继承 `common.configuration.ConfigurationError`：
+      - `PromptAssetDirectoryMissingError`
+      - `PromptAssetFileMissingError`
+      - `PromptAssetEncodingError`
+      - `EmptyPromptAssetError`
+      - `PromptNotConfiguredError`
+      - `ConflictingLegacyPromptConfigError`
+    - 每个类中文 docstring 指明对应需求条款（9.1–9.6、8.2）
+    - _需求：8.2、9.1–9.6、10.4_
+  - [x] 4.2 实现 `append_workspace_path_guidance` 纯函数
+    - 新增 `epsilon-boot/src/infrastructure/prompt/workspace_guidance.py`
+    - 从 `infrastructure.chat.chat_config` re-export `_WORKSPACE_PATH_GUIDANCE` 常量
+    - 实现 `def append_workspace_path_guidance(content: str) -> str`：若 `content.rstrip().endswith(_WORKSPACE_PATH_GUIDANCE.strip())` 则原样返回，否则拼接返回
+    - `__all__ = ["append_workspace_path_guidance", "_WORKSPACE_PATH_GUIDANCE"]`
+    - 中文 docstring 含"幂等语义、常量来源"说明
+    - _需求：6.1、6.2、6.3、10.1_
+  - [x] 4.3 实现 `FilesystemPromptRegistryAdapter`
+    - 新增 `epsilon-boot/src/infrastructure/prompt/filesystem_prompt_registry_adapter.py`
+    - 按 design.md §5 代码示例完整落地：
+      - 构造签名 `__init__(self, root: Path, version_config: PromptVersionConfig) -> None`
+      - 启动期顺序：目录存在性校验 → `root.resolve()` → 扫描子目录 → 校验"配置引用但目录缺失"→ 记录"目录存在但未配置"的跳过日志（`logger.info`）→ 遍历 `version_config.as_mapping()` 调用 `_load_one(name, version)` → 汇总日志输出
+      - `_load_one`：逐项校验文件存在 / UTF-8 解码 / 非空白，对应抛出 4 种异常；成功构造 `LoadedPrompt(prompt_id=f"{name}@{version}", name=name, version=version, content=content)`
+      - `get(name)`：查字典未命中抛 `PromptNotFoundError`（领域异常）
+      - `list_names()` 返回 `list(self._prompts.keys())`
+    - 显式实现 `PromptRegistryPort` 协议（可用 `PromptRegistryPort` 做基类或通过 `Protocol` 结构化子类型推断，两种写法均可）
+    - 公开 API 附中文 docstring（每个异常条件 + 对应需求条款）
+    - _需求：3.3、3.4、3.5、9.1、9.2、9.3、9.4、9.5、9.6_
+  - [x] 4.4（验证）`append_workspace_path_guidance` 属性测试
+    - 新增 `epsilon-boot/test/infrastructure/prompt/test_workspace_guidance_property.py`
+    - 用 `hypothesis.strategies.text()` 生成随机 Unicode 字符串 `s`，断言 `append_workspace_path_guidance(append_workspace_path_guidance(s)) == append_workspace_path_guidance(s)`（幂等，Property 3）
+    - 断言返回值以 `_WORKSPACE_PATH_GUIDANCE.strip()` 结尾（`rstrip()` 比较）
+    - 用例头部注释 `# Validates: Property 3 / Requirements 6.1, 6.3`
+    - _需求：6.1、6.3、11.6_
+  - [x] 4.5（验证）`FilesystemPromptRegistryAdapter` 启动期错误分支单元测试
+    - 新增 `epsilon-boot/test/infrastructure/prompt/test_filesystem_prompt_registry_adapter_unit.py`
+    - 每条错误分支一条用例（`tmp_path` 隔离）：
+      - 目录不存在 → `PromptAssetDirectoryMissingError`，消息含期望路径
+      - 目录存在但目标 `<name>/<version>.md` 缺失 → `PromptAssetFileMissingError`，消息含绝对路径 + `PROMPT_<NAME>_VERSION` 键名
+      - 目标文件存在但含 0xFF 字节 → `PromptAssetEncodingError`（用 `tmp_path.write_bytes(b"\xff\xfe...")` 构造）
+      - 文件内容仅空白 → `EmptyPromptAssetError`
+      - 配置引用 `chat-default` 但目录下无 `chat-default/` 子目录 → `PromptNotConfiguredError`
+      - 目录下存在 `unused/` 子目录但配置未引用 → 不抛错，断言 `caplog` 记录 "已跳过加载" 日志（需求 9.5）
+    - 成功路径：`tmp_path/prompts/chat-default/v1.md` + `task-template/v1.md` 正常加载；断言 `adapter.get("chat-default").prompt_id == "chat-default@v1"`、`list_names()` 含两个名字
+    - 断言 `adapter.get("unknown")` 抛 `PromptNotFoundError`（需求 3.5）
+    - 每个用例头部注释指明 `# Validates: Requirement 9.x`
+    - _需求：3.3–3.5、9.1–9.6、11.1_
+  - [x] 4.6（checkpoint）Prompt 端口 / 适配器完成
+    - 运行 `uv run pytest epsilon-boot/test/infrastructure/prompt/ -q`，期望该目录下 5 个模块（assets / version_config unit / property / filesystem adapter / workspace guidance property）全部通过
+    - 运行 `uv run pytest epsilon-boot/test/domain/prompt/ -q`，期望通过
+    - _需求：3、6、9_
+
+- [x] 5. 领域值对象 `prompt_id` 字段接入（需求 4.1、4.2、4.7；设计 §9）
+  - [x] 5.1 `AgentConfig` 增加 `prompt_id` 字段并改为 `kw_only=True`
+    - 修改 `epsilon-boot/src/domain/agent/value_objects.py`
+    - 顶部追加 `_PROMPT_ID_PATTERN = re.compile(r"^[a-z][a-z0-9\-]*@v[1-9]\d*$")`（若 `re` 未导入则同步 import）
+    - 将 `AgentConfig` 的装饰器由 `@dataclass(frozen=True)` 改为 `@dataclass(frozen=True, kw_only=True)`
+    - 在 `system_prompt / tool_schemas / model / max_rounds` 之后、`allowed_tool_names` 之前追加字段 `prompt_id: str`（无默认值）
+    - `__post_init__` 追加校验：`_PROMPT_ID_PATTERN.match(self.prompt_id)` 不匹配 → `ValueError("prompt_id 非法，期望形如 'name@v<N>'，当前值: ...")`
+    - 更新类/字段中文 docstring，说明 `kw_only=True` 的含义与 `prompt_id` 的来源
+    - 扫描本仓库内既有 `AgentConfig(...)` 构造点（生产代码中仅存在于 `ChatServiceAdapter` 与 `TaskAgentAdapter` 内；本任务中**暂不**改造这些调用点，由任务 7、8 负责——本步骤只允许修改 `value_objects.py` 并把相关测试归类到 5.3）
+    - _需求：4.1、4.7（决策 #1）_
+  - [x] 5.2 `NamedAgentConfig` 增加 `prompt_id` 字段
+    - 在同一文件为 `NamedAgentConfig` 追加字段 `prompt_id: str = ""`（保留默认空串以兼顾"带默认字段必须后置"的 dataclass 约束；**不启用** `kw_only=True`，设计决策 #1）
+    - `__post_init__` 追加校验：若 `not self.prompt_id or not _PROMPT_ID_PATTERN.match(self.prompt_id)` → `ValueError`
+    - 字段顺序按设计 §9 示例：`name / description / system_prompt / prompt_id / tool_names / model`
+    - _需求：4.2、4.7_
+  - [x] 5.3（验证）`AgentConfig` / `NamedAgentConfig` 单元测试扩展
+    - 修改 `epsilon-boot/test/domain/agent/test_agent_value_objects_unit.py`，追加用例：
+      - `AgentConfig(...)` 位置参数调用触发 `TypeError`（`kw_only=True` 语义）
+      - 关键字调用缺省 `prompt_id` 触发 `TypeError`（missing keyword-only argument）
+      - `prompt_id="chat-default@v3"` 关键字调用构造成功
+      - `prompt_id="foo"` / `prompt_id="chat-default@1"` / `prompt_id=""` → `ValueError`
+      - `prompt_id` 合法值构造后只读可读 `config.prompt_id == "chat-default@v3"`
+    - 修改 `epsilon-boot/test/domain/agent/test_named_agent_config_properties.py` 与 `test_agent_value_objects_property.py`：
+      - 为现有 `NamedAgentConfig(...)` 构造补齐 `prompt_id="chat-default@v1"` 参数（关键字式）
+      - 新增独立用例：`NamedAgentConfig(..., prompt_id="")` → `ValueError`；`prompt_id="bar"` → `ValueError`；合法 `prompt_id="foo@v2"` 构造成功
+    - 每条用例头部 `# Validates: Requirement 4.1 / 4.2 / 4.7`
+    - _需求：4.1、4.2、4.7、11.3_
+  - [x] 5.4 `ChatResponseVO` 增加 `prompt_id` 字段并改为 `kw_only=True`
+    - 修改 `epsilon-boot/src/domain/chat/value_objects.py`
+    - 新增模块级 `_PROMPT_ID_PATTERN`
+    - `ChatResponseVO` 装饰器改为 `@dataclass(frozen=True, kw_only=True)`
+    - 追加字段 `prompt_id: str`（无默认值）
+    - 新增 `__post_init__`，对 `prompt_id` 做 `_PROMPT_ID_PATTERN.match` 校验；不匹配 → `ValueError`
+    - 更新 docstring
+    - **不**修改 `ChatRequestVO`（仍保持原装饰器与字段）
+    - _需求：4.5（决策 #1）_
+  - [x] 5.5（验证）`ChatResponseVO` 单元测试
+    - 新增 `epsilon-boot/test/domain/chat/test_chat_response_vo_unit.py`
+    - 用例：位置参数调用 → `TypeError`（kw_only）；缺 `prompt_id` 关键字 → `TypeError`；`prompt_id=""` / 非法格式 → `ValueError`；合法值构造成功且字段只读；`frozen=True` 赋值触发 `FrozenInstanceError`
+    - 用例头部 `# Validates: Requirement 4.5`
+    - _需求：4.5、11.3_
+  - [x] 5.6 `TaskResult` 增加 `prompt_id` 字段并强校验全分支
+    - 修改 `epsilon-boot/src/domain/task/value_objects.py`
+    - 新增模块级 `_PROMPT_ID_PATTERN`
+    - `TaskResult` 追加字段 `prompt_id: str`，**位于**既有带默认值字段（`usage` / `trace` / `latency_ms`）之前，保持无默认值
+    - 新增 `__post_init__`（若已存在则追加分支）：`prompt_id` 空串或不匹配 `_PROMPT_ID_PATTERN` → `ValueError`，错误消息指明所有 `TaskStatus` 分支均需透传（决策 #3）
+    - _需求：5.6、7.4（决策 #3）_
+  - [x] 5.7（验证）`TaskResult` 单元测试扩展
+    - 修改 `epsilon-boot/test/domain/task/test_task_value_objects_unit.py`：
+      - 为所有现有 `TaskResult(...)` 构造补 `prompt_id="task-template@v1"` 关键字参数
+      - 新增用例：SUCCESS / FAILED / HUMAN_INTERVENTION_REQUIRED 三种 `TaskStatus` 下合法 `prompt_id` 构造成功
+      - `prompt_id=""` / `prompt_id="foo"` / `prompt_id="task-template@0"` → `ValueError`
+    - 同步 `test_task_value_objects_property.py`：为既有 strategy 生成参数补 `prompt_id`，或用 fixed `"task-template@v1"`
+    - _需求：5.6、7.4、11.5_
+  - [x] 5.8（checkpoint）领域值对象字段接入完成
+    - 运行 `uv run pytest epsilon-boot/test/domain/ -q`，期望全部通过（含既有用例与本次新增）
+    - 特别确认 `test_agent_value_objects_unit.py` / `test_named_agent_config_properties.py` / `test_chat_response_vo_unit.py` / `test_task_value_objects_unit.py` 均通过
+    - _需求：4、5.6_
+
+- [x] 6. 组合根装配：`application/container_config.py`（需求 3.7、需求 8.2、需求 9；设计 §14）
+  - [x] 6.1 新增 `_check_legacy_prompt_conflict` 函数
+    - 修改 `epsilon-boot/src/application/container_config.py`
+    - 顶部 import 追加 `ConflictingLegacyPromptConfigError`（自 `infrastructure.prompt.exceptions`）
+    - 实现 `def _check_legacy_prompt_conflict() -> None`：
+      - 检查 `os.getenv("CHAT_SYSTEM_PROMPT")` 非空 → 加入 `legacy_keys.append("CHAT_SYSTEM_PROMPT(env)")`
+      - 通过 `from common.configuration.configuration_utils import _PROPERTIES_FILE, _parse_properties_file` 解析 `config.properties`，检测键 `CHAT_SYSTEM_PROMPT` / `chat.system.prompt` 任一存在
+      - 任一命中 → 抛 `ConflictingLegacyPromptConfigError`，错误消息按 design.md §14 的三步迁移文案（中文）输出
+    - 中文 docstring 指明对应需求 8.2
+    - _需求：8.2、8.5、8.6_
+  - [x] 6.2 新增 `_PROMPT_ASSET_ROOT` + `_create_prompt_registry` 工厂
+    - 在 `container_config.py` 顶层追加模块级常量：`_PROMPT_ASSET_ROOT: Path = Path(__file__).resolve().parents[2] / "prompts"`（设计决策 #4）
+    - 附中文注释说明 `parents[2] = epsilon-boot/`、"测试通过 monkeypatch 覆盖本常量"
+    - 实现 `def _create_prompt_registry() -> PromptRegistryPort`，内部返回 `FilesystemPromptRegistryAdapter(root=_PROMPT_ASSET_ROOT, version_config=prompt_version_config)`
+    - import：`from domain.prompt.ports import PromptRegistryPort`；`from infrastructure.prompt.filesystem_prompt_registry_adapter import FilesystemPromptRegistryAdapter`；`from infrastructure.prompt.prompt_version_config import prompt_version_config`
+    - 中文 docstring 明确可能抛出的 `ConfigurationError` 子类列表
+    - _需求：3.7、9.1–9.7、10.4、10.5_
+  - [x] 6.3 `configure_container()` 加入 Prompt 绑定与冲突检测
+    - 在 `configure_container()` 函数体第一行调用 `_check_legacy_prompt_conflict()`（早于 telemetry / model_client 注册，保证启动期第一时间 fail-fast）
+    - 在 `ChatServicePort` / `TaskAgentPort` 注册**之前**追加：`container.register(PromptRegistryPort, _create_prompt_registry, Scope.SINGLETON)`
+    - 更新 `configure_container()` docstring 列出新增 Port
+    - _需求：3.7、8.2、10.5_
+  - [x] 6.4（验证）冲突检测单元测试
+    - 新增 `epsilon-boot/test/application/test_prompt_conflict_detection_unit.py`
+    - 用例 1：`monkeypatch.setenv("CHAT_SYSTEM_PROMPT", "你好")` → 调用 `_check_legacy_prompt_conflict()` 抛 `ConflictingLegacyPromptConfigError`；消息含 `"CHAT_SYSTEM_PROMPT(env)"` 与三步迁移说明
+    - 用例 2：`monkeypatch.delenv("CHAT_SYSTEM_PROMPT", raising=False)`，并用 `monkeypatch.setattr(common.configuration.configuration_utils, "_parse_properties_file", lambda _: {"CHAT_SYSTEM_PROMPT": "x"})` → 抛 `ConflictingLegacyPromptConfigError`
+    - 用例 3：env / 文件均无 → 函数返回 None 不抛
+    - 用例头部 `# Validates: Requirement 8.2 / 8.5 / 8.6, Property 6`
+    - _需求：8.2、8.5、8.6_
+
+- [x] 7. `ChatServiceAdapter` 接入 `PromptRegistryPort` + 移除 `ChatConfig.system_prompt`（需求 4.4–4.6、6、7.1–7.2、8.1、8.6；设计 §8、§12）
+  - [x] 7.1 `ChatServiceAdapter` 构造签名与内部字段改造
+    - 修改 `epsilon-boot/src/infrastructure/chat/chat_service_adapter.py`
+    - 顶部 import 追加 `from domain.prompt.ports import PromptRegistryPort`、`from domain.prompt.value_objects import LoadedPrompt`、`from infrastructure.prompt.workspace_guidance import append_workspace_path_guidance`
+    - `__init__` 签名：`system_prompt: str` 参数 **替换为** `prompt_registry: PromptRegistryPort`
+    - 构造期执行：`self._loaded_prompt = prompt_registry.get("chat-default")`（一次性，缓存 `LoadedPrompt`）
+    - 派生实例属性：`self._system_prompt = append_workspace_path_guidance(self._loaded_prompt.content)`、`self._prompt_id = self._loaded_prompt.prompt_id`
+    - 删除既有 `self._system_prompt = system_prompt`（替换为上一步赋值）
+    - 更新 docstring（中文）：明确 "构造期调用 `get('chat-default')` 一次；运行期不再查注册表；`_WORKSPACE_PATH_GUIDANCE` 追加仅在构造期做一次"
+    - _需求：4.4、6.1、6.2、6.3、6.4_
+  - [x] 7.2 `ChatServiceAdapter.chat` / `stream_chat` 运行期接入 `prompt_id`
+    - 在两条方法中把 `AgentConfig(...)` 构造点补齐 `prompt_id=self._prompt_id`（关键字参数，`kw_only=True`）
+    - 构造 `ChatResponseVO(...)` 时补齐 `prompt_id=self._prompt_id`（`chat` 方法返回值）
+    - 所有 `logger.info` 起止日志附 `extra={"prompt_id": self._prompt_id, ...}`，**不**通过 `%s` 拼接进消息正文
+    - 在方法入口处调用 `trace.get_current_span().set_attribute("prompt.id", self._prompt_id)`（`from opentelemetry import trace`）
+    - 流式生成器最后一个 chunk 之后，追加一个专门的 `StreamingChunk`/事件载体（具体协议在任务 9 的路由层落地；本任务仅在 `stream_chat` 结束时通过新增公开属性或生成器 `return value` 方式把 `self._prompt_id` 暴露给路由层；推荐将 `self._prompt_id` 作为 `stream_chat` 生成器的 `return value` 或挂到 `ChatServicePort` 接口上的一个同步属性 `current_prompt_id` / 工厂方法，供路由层取值）
+    - _需求：4.5、4.6、7.1、7.2、7.6_
+  - [x] 7.3 修改 `ChatConfig` 移除 `system_prompt` 字段（破坏性迁移，fail-fast）
+    - 修改 `epsilon-boot/src/infrastructure/chat/chat_config.py`
+    - **删除**字段 `system_prompt: str = "你是一个有用的 AI 助手。"`
+    - **删除** `@model_validator(mode="after") _append_workspace_path_guidance` 方法（其职责迁至 `infrastructure/prompt/workspace_guidance.py`）
+    - 保留 `_WORKSPACE_PATH_GUIDANCE` 常量（被 `workspace_guidance.py` re-export）
+    - 保留 `max_messages` / `max_tool_rounds` / `tool_calling_enabled` 及其 `_clamp_max_tool_rounds` validator
+    - 更新类 docstring：移除 `system_prompt` 条目、追加"本字段已迁移至 `prompts/chat-default/v<N>.md` + `PROMPT_CHAT_DEFAULT_VERSION`，详见 docs/spec/prompt-version-registry/"
+    - **影响面检查清单**（本任务在 PR 描述中必须列出已检查过的所有文件，并确认全部改完；漏改任一处则 `ChatConfig.system_prompt` 的 AttributeError 会在运行期暴露）：
+      - [x] `epsilon-boot/src/application/container_config.py::_create_chat_service`：见任务 7.4
+      - [x] `epsilon-boot/src/infrastructure/chat/chat_service_adapter.py`：见任务 7.1
+      - [x] `epsilon-boot/test/infrastructure/chat/test_chat_config.py`：见任务 7.6
+      - [x] `epsilon-boot/test/infrastructure/chat/test_chat_service_adapter.py` / `test_chat_service_adapter_unit.py` / `test_chat_service_adapter_refactor_property.py`：见任务 7.7
+      - [x] `epsilon-boot/test/infrastructure/chat/test_agent_loop_streaming.py` / `test_agent_loop_sync.py`：见任务 7.7
+      - [x] `grep -R "chat_config\.system_prompt\|CHAT_SYSTEM_PROMPT" epsilon-boot/src epsilon-boot/test` 应返回 0 命中
+    - _需求：6.1、8.1、8.6、10.5_
+  - [x] 7.4 `_create_chat_service` 工厂改造
+    - 修改 `epsilon-boot/src/application/container_config.py::_create_chat_service`
+    - 追加 `prompt_registry = await container.resolve(PromptRegistryPort)`
+    - 构造 `ChatServiceAdapter(..., prompt_registry=prompt_registry, ...)`，**移除** `system_prompt=chat_config.system_prompt`
+    - 其他参数保持不变（`session_store` / `model_registry` / `compaction` / `agent` / `tool_calling_enabled` / `max_tool_rounds` / `tool_schemas`）
+    - _需求：3.7、4.4、8.1、10.5_
+  - [x] 7.5（迁移说明文档）新增 `docs/prompts.md` 并在 CLAUDE.md 追加索引
+    - 新增 `docs/prompts.md`：记录资产目录位置、命名规则、版本化规则、`CHAT_SYSTEM_PROMPT` 迁移三步法（与 `ConflictingLegacyPromptConfigError` 消息对齐）、新增 Prompt 的流程
+    - 修改 `CLAUDE.md` 的"主题文档索引"表，追加一行：`| [docs/prompts.md](docs/prompts.md) | Prompt 资产目录、版本键命名、CHAT_SYSTEM_PROMPT 迁移路径。 |`
+    - **不**修改 `docs/project-overview.md` / `docs/repository-map.md`（需求 10.7）
+    - _需求：8.3、10.7_
+  - [x] 7.6（验证）改写 `ChatConfig` 测试
+    - 修改 `epsilon-boot/test/infrastructure/chat/test_chat_config.py`：**删除**所有断言 `chat_config.system_prompt == ...` / `endswith(_WORKSPACE_PATH_GUIDANCE)` 的用例
+    - 保留 `max_messages` / `max_tool_rounds` / `tool_calling_enabled` 相关用例
+    - 若存在 `test/infrastructure/chat/test_chat_config_system_prompt_unit.py`（需求 6.6 提到）则整体删除，覆盖迁移至任务 7.7 的 `test_workspace_guidance_integration_unit.py`
+    - _需求：6.6、8.6、11.7_
+  - [x] 7.7（验证）`ChatServiceAdapter` 构造 + 运行期接入测试
+    - 修改/新增 `epsilon-boot/test/infrastructure/chat/test_chat_service_adapter_unit.py`（扩展既有），追加用例：
+      - 用 fake `PromptRegistryPort`（构造 `LoadedPrompt(prompt_id="chat-default@v3", name="chat-default", version="v3", content="你是一个测试助手。")`）注入 `ChatServiceAdapter`
+      - 断言构造期调用**恰好一次** `prompt_registry.get("chat-default")`（使用 `unittest.mock.Mock.call_count`）
+      - 驱动 `chat(request)` 后断言传入 `agent.run` 的 `AgentConfig.system_prompt == "你是一个测试助手。" + _WORKSPACE_PATH_GUIDANCE`
+      - 断言返回 `ChatResponseVO.prompt_id == "chat-default@v3"`
+      - 多次调用 `chat` 后 `_loaded_prompt` / `_prompt_id` 不变
+      - `AgentConfig` / `ChatResponseVO` 的构造使用关键字参数（通过断言构造成功本身就能验证 `kw_only` 兼容）
+    - 新增 `epsilon-boot/test/infrastructure/chat/test_workspace_guidance_integration_unit.py`：断言经过 `ChatServiceAdapter` 构造后的 `_system_prompt` 以 `LoadedPrompt.content` 起始、以 `_WORKSPACE_PATH_GUIDANCE` 结尾
+    - 为 `test_agent_loop_streaming.py` / `test_agent_loop_sync.py` 的既有 `ChatServiceAdapter(...)` 构造补 `prompt_registry=...` 关键字（并移除 `system_prompt=...`）
+    - 为 `test_chat_service_adapter.py` / `test_chat_service_adapter_refactor_property.py` 做同样迁移
+    - _需求：4.3–4.5、6.2、6.6、7.1、11.4、11.7_
+  - [x] 7.8（checkpoint）Chat 路径接入完成
+    - 运行 `uv run pytest epsilon-boot/test/infrastructure/chat/ -q`，期望全部通过
+    - 运行 `grep -R "chat_config\.system_prompt" epsilon-boot/src epsilon-boot/test`，应 0 命中
+    - 运行 `grep -R "CHAT_SYSTEM_PROMPT" epsilon-boot/src epsilon-boot/test` 仅允许在 `_check_legacy_prompt_conflict` 内部与迁移注释中出现
+    - _需求：4、6、8.6_
+
+- [x] 8. `TaskAgentAdapter` 接入 `PromptRegistryPort`（需求 5、需求 7.2、7.4；设计 §13）
+  - [x] 8.1 `TaskAgentAdapter.__init__` 扩展签名
+    - 修改 `epsilon-boot/src/infrastructure/task/task_agent_adapter.py`
+    - import 追加 `from domain.prompt.ports import PromptRegistryPort`
+    - `__init__` 新增参数 `prompt_registry: PromptRegistryPort`（放在现有参数之后、`max_rounds` 之前，见 design.md §13）
+    - 构造期执行：`loaded = prompt_registry.get("task-template")`；存 `self._task_template_prompt_id: str = loaded.prompt_id`
+    - **不**使用 `loaded.content`（保留纯函数 `build_system_prompt` 行为不变）
+    - 更新 docstring 中的 `Attributes` 列表
+    - _需求：5.2、5.3、5.7_
+  - [x] 8.2 `TaskAgentAdapter.execute` 在所有分支透传 `prompt_id`
+    - 修改同一文件 `execute` 方法：
+      - 构造 `AgentConfig(...)` 时追加 `prompt_id=self._task_template_prompt_id` 关键字参数
+      - SUCCESS 路径 `TaskResult(...)` 追加 `prompt_id=self._task_template_prompt_id`
+      - FAILED `except` 分支 `TaskResult(...)` 追加 `prompt_id=self._task_template_prompt_id`（决策 #3：所有状态分支必须透传）
+      - `logger.info("开始执行任务...", ..., extra={"prompt_id": self._task_template_prompt_id})`
+      - `logger.info("任务执行成功...", extra={"prompt_id": self._task_template_prompt_id})`
+      - `except` 分支 `logger.exception(..., extra={"prompt_id": self._task_template_prompt_id})`（或拆为 `logger.info` + `logger.exception` 两条；选 `logger.info` 的 extra 写法与需求 7.1 对齐）
+      - 方法入口调用 `trace.get_current_span().set_attribute("prompt.id", self._task_template_prompt_id)`（`from opentelemetry import trace`）
+    - _需求：5.4、5.6、7.1、7.2、7.6_
+  - [x] 8.3 `_create_task_agent` 工厂改造
+    - 修改 `epsilon-boot/src/application/container_config.py::_create_task_agent`
+    - 追加 `prompt_registry = await container.resolve(PromptRegistryPort)`
+    - 构造 `TaskAgentAdapter(..., prompt_registry=prompt_registry, max_rounds=max_rounds)`
+    - _需求：3.7、5.2、10.5_
+  - [x] 8.4（验证）`TaskAgentAdapter` 单元测试扩展
+    - 修改 `epsilon-boot/test/infrastructure/task/test_task_agent_adapter_unit.py`（扩展既有）：
+      - 为所有现有 `TaskAgentAdapter(...)` 构造补 `prompt_registry=fake_registry` 关键字参数（fake 返回 `LoadedPrompt("task-template@v1", "task-template", "v1", "骨架")`）
+      - 新增用例：构造期调用 `prompt_registry.get("task-template")` 恰好一次
+      - 新增用例：`execute(success_task)` → 断言传入 `agent.run` 的 `AgentConfig.prompt_id == "task-template@v1"`；返回 `TaskResult.prompt_id == "task-template@v1"`
+      - 新增用例：mock `agent.run` 抛 `RuntimeError("boom")` → 返回 `TaskResult(status=FAILED, prompt_id="task-template@v1")`（决策 #3）
+      - 新增用例：断言 `TaskAgentAdapter.build_system_prompt(task)` 纯函数行为未变（不依赖 `loaded.content`）
+    - 同步 `test_task_agent_adapter_property.py` 与 `test_task_agent_tool_subset_properties.py` 构造参数
+    - _需求：5.2–5.6、11.5_
+  - [x] 8.5（checkpoint）Chat + Task 双路径接入完成
+    - 运行 `uv run pytest epsilon-boot/test/infrastructure/task/ -q`，期望全部通过
+    - 运行 `uv run pytest epsilon-boot/test/infrastructure/ -q`，期望全部通过（含 prompt / chat / task 等子树）
+    - _需求：4、5_
+
+- [x] 9. API 层 / SSE / OpenAPI schema（需求 4.6、需求 7.3、7.4；设计 §12 决策 #2）
+  - [x] 9.1 `ChatResponseBody` 新增 `prompt_id` 字段
+    - 修改 `epsilon-boot/src/application/routers/chat.py`
+    - `ChatResponseBody` 追加字段 `prompt_id: str`
+    - 同步路径（`if not request.stream:` 分支）构造 `ChatResponseBody(..., prompt_id=response.prompt_id)`
+    - _需求：7.3_
+  - [x] 9.2 SSE 流式路径追加 `prompt_id` 事件
+    - 修改 `_event_generator()`：
+      - 在 `yield {"data": "[DONE]"}` 之前，插入 `yield {"data": json.dumps({"prompt_id": <prompt_id>}, ensure_ascii=False)}`
+      - `<prompt_id>` 从 `chat_request` 处理链中取回，实现路径建议：在调用 `service.stream_chat(chat_request)` 前先 `prompt_id = service.current_prompt_id()`（或 `await service.get_stream_prompt_id(chat_request)`）；若接口通过生成器 `return value` 暴露则改用 `async for ... else:` + 捕获 `StopAsyncIteration.value`
+      - 确保异常分支（`except Exception as exc:`）即便未拿到 prompt_id 也降级为不写该事件（或写固定 fallback），**但正常完成路径必须恰好一条 `prompt_id` 事件紧邻 `[DONE]` 之前**（决策 #2）
+    - 若需扩展 `ChatServicePort` 增加 `current_prompt_id`（同步属性）或类似方法，必须同时修改 `epsilon-boot/src/domain/chat/ports.py`，并为 `ChatServiceAdapter` 落地对应方法
+    - _需求：4.6、7.3（决策 #2）_
+  - [x] 9.3 Task 路由响应体新增 `prompt_id` 字段
+    - 修改 `epsilon-boot/src/application/routers/task.py`（以及若存在的 Pydantic 响应模型，典型命名 `TaskExecuteResponseBody` 或等效）
+    - 响应 body 中新增字段 `prompt_id: str`，从 `TaskResult.prompt_id` 拷贝
+    - _需求：5.6、7.4_
+  - [x] 9.4（验证）同步 Chat 路由 `prompt_id` 集成测试
+    - 修改 `epsilon-boot/test/application/routers/test_chat_router.py`（扩展既有）：
+      - 注入 fake `ChatServicePort.chat` 返回 `ChatResponseVO(..., prompt_id="chat-default@v3")`
+      - 断言响应 JSON 含 `prompt_id == "chat-default@v3"`，且是非空字符串
+    - 若 `test_chat_router_invalid_request.py` 需同步调整（不应需要）则一并处理
+    - _需求：7.3、11_
+  - [x] 9.5（验证）SSE 流式 `prompt_id` 事件位置测试
+    - 新增 `epsilon-boot/test/infrastructure/chat/test_chat_stream_prompt_id_event_unit.py`（按 design.md 测试策略命名）
+    - 构造 fake `ChatServicePort`：`stream_chat` 产生 N 个 `StreamingChunk`，`current_prompt_id()` 或等效接口返回 `"chat-default@v3"`
+    - 通过 TestClient 发起 `POST /api/chat?stream=true`（或 `stream=True` body）读取 SSE 原始文本
+    - 断言事件序列顺序：最后一个 content chunk → `data: {"prompt_id": "chat-default@v3"}` → `data: [DONE]`；`[DONE]` 前紧邻位置必存在且仅存在一条 `prompt_id` 事件
+    - 用例头部 `# Validates: Property 8 / Requirement 4.6`
+    - _需求：4.6、11.4（Property 8）_
+  - [x] 9.6（验证）Task 路由 `prompt_id` 集成测试
+    - 修改 `epsilon-boot/test/application/routers/test_task_router_unit.py`（扩展既有）：
+      - fake `TaskAgentPort.execute` 返回 `TaskResult(..., prompt_id="task-template@v1")`
+      - 断言响应 JSON 中 `prompt_id == "task-template@v1"`
+    - _需求：7.4_
+  - [x] 9.7（checkpoint）API 层 / SSE 完成
+    - 运行 `uv run pytest epsilon-boot/test/application/ -q`，期望全部通过
+    - 手动校验 OpenAPI：通过 FastAPI TestClient `GET /openapi.json`，断言 `components.schemas.ChatResponseBody.properties` 含 `prompt_id` 字段（可并入任务 9.4 作为一条断言，或写独立 `test_openapi_schema_unit.py`）
+    - _需求：7.3、7.4_
+
+- [x] 10. 可观测性：结构化日志 `extra` + OTel span 属性（需求 7.1、7.2、7.5、7.6；设计 §12、§13、数据模型 §日志 extra 与 OTel 属性）
+  - [x] 10.1（验证）`prompt_id` 传播单元测试
+    - 新增 `epsilon-boot/test/infrastructure/prompt/test_prompt_id_propagation_unit.py`
+    - 用 pytest 内建 `caplog` 捕获 `ChatServiceAdapter.chat` 的 logger 输出：断言至少一条 record 的 `extra`（或 `record.prompt_id` 属性）等于注入的 `LoadedPrompt.prompt_id`
+    - 用 `opentelemetry.sdk.trace.TracerProvider` + `InMemorySpanExporter`（仅依赖 `opentelemetry-sdk`，需求 7.7 禁止引入新 Instrumentation 包）：断言 chat 路径产生的 span 含属性 `prompt.id == "chat-default@v3"`
+    - 对 `TaskAgentAdapter.execute`（SUCCESS 路径 + FAILED 路径）各做一次相同断言，断言 `prompt.id == "task-template@v1"`
+    - **负向断言**：`caplog.text` / span 的任何属性值**不包含** `LoadedPrompt.content` 原文片段（抽前 5 个字符做 `not in` 断言，保证 prompt 内容不污染日志 / trace）
+    - 用例头部 `# Validates: Requirement 7.1, 7.2, 7.5, 7.6 / Property 5`
+    - _需求：7.1、7.2、7.5、7.6、11.6_
+
+- [x] 11. 启动期端到端冒烟测试与错误分支集成（需求 9 全族、需求 11.1；设计 §启动期时序图）
+  - [x] 11.1（验证）`configure_container()` + `container.start()` 端到端
+    - 新增 `epsilon-boot/test/application/test_prompt_registry_boot_regression_unit.py`
+    - 用 `tmp_path` 构造 `tmp_path/prompts/chat-default/v1.md` + `task-template/v1.md`；`monkeypatch.setattr("application.container_config._PROMPT_ASSET_ROOT", tmp_path / "prompts")`（设计 §测试策略明确此替换点）
+    - 正向用例：`await container.start()` 成功，`container.resolve(PromptRegistryPort).get("chat-default")` 返回预期 `LoadedPrompt`
+    - 负向用例：删除 `chat-default/v1.md` 后 `await container.start()` 必定抛 `ConfigurationError` 子类 `PromptAssetFileMissingError`，且容器状态未进入 ready
+    - 负向用例：把 `tmp_path/prompts` 替换为空目录后 `await container.start()` 必定抛 `PromptNotConfiguredError`
+    - 用例头部 `# Validates: Property 1 / Requirement 9.1, 9.2, 11.1`
+    - _需求：9.1、9.2、9.6、11.1_
+  - [x] 11.2（checkpoint）全局回归
+    - 运行 `uv run pytest epsilon-boot/test/ -q`，期望全部通过；**关注**本特性引入的新测试文件（下列）必须全部在通过列表中：
+      - `test/infrastructure/prompt/test_prompt_assets_unit.py`
+      - `test/domain/prompt/test_loaded_prompt_property.py`
+      - `test/domain/prompt/test_prompt_exceptions_unit.py`
+      - `test/infrastructure/prompt/test_prompt_version_config_unit.py`
+      - `test/infrastructure/prompt/test_prompt_version_config_property.py`
+      - `test/infrastructure/prompt/test_filesystem_prompt_registry_adapter_unit.py`
+      - `test/infrastructure/prompt/test_workspace_guidance_property.py`
+      - `test/domain/chat/test_chat_response_vo_unit.py`
+      - `test/application/test_prompt_conflict_detection_unit.py`
+      - `test/infrastructure/chat/test_workspace_guidance_integration_unit.py`
+      - `test/infrastructure/chat/test_chat_stream_prompt_id_event_unit.py`
+      - `test/infrastructure/prompt/test_prompt_id_propagation_unit.py`
+      - `test/application/test_prompt_registry_boot_regression_unit.py`
+    - 额外守卫命令（任一命中即视为未完成）：
+      - `grep -R "from infrastructure" epsilon-boot/src/domain/prompt/` → 无输出
+      - `grep -R "chat_config\.system_prompt" epsilon-boot/src epsilon-boot/test` → 无输出
+      - `grep -R "system_prompt=chat_config" epsilon-boot/src` → 无输出
+      - `grep -RE "CHAT_SYSTEM_PROMPT" epsilon-boot/src` → 仅 `container_config.py::_check_legacy_prompt_conflict` 与注释命中
+    - _需求：所有_
+
+## 备注
+
+- **关键路径依赖顺序**（串行执行的最短必经链）：
+  `1.1/1.2 → 2.2 → 2.3 → 2.4 → 3.2 → 4.1 → 4.2 → 4.3 → 5.1 → 5.4 → 5.6 → 6.1 → 6.2 → 6.3 → 7.1 → 7.3 → 7.4 → 8.1 → 8.2 → 8.3 → 9.1 → 9.2 → 9.3 → 11.1 → 11.2`
+  验证任务（2.5 / 2.6 / 3.4 / 3.5 / 4.4 / 4.5 / 5.3 / 5.5 / 5.7 / 6.4 / 7.6 / 7.7 / 8.4 / 9.4–9.6 / 10.1）与对应实现任务强耦合，但可以各自并行于下一条实现任务启动后执行（不阻塞关键路径）。
+- **破坏性迁移任务 7.3**（删除 `ChatConfig.system_prompt`）需与 7.1、7.4、7.6、7.7 作为一个连续 commit（或至少一个 PR）提交——否则容器启动会因 `ChatConfig.system_prompt` 不存在而失败。任务 6.1 的 `_check_legacy_prompt_conflict` 先合入不会阻断；但 7.3 落地前必须确认任务 7.1 / 7.4 已就绪。
+- **决策 #5 边界**：`PromptVersionConfig` 不走 `create_config` 工厂，不会产生 `ConfigProxy`；任务 3.2 与任何未来新增字段的扩展都需沿用此约束。
+- **测试隔离**：所有启动期错误测试通过 `tmp_path` + `monkeypatch.setattr("application.container_config._PROMPT_ASSET_ROOT", ...)` 隔离，**不**在真实 `epsilon-boot/prompts/` 下构造错误样本；真实资产目录仅由任务 1 落地的两份 `v1.md` 构成。
+- **依赖约束（需求 7.7、10.2）**：本特性不新增任何第三方依赖；`InMemorySpanExporter` 来自已存在依赖 `opentelemetry-sdk`；`hypothesis` 与 `pytest` 已在既有依赖集中。若评审中发现缺失依赖，须通过 `uv add` 操作并同步 `uv.lock`（不得 `pip install`）。
+- **Steering 合规自检**（每次 commit 前快速核对）：
+  - DDD：`domain/prompt/` 不引入 `infrastructure/*`、不引入 `pydantic-settings` — 任务 2.7 的 checkpoint 守卫脚本已覆盖。
+  - 配置：新增 `PROMPT_*` 键仅写入 `config.properties`，不进入 `.env`。
+  - 依赖：无 `pip`/`poetry`/`conda` 命令出现在 PR 中。
+  - 文档：所有新增模块 / 类 / 公开函数配中文 docstring；`docs/prompts.md` 随任务 7.5 落地。

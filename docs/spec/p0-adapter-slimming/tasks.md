@@ -1,0 +1,266 @@
+# 实现计划：P0 Adapter 瘦身
+
+## 概述
+
+本计划把 `design.md` 拆为行为等价、可逐片评审的 P0 adapter 瘦身任务。实现顺序按风险与依赖推进：先锁定 ReAct adapter 行为并拆基础设施协作者，再下沉 Chat / Task 用例编排，最后拆分组合根并同步文档与静态守卫。每个实现切片完成后必须运行聚焦测试并交由 evaluator 审查，审查通过后才勾选对应任务。
+
+本期不涉及 DDL、索引、Redis key、文件格式迁移或数据 backfill。
+
+## Tasks
+
+- [x] 1. ReAct adapter 现状基线与协作者边界准备
+  - [x] 1.1 补充 ReAct 门面行为基线扫描文档
+    - 新增 `docs/spec/p0-adapter-slimming/react-baseline.md`
+    - 记录 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py` 当前主要职责簇：工具执行、审批恢复、最终轮 streaming/events、guardrail/checkpoint/trace 委托、`AgentLoopEffects` 实现
+    - 记录本期允许移动与禁止移动的职责：OTel / ContextVar / ToolRegistry / checkpoint I/O / concrete tool execution 不进入 domain
+    - _需求: 1.3, 2.2, 2.6, 6.3_
+  - [x] 1.2 新增 ReAct 协作者运行时协议模块
+    - 新增 `epsilon-boot/src/infrastructure/agent/react_runtime_protocols.py`
+    - 定义 `ToolExecutionRuntime(Protocol)`，包含 `execute_tool_call(...) -> Awaitable[None]`、`tool_progress_chunk(...) -> StreamingChunk`、`tool_start_event(...) -> AgentStreamEvent`、`tool_result_event(...) -> AgentStreamEvent`、`tool_error_event(...) -> AgentStreamEvent`，签名只引用 `ConversationContext`、`ToolCallRequest`、`AgentConfig`、`StreamingChunk`、`AgentStreamEvent`
+    - 定义 `ApprovalResumeRuntime(Protocol)`，包含 `execute_approved_tool_call(...) -> Awaitable[None]`、`record_rejected_tool_call(...) -> Awaitable[None]`
+    - 所有公开类/方法补中文 docstring；不导入 `application`
+    - _需求: 2.3, 2.4, 6.4_
+  - [x] 1.3 验证 ReAct 协作者协议静态边界
+    - 新增 `epsilon-boot/test/infrastructure/agent/test_react_runtime_protocols_static.py`
+    - 使用 AST 或 `inspect` 断言 `react_runtime_protocols.py` 不导入 `application`、不导入 `common.configuration`、不导入 concrete tool/store adapter
+    - 断言协议方法名与设计文档一致
+    - _需求: 2.3, 2.6, 6.2_
+  - [x] 1.4 检查点：ReAct 基线准备
+    - 在 `epsilon-boot/` 下运行 `PYTHONPATH=src uv run --frozen pytest test/infrastructure/agent/test_react_runtime_protocols_static.py`
+    - 运行 `uv run ruff check src/infrastructure/agent/react_runtime_protocols.py test/infrastructure/agent/test_react_runtime_protocols_static.py`
+    - _需求: 7.1, 7.3_
+
+- [x] 2. ReAct 工具执行协作者切片
+  - [x] 2.1 新增 `ReactToolExecutionCoordinator`
+    - 新增 `epsilon-boot/src/infrastructure/agent/react_tool_execution_coordinator.py`
+    - 定义 `@dataclass(frozen=True) class ToolExecutionBatchResult`，字段 `executed_count: int`
+    - 定义 `class ReactToolExecutionCoordinator`，构造函数 `def __init__(self, runtime: ToolExecutionRuntime) -> None`
+    - 实现 `async def dispatch(self, *, context: ConversationContext, tool_calls: Sequence[ToolCallRequest], config: AgentConfig) -> ToolExecutionBatchResult`
+    - 实现 `def stream_progress(self, *, context: ConversationContext, tool_calls: Sequence[ToolCallRequest], config: AgentConfig, round_num: int) -> AsyncIterator[StreamingChunk]`
+    - 实现 `def stream_events(self, *, context: ConversationContext, tool_calls: Sequence[ToolCallRequest], config: AgentConfig, round_num: int) -> AsyncIterator[AgentStreamEvent]`
+    - 初始实现从 `ReActAgentAdapter._dispatch_concurrent_tool_calls`、`_stream_concurrent_tool_progress`、`_events_concurrent_tool_calls` 行为等价平移；不得改变同轮工具并发与 start/end 成对相邻约束
+    - _需求: 2.3, 2.4, 2.5, 7.1_
+  - [x] 2.2 修改 `ReActAgentAdapter` 委托工具执行协作者
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - 在 `__init__` 中创建 `self._tool_execution_coordinator = ReactToolExecutionCoordinator(runtime=self)` 或等价窄 runtime 实例
+    - 让 `ReActAgentAdapter` 显式实现 `ToolExecutionRuntime` 所需方法，保留原 `_execute_tool_call` 主体和日志/trace/checkpoint/guardrail 副作用顺序
+    - 将 `run` / `resume` / `run_streaming` / `run_events` 中对 `_dispatch_concurrent_tool_calls`、`_stream_concurrent_tool_progress`、`_events_concurrent_tool_calls` 的调用改为协作者委托
+    - 保留旧私有方法作为薄委托或删除；若删除，更新测试 import/patch 点
+    - _需求: 2.1, 2.4, 2.5_
+  - [x] 2.3 验证工具执行协作者行为等价
+    - 新增 `epsilon-boot/test/infrastructure/agent/test_react_tool_execution_coordinator_unit.py`
+    - 覆盖 `dispatch` 并发执行数量、`stream_progress` start/end 成对相邻、`stream_events` tool_start/tool_result/tool_error 成对相邻、异常工具不吞掉错误事件
+    - 更新既有 `test_react_agent_concurrent_tool_calls_unit.py`、`test_react_agent_streaming_unit.py`、`test_react_agent_events_unit.py` 中必要的 patch 路径
+    - _需求: 2.5, 7.1_
+  - [x] 2.4 检查点：ReAct 工具执行切片
+    - 运行 `PYTHONPATH=src uv run --frozen pytest test/infrastructure/agent/test_react_tool_execution_coordinator_unit.py test/infrastructure/agent/test_react_agent_concurrent_tool_calls_unit.py test/infrastructure/agent/test_react_agent_streaming_unit.py test/infrastructure/agent/test_react_agent_events_unit.py`
+    - 运行 `uv run ruff check src/infrastructure/agent/react_tool_execution_coordinator.py src/infrastructure/agent/react_agent_adapter.py test/infrastructure/agent/test_react_tool_execution_coordinator_unit.py`
+    - 需 evaluator 审查 PASS 后勾选本组
+    - _需求: 1.3, 2.5, 7.5_
+
+- [x] 3. ReAct 审批恢复协作者切片
+  - [x] 3.1 新增 `ReactApprovalResumeCoordinator`
+    - 新增 `epsilon-boot/src/infrastructure/agent/react_approval_resume_coordinator.py`
+    - 定义 `class ReactApprovalResumeCoordinator`，构造函数 `def __init__(self, runtime: ApprovalResumeRuntime) -> None`
+    - 实现 `async def apply_decisions(self, *, context: ConversationContext, interrupt: ApprovalInterrupt, decisions: Sequence[ApprovalDecision]) -> None`
+    - 实现 `@staticmethod def latest_tool_calls_by_id(context: ConversationContext) -> Mapping[str, ToolCallRequest]`
+    - 从 `ReActAgentAdapter._apply_approval_decisions`、`_record_rejected_tool_call`、`_latest_tool_calls_by_id` 平移 approve/edit/reject 处理顺序；不恢复 respond 分支
+    - _需求: 2.3, 2.4, 2.5_
+  - [x] 3.2 修改 `ReActAgentAdapter.resume` 委托审批恢复协作者
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - 在 `__init__` 中创建 `self._approval_resume_coordinator = ReactApprovalResumeCoordinator(runtime=self)` 或等价窄 runtime
+    - 让 `_apply_approval_decisions(...)` 降为薄委托，或将 `resume(...)` 直接调用协作者
+    - 保留工具执行、checkpoint、trace、ToolMessage 写入的副作用顺序不变
+    - _需求: 2.1, 2.4, 2.5_
+  - [x] 3.3 验证审批恢复行为等价
+    - 新增 `epsilon-boot/test/infrastructure/agent/test_react_approval_resume_coordinator_unit.py`
+    - 覆盖 approve 执行原工具、edit 重建参数后执行、reject 写拒绝工具结果、决策顺序由上层已校验、latest tool calls 取最后同 id 调用
+    - 运行并修订既有 `test_react_agent_hitl_unit.py`、`test_react_agent_hitl_checkpoint_recovery_unit.py`、`test_react_agent_hitl_resume_timestamp_roundtrip_unit.py`
+    - _需求: 2.5, 7.1_
+  - [x] 3.4 检查点：ReAct 审批恢复切片
+    - 运行 `PYTHONPATH=src uv run --frozen pytest test/infrastructure/agent/test_react_approval_resume_coordinator_unit.py test/infrastructure/agent/test_react_agent_hitl_unit.py test/infrastructure/agent/test_react_agent_hitl_checkpoint_recovery_unit.py test/infrastructure/agent/test_react_agent_hitl_resume_timestamp_roundtrip_unit.py`
+    - 运行 `uv run ruff check src/infrastructure/agent/react_approval_resume_coordinator.py src/infrastructure/agent/react_agent_adapter.py test/infrastructure/agent/test_react_approval_resume_coordinator_unit.py`
+    - 需 evaluator 审查 PASS 后勾选本组
+    - _需求: 1.3, 2.5, 7.5_
+
+- [x] 4. ReAct 最终轮流式协作者切片
+  - [x] 4.1 新增 `ReactFinalRoundStreamer`
+    - 新增 `epsilon-boot/src/infrastructure/agent/react_final_round_streamer.py`
+    - 定义 `class ReactFinalRoundStreamer`
+    - 实现 `def stream_chunks(self, *, context: ConversationContext, config: AgentConfig, model_access: ModelAccessPort, round_num: int, initial_usage: Mapping[str, object] | None = None) -> AsyncIterator[StreamingChunk]`
+    - 实现 `def stream_events(self, *, context: ConversationContext, config: AgentConfig, model_access: ModelAccessPort, round_num: int, initial_usage: Mapping[str, object] | None = None) -> AsyncIterator[AgentStreamEvent]`
+    - 从 `ReActAgentAdapter._stream_final_round` 与 `_stream_events_final_round` 平移最终轮累积、`tool_arguments_delta`、usage 合并、finished 分片/事件逻辑
+    - 避免裸 `Any`；若 usage 类型必须异构，使用既有 `Mapping[str, Any]` 模式并保持局部
+    - _需求: 2.3, 2.4, 2.5_
+  - [x] 4.2 修改 `ReActAgentAdapter` 委托最终轮流式输出
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - 在 `run_streaming` 和 `run_events` 的 final round 分支调用 `self._final_round_streamer.stream_chunks(...)` / `stream_events(...)`
+    - 保留 `_stream_final_round` / `_stream_events_final_round` 作为兼容薄委托或删除并更新测试
+    - _需求: 2.1, 2.5_
+  - [x] 4.3 验证最终轮流式行为等价
+    - 新增 `epsilon-boot/test/infrastructure/agent/test_react_final_round_streamer_unit.py`
+    - 覆盖 text delta 累积、usage 合并、finished 分片、`tool_arguments_delta` 事件、max_rounds/token_budget_exceeded 时跳过最终轮的既有调用方语义
+    - 更新既有 `test_react_agent_tool_arguments_delta_unit.py`、`test_react_agent_final_round_helper_unit.py`、`test_react_agent_final_round_helper_property.py`
+    - _需求: 2.5, 7.1_
+  - [x] 4.4 检查点：ReAct adapter 瘦身完成
+    - 运行 `PYTHONPATH=src uv run --frozen pytest test/infrastructure/agent`
+    - 运行 `uv run ruff check src/infrastructure/agent test/infrastructure/agent`
+    - 记录 `react_agent_adapter.py` 行数变化到 `docs/spec/p0-adapter-slimming/react-baseline.md`
+    - 需 evaluator 审查 PASS 后勾选本组
+    - _需求: 1.4, 2.5, 7.1, 7.3, 7.5_
+
+- [x] 5. Chat adapter 用例编排下沉切片
+  - [x] 5.1 判断并实现 Chat 分段应用服务落点
+    - 修改 `epsilon-boot/src/application/chat/chat_application_service.py` 或新增 `epsilon-boot/src/application/chat/chat_segment_application_service.py`
+    - 若新增类，定义 `class ChatSegmentApplicationService`，方法 `async def run_segmented_chat(...) -> ChatResponseVO` 与 `async def continue_segmented_chat(...) -> ChatResponseVO`
+    - 若扩展既有类，新增方法名保持同等语义，避免让 `ChatApplicationService` 接收 concrete infrastructure adapter
+    - 从 `ChatServiceAdapter._run_segmented_chat`、`_run_segmented_agent_on_context`、`_stream_segmented_agent_events_on_context` 中迁移可脱离模型技术细节的分段风险门、保存时机、`ChatResponseVO` 状态组合
+    - adapter 通过回调提供模型解析、Agent 调用、stream/event 包装
+    - _需求: 3.2, 3.3, 3.4, 3.5_
+  - [x] 5.2 修改 `ChatServiceAdapter` 委托分段应用编排
+    - 修改 `epsilon-boot/src/infrastructure/chat/chat_service_adapter.py`
+    - 构造函数新增可选 `chat_segment_service: ChatSegmentApplicationService | None = None` 或扩展现有 `chat_application_service`
+    - `chat(...)`、`continue_chat(...)`、`stream_chat_events(...)`、`stream_continue_chat_events(...)` 中分段路径委托 application 服务；保留 `_resolve_model_access(...)`、`_make_agent_config(...)`、direct LLM path、`StreamingChunk`/`AgentStreamEvent` 包装
+    - 保持 `ChatServicePort` 方法签名不变
+    - _需求: 3.1, 3.2, 3.3, 3.4_
+  - [x] 5.3 验证 Chat 分段编排行为等价
+    - 新增或修改 `epsilon-boot/test/application/chat/test_chat_segment_application_service_unit.py`
+    - 覆盖 completed、paused(max_rounds/token_budget_exceeded)、approval_required、session save/index 时机、prompt_id 传播
+    - 更新既有 `test/infrastructure/chat/test_chat_segmented_execution_unit.py`、`test_chat_segmented_stream_unit.py`、`test_chat_service_continue_unit.py`、`test_chat_service_stream_resume_unit.py`
+    - _需求: 3.4, 3.5, 7.1_
+  - [x] 5.4 检查点：Chat adapter 瘦身
+    - 运行 `PYTHONPATH=src uv run --frozen pytest test/application/chat test/infrastructure/chat`
+    - 运行 `uv run ruff check src/application/chat src/infrastructure/chat test/application/chat test/infrastructure/chat`
+    - 需 evaluator 审查 PASS 后勾选本组
+    - _需求: 1.3, 3.5, 7.5_
+
+- [x] 6. Task 纯映射与 trace workflow 切片
+  - [x] 6.1 新增任务结果纯映射模块
+    - 新增 `epsilon-boot/src/domain/task/result_mapping.py`
+    - 定义 `class TaskResultMapper`，至少包含 `@staticmethod def status_for_agent_result(agent_result: AgentResult) -> TaskStatus`
+    - 如现有 `TaskResult` 构造可无基础设施依赖完成，再新增 `to_task_result(...) -> TaskResult`；否则只上提状态/终止原因/can_continue 纯判定
+    - 复用 `TaskContinuationPolicy.should_pause(...)`，不得导入 `application`、`infrastructure`、`domain.run`
+    - _需求: 4.2, 4.3, 6.4_
+  - [x] 6.2 新增任务 trace workflow
+    - 新增 `epsilon-boot/src/application/task/__init__.py`
+    - 新增 `epsilon-boot/src/application/task/task_trace_workflow.py`
+    - 定义 `class TaskTraceWorkflow`，方法 `def extract_trace(self, context: ConversationContext, *, event_timestamps: Mapping[int, int] | None = None) -> list[<真实Trace类型>]`
+    - 从 `TaskAgentAdapter._extract_trace` 平移 trace shaping；优先使用 `event_timestamps[index]`，缺失时回退当前时间，保持现有 timestamp 语义
+    - 不持有 `TraceStorePort`，不执行 I/O
+    - _需求: 4.3, 4.4, 6.4_
+  - [x] 6.3 验证任务纯映射与 trace workflow
+    - 新增 `epsilon-boot/test/domain/task/test_task_result_mapping_unit.py`
+    - 新增 `epsilon-boot/test/application/task/test_task_trace_workflow_unit.py`
+    - 覆盖 AgentResult completed/approval_required/max_rounds/token_budget_exceeded 到任务状态映射、trace timestamp 使用事件时刻、缺失 timestamp 回退、输出字段与既有 adapter 等价
+    - _需求: 4.3, 4.4, 7.1_
+  - [x] 6.4 检查点：Task 纯逻辑切片
+    - 运行 `PYTHONPATH=src uv run --frozen pytest test/domain/task/test_task_result_mapping_unit.py test/application/task/test_task_trace_workflow_unit.py`
+    - 运行 `uv run ruff check src/domain/task/result_mapping.py src/application/task test/domain/task/test_task_result_mapping_unit.py test/application/task/test_task_trace_workflow_unit.py`
+    - 运行 `uv run pyright src/domain/task/result_mapping.py src/application/task`
+    - 需 evaluator 审查 PASS 后勾选本组
+    - _需求: 7.3, 7.4, 7.5_
+
+- [x] 7. Task application service 与 adapter 委托切片
+  - [x] 7.1 新增 `TaskApplicationService`
+    - 新增 `epsilon-boot/src/application/task/task_application_service.py`
+    - 定义 `RunTaskAgentCallable = Callable[[ConversationContext, AgentConfig], Awaitable[AgentResult]]`
+    - 定义 `class TaskApplicationService`，构造函数接收 `session_store: SessionContextStorePort`、`approval_store: ApprovalStateStorePort | None`、`trace_workflow: TaskTraceWorkflow`、以及必要的纯策略/mapper；不得接收 concrete infrastructure adapter
+    - 实现 `async def execute_task(self, task: Task, *, run_agent: RunTaskAgentCallable) -> TaskResult`
+    - 实现 `async def continue_task(self, request: TaskContinueRequest, *, run_agent: RunTaskAgentCallable) -> TaskResult`
+    - 实现 `async def resume_approval(self, request: TaskApprovalResumeRequest, *, run_agent: RunTaskAgentCallable) -> TaskResult`
+    - 保持 approval load → expired/count/order/allowed → consume → agent resume 的顺序
+    - _需求: 4.1, 4.2, 4.3, 4.4_
+  - [x] 7.2 修改 `TaskAgentAdapter` 委托应用服务
+    - 修改 `epsilon-boot/src/infrastructure/task/task_agent_adapter.py`
+    - 构造函数新增 `task_application_service: TaskApplicationService | None = None` 与 `task_trace_workflow: TaskTraceWorkflow | None = None`，默认构造保持旧测试兼容
+    - `execute(...)`、`continue_task(...)`、`resume_approval(...)` 委托 application service；adapter 保留 prompt 构造、`AgentConfig` 构造、tool schema 边界、AgentPort 调用回调、TraceStore 持久化
+    - `_extract_trace` 降为调用 `TaskTraceWorkflow.extract_trace(...)` 的薄委托或删除并更新测试
+    - _需求: 4.1, 4.2, 4.4_
+  - [x] 7.3 验证 Task application service 行为等价
+    - 新增 `epsilon-boot/test/application/task/test_task_application_service_unit.py`
+    - 更新 `epsilon-boot/test/infrastructure/task/test_task_agent_adapter_unit.py` 与 `test_task_agent_adapter_property.py`
+    - 覆盖 execute 有/无 session_id、continue 不追加原任务目标、resume approval 错误顺序、TraceStore 写入仍由 adapter 执行、tool schema 未扩大
+    - _需求: 4.1, 4.4, 7.1_
+  - [x] 7.4 检查点：Task adapter 瘦身
+    - 运行 `PYTHONPATH=src uv run --frozen pytest test/application/task test/domain/task test/infrastructure/task`
+    - 运行 `uv run ruff check src/application/task src/domain/task/result_mapping.py src/infrastructure/task test/application/task test/domain/task test/infrastructure/task`
+    - 需 evaluator 审查 PASS 后勾选本组
+    - _需求: 1.3, 4.4, 7.5_
+
+- [x] 8. 组合根拆分切片
+  - [x] 8.1 新增 application container 子包
+    - 新增 `epsilon-boot/src/application/container/__init__.py`
+    - 新增 `epsilon-boot/src/application/container/agent.py`
+    - 新增 `epsilon-boot/src/application/container/chat.py`
+    - 新增 `epsilon-boot/src/application/container/task.py`
+    - 新增 `epsilon-boot/src/application/container/run.py`
+    - 新增 `epsilon-boot/src/application/container/tools.py`
+    - 新增 `epsilon-boot/src/application/container/storage.py`
+    - 每个模块提供 `register_*_components(container: Container) -> None` 或迁移自 `container_config.py` 的同等 factory；允许导入 infrastructure concrete adapter，因为这些模块属于组合根子模块
+    - _需求: 5.1, 5.2, 5.3, 6.4_
+  - [x] 8.2 修改 `container_config.py` 委托分组注册
+    - 修改 `epsilon-boot/src/application/container_config.py`
+    - 保留现有对外函数、配置加载语义、Scope、backend dispatch、singleton 生命周期
+    - 将 Agent/Chat/Task/Run/Tools/Storage 相关私有 factory 分批迁移到 `application/container/*.py`
+    - 不改变 public import path；既有调用方仍从 `application.container_config` 使用容器构建入口
+    - _需求: 5.1, 5.2, 5.3_
+  - [x] 8.3 更新静态导入守卫组合根路径
+    - 修改 `epsilon-boot/test/static/test_architecture_import_boundaries.py`
+    - 将 `SRC_ROOT / "application" / "container"` 下 Python 文件加入 `_composition_root_relative_paths()` 或 `APPLICATION_COMPOSITION_ROOT_PATHS`
+    - 保持 `APPLICATION_INFRASTRUCTURE_IMPORT_EXCEPTIONS == {}`，不得用例外表放宽非组合根 application 文件
+    - _需求: 5.3, 6.2_
+  - [x] 8.4 验证组合根 wiring 等价
+    - 更新 `epsilon-boot/test/application/test_container_config.py`
+    - 更新 `epsilon-boot/test/application/test_container_config_backend_dispatch.py`
+    - 更新 `epsilon-boot/test/application/test_run_container_wiring_unit.py`
+    - 更新 `epsilon-boot/test/application/test_segmented_container_wiring_static.py`
+    - 覆盖 ChatServicePort、TaskAgentPort、AgentPort、RunApplicationService、ToolRegistry、SessionStore、ApprovalStore、TraceStore 关键绑定仍可解析
+    - _需求: 5.1, 5.4, 7.1_
+  - [x] 8.5 检查点：组合根拆分
+    - 运行 `PYTHONPATH=src uv run --frozen pytest test/static/test_architecture_import_boundaries.py test/application/test_container_config.py test/application/test_container_config_backend_dispatch.py test/application/test_run_container_wiring_unit.py test/application/test_segmented_container_wiring_static.py`
+    - 运行 `uv run ruff check src/application/container_config.py src/application/container test/static/test_architecture_import_boundaries.py test/application/test_container_config.py`
+    - 需 evaluator 审查 PASS 后勾选本组
+    - _需求: 1.3, 5.4, 6.2, 7.5_
+
+- [x] 9. 文档同步与 ADR 判断
+  - [x] 9.1 同步架构主题文档
+    - 修改 `docs/architecture.md`：更新 adapter 瘦身后的 application/domain/infrastructure 职责图、组合根子模块说明
+    - 修改 `docs/agent.md`: 更新 ReAct adapter 门面与 `ReactToolExecutionCoordinator`、`ReactApprovalResumeCoordinator`、`ReactFinalRoundStreamer` 的职责边界
+    - 修改 `docs/domain-model.md`: 更新 `domain/task/result_mapping.py` 纯映射与 Task trace workflow 的归属说明
+    - 修改 `docs/di-container.md`: 更新 `application/container/*` 分组装配与组合根例外说明
+    - _需求: 6.1, 6.3, 6.4_
+  - [x] 9.2 执行 ADR 判断
+    - 对照 `docs/steering/adr.md` 与 `docs/adr/README.md`
+    - 若实现新增长期一等抽象（例如独立 `ChatSegmentApplicationService` 被确认为长期边界）、改变 `AgentLoopEffects`/Port 签名、扩大组合根例外边界或改变已 Accepted ADR 结论，则新增 `docs/adr/NNNN-*.md` 并更新 `docs/adr/README.md`
+    - 若不新增 ADR，在 `docs/spec/p0-adapter-slimming/review-log.md` 或后续 `summary.md` 记录“不新增 ADR”的原因
+    - _需求: 1.2, 6.3_
+  - [x] 9.3 更新 spec 过程记录
+    - 新增或更新 `docs/spec/p0-adapter-slimming/review-log.md`
+    - 记录每个 evaluator PASS/FAIL、关键测试命令、行数变化、未处理 follow-up
+    - _需求: 1.4, 7.5_
+
+- [x] 10. 最终验证与收口
+  - [x] 10.1 运行静态边界与聚焦回归
+    - 在 `epsilon-boot/` 下运行 `PYTHONPATH=src uv run --frozen pytest test/static/test_architecture_import_boundaries.py`
+    - 运行 `PYTHONPATH=src uv run --frozen pytest test/infrastructure/agent test/infrastructure/chat test/infrastructure/task test/application/chat test/application/task test/application/test_container_config.py test/application/test_container_config_backend_dispatch.py`
+    - _需求: 7.1, 7.2_
+  - [x] 10.2 运行全量后端测试与 lint
+    - 在 `epsilon-boot/` 下运行 `PYTHONPATH=src uv run --frozen pytest`
+    - 运行 `uv run ruff check src test`
+    - 运行 `uv run pyright src/domain src/application`
+    - 若 pyright 存在既有基线错误，记录新增/既有归属；新增模块不得引入新错误
+    - _需求: 7.2, 7.3, 7.4_
+  - [x] 10.3 最终 evaluator 审查
+    - 审查范围：`docs/spec/p0-adapter-slimming/requirement.md`、`design.md`、`tasks.md`、`review-log.md`、全部源码/测试/文档改动
+    - PASS 后方可勾选最终任务
+    - _需求: 7.5_
+  - [x] 10.4 编写最终 summary
+    - 新增 `docs/spec/p0-adapter-slimming/summary.md`
+    - 记录 feature slug、最终产物、关键设计决策、行数变化、测试覆盖、ADR 判断、follow-ups
+    - _需求: 1.4_
+
+## 备注
+
+- 本计划默认行为等价。实现中发现 bug 或语义争议时，先记录 follow-up；除非阻塞当前重构，不在本 spec 中顺手修复。
+- 未跟踪 TODO 文件（`epsilon-boot/src/domain/TODO.md`、`epsilon-boot/src/domain/agent/TODO.md`、`epsilon-boot/src/infrastructure/tools/mcp/TODO.md`）不属于本计划范围。
+- 若任一切片实际需要修改公开 Port 签名、事件类型、配置键、持久化格式或工具安全语义，停止实现并回到 requirement/design 修订。

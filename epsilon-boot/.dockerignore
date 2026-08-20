@@ -1,0 +1,14 @@
+.git
+.venv
+.pytest_cache
+.hypothesis
+.ruff_cache
+.idea
+.kiro
+__pycache__
+*.pyc
+test/
+docs/
+.claude/
+*.md
+!README.md

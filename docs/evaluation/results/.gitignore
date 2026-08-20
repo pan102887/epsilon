@@ -1,0 +1,6 @@
+# 本目录承载评测原始 JSON（`run_eval.py` 输出）与一次性端到端演练日志
+# （`docs/spec/spec-ai-evaluation/tasks.md` 任务 6.4）。仓库根 `.gitignore`
+# 默认忽略 `*.log`，但本目录下的 `dry-run-*.log` 是交付证据，必须可审；
+# 以下规则把它们显式恢复进 git 追踪，不影响仓库其它 `.log` 的忽略。
+
+!dry-run-*.log

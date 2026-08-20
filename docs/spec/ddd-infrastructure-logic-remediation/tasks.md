@@ -1,0 +1,242 @@
+# 实现计划：DDD Infrastructure Logic Remediation
+
+## 概述
+
+本计划按 `design.md` 的既定顺序拆分为可独立实现、验证和评审的小切片。第一切片固定为 Run worker 依赖反转：先把 Run outcome 类型与持久化判定迁入 `domain/run/outcome.py`，再用 `infrastructure/run/worker_contracts.py` 的结构化 `Protocol` 消除 `infrastructure/run` 对 `application.run.*` 的生产代码导入，同时保留 claim、lease、heartbeat、poll/wake、lost sweep、事件追加和运行时指标等技术职责在基础设施层。
+
+后续切片依次加固静态 import guard、收敛 API presenter/serializer 边界、诊断并迁移 ChatServiceAdapter 中的用例编排、抽取 handoff 纯判定，并在相应结构变化后同步主题文档与 ADR 判断。所有验证命令均在 `epsilon-boot/` 目录下执行，使用 `PYTHONPATH=src uv run --frozen pytest ...`。本计划不包含数据库 DDL、索引、Redis key schema、文件布局迁移、配置键变更或 backfill 任务。
+
+## Tasks
+
+- [x] 1. Run outcome 领域边界
+  - [x] 1.1 创建 `domain.run.outcome` 领域结果与持久化判定模块
+    - 在 `epsilon-boot/src/domain/run/outcome.py` 中新增模块级中文 docstring。
+    - 定义 `@dataclass(frozen=True) class RunExecutionOutcome`，字段保持现有 `application.run.run_execution_coordinator.RunExecutionOutcome` 等价：`status: RunStatus`、`result: dict[str, Any] | None = None`、`error: dict[str, Any] | None = None`、`terminal_reason: str | None = None`、`can_continue: bool = False`、`approval_id: str | None = None`、`segment_metadata: dict[str, Any] | None = None`、`workflow_run_state: dict[str, Any] | None = None`、`collaboration_summary: dict[str, Any] | None = None`。
+    - 定义 `class RunStoreMutationKind(StrEnum)`，成员为 `MARK_SUCCEEDED = "mark_succeeded"`、`MARK_PAUSED = "mark_paused"`、`MARK_AWAITING_APPROVAL = "mark_awaiting_approval"`、`MARK_FAILED = "mark_failed"`、`MARK_CANCELLED = "mark_cancelled"`。
+    - 定义 `@dataclass(frozen=True) class RunStoreMutation`，字段为 `kind`、`result`、`error`、`approval_id`、`reason`、`workflow_run_state`、`collaboration_summary`。
+    - 定义 `@dataclass(frozen=True) class RunOutcomePersistenceDecision`，字段为 `mutation: RunStoreMutation`、`event_type: RunEventType`、`terminal_outcome: RunExecutionOutcome`。
+    - 实现 `def decide_run_outcome_persistence(outcome: RunExecutionOutcome) -> RunOutcomePersistenceDecision`：按 `SUCCEEDED`、`PAUSED`、`AWAITING_APPROVAL`、`CANCELLED`、`FAILED` 和其它 `RunStatus` 生成 mutation 与 terminal event；缺失 `approval_id` 时生成 failed terminal outcome，错误 message 包含 `approval_id`；函数不得导入 `application`、`infrastructure`、Pydantic、FastAPI、ContextVar、asyncio 或 OTel。
+    - _需求: 1.6, 2.1, 2.2, 2.3, 2.5, 8.2, 8.3, 8.5_
+  - [x] 1.2 编写 Run outcome 持久化判定单元测试
+    - 在 `epsilon-boot/test/domain/run/test_run_outcome_persistence_unit.py` 中新增 pytest 单元测试。
+    - 覆盖 `RunStatus.SUCCEEDED`、`PAUSED`、`AWAITING_APPROVAL` 带 `approval_id`、`AWAITING_APPROVAL` 缺 `approval_id`、`CANCELLED`、`FAILED`、`QUEUED/RUNNING/LOST` 等 unsupported status。
+    - 断言每种 status 的 `RunStoreMutationKind`、`RunEventType`、`terminal_outcome.status`、`result/error` fallback、`workflow_run_state` 与 `collaboration_summary` 传播保持行为等价；缺失 approval id 不产生 `MARK_AWAITING_APPROVAL` 或 `APPROVAL_REQUIRED`。
+    - 在 `epsilon-boot/` 下运行：`PYTHONPATH=src uv run --frozen pytest test/domain/run/test_run_outcome_persistence_unit.py`。
+    - **验证: 需求 2.1, 2.2, 2.3, 2.5, 2.7, 8.2, 8.3, 8.5；覆盖 Property 3, Property 4, Property 5**
+  - [x] 1.3 迁移 RunExecutionCoordinator 与 workflow outcome import
+    - 在 `epsilon-boot/src/application/run/run_execution_coordinator.py` 中删除本地 `RunExecutionOutcome` dataclass，改为 `from domain.run.outcome import RunExecutionOutcome`；保留 `RunExecutionCoordinator.execute(self, snapshot: RunSnapshot, progress: RunProgressSink) -> RunExecutionOutcome` 签名和现有 `_chat_outcome`、`_task_outcome`、`_failed_outcome` 行为。
+    - 在 `epsilon-boot/src/application/run/workflow_orchestrator.py` 中把所有 `RunExecutionOutcome` 的 `TYPE_CHECKING`、局部 import 和 helper 构造改为导入 `domain.run.outcome.RunExecutionOutcome`，不改变 phase routing、capability rejection、limit outcome 或 workflow/collaboration 字段合并语义。
+    - 在 `epsilon-boot/src/application/run/__init__.py` 中继续对外 re-export `RunExecutionOutcome`，来源改为 `domain.run.outcome`，避免现有调用方一次性断裂。
+    - _需求: 1.7, 2.2, 2.5, 7.5, 8.6_
+  - [x] 1.4 更新 Run application 相关测试的 outcome import
+    - 在 `epsilon-boot/test/application/run/test_run_execution_coordinator_workflow_unit.py`、`epsilon-boot/test/application/run/test_workflow_orchestrator_unit.py`、`epsilon-boot/test/application/run/test_workflow_role_capability.py`、`epsilon-boot/test/application/test_long_task_phase3_integration.py`、`epsilon-boot/test/application/test_long_task_phase6_integration.py`、`epsilon-boot/test/integration/test_long_task_runtime_convergence_p2.py` 中，将 `RunExecutionOutcome` import 改为 `domain.run.outcome` 或保留经 `application.run` re-export 的兼容路径，并优先使用 domain import。
+    - 聚焦断言 `RunExecutionCoordinator.execute(...)`、`WorkflowRunOrchestrator.execute_phase(...)` 和 workflow helper 返回的 outcome 字段不变。
+    - 在 `epsilon-boot/` 下运行：`PYTHONPATH=src uv run --frozen pytest test/application/run/test_run_execution_coordinator_workflow_unit.py test/application/run/test_workflow_orchestrator_unit.py test/application/run/test_workflow_role_capability.py`。
+    - **验证: 需求 1.7, 2.2, 7.5；覆盖 Property 3, Property 9**
+
+- [x] 2. Run worker 依赖反转与组合根注入
+  - [x] 2.1 新增 Run worker collaborator 协议
+    - 在 `epsilon-boot/src/infrastructure/run/worker_contracts.py` 中新增模块级中文 docstring。
+    - 定义 `class RunSegmentExecutor(Protocol)`，方法 `async def execute(self, snapshot: RunSnapshot, progress: RunProgressSink) -> RunExecutionOutcome: ...`。
+    - 定义 `class RunRecoverySweep(Protocol)`，方法 `async def sweep_expired_leases(self, *, now: datetime) -> list[RunSnapshot]: ...`。
+    - 定义 `class RunRuntimeMetricsSink(Protocol)`，方法 `increment_claim_success(self) -> None`、`increment_lost(self, count: int = 1) -> None`、`observe_execution_duration(self, duration_seconds: float) -> None`、`increment_execution_failed(self) -> None`。
+    - 协议只导入 `domain.run.outcome`、`domain.run.ports`、`domain.run.value_objects` 和标准库，不导入 `application.run.*` 或具体 adapter。
+    - _需求: 1.2, 1.3, 1.4, 2.6, 6.3_
+  - [x] 2.2 修改 RunWorker 使用 domain outcome 与协议执行 store mutation
+    - 在 `epsilon-boot/src/infrastructure/run/run_worker.py` 中移除 `application.run.run_application_service.RunRuntimeMetrics`、`application.run.run_execution_coordinator.RunExecutionCoordinator`、`RunExecutionOutcome` 的导入。
+    - 改为导入 `RunExecutionOutcome`、`RunOutcomePersistenceDecision`、`RunStoreMutationKind`、`decide_run_outcome_persistence` 和 `RunRuntimeMetricsSink`、`RunSegmentExecutor`。
+    - 将 `RunWorker.__init__(..., coordinator: RunExecutionCoordinator, ..., metrics: RunRuntimeMetrics | None = None)` 改为 `RunWorker.__init__(..., executor: RunSegmentExecutor, ..., metrics: RunRuntimeMetricsSink | None = None)`；若为兼容测试临时保留 `coordinator` 参数名，也必须只按协议类型使用且文件中不得出现 `application.` import。
+    - 将 `_execute(self, snapshot: RunSnapshot, progress: RunProgressSink) -> RunExecutionOutcome` 委托 `self._executor.execute(...)`；异常 fallback 构造 domain `RunExecutionOutcome(status=RunStatus.FAILED, error={"message": ..., "type": ...}, terminal_reason="failed")`。
+    - 将 `_persist_outcome(self, run_id: str, outcome: RunExecutionOutcome) -> None` 改为调用 `decide_run_outcome_persistence(outcome)`，再由新增 `_apply_store_mutation(self, run_id: str, decision: RunOutcomePersistenceDecision) -> RunSnapshot` 调用 `mark_succeeded`、`mark_paused`、`mark_awaiting_approval`、`mark_failed` 或 `mark_cancelled`。
+    - `_append_terminal_event(...)` 使用 `decision.event_type` 和 `decision.terminal_outcome`，确保缺失 approval id fallback 追加 `RUN_FAILED` 且 payload status 为 `failed`；保留 claim、heartbeat、cancel pre/post segment、progress event、日志和 metrics 在本文件。
+    - _需求: 1.2, 1.6, 1.7, 2.1, 2.2, 2.3, 2.4, 2.6, 8.3_
+  - [x] 2.3 更新 RunWorker 聚焦测试
+    - 在 `epsilon-boot/test/infrastructure/run/test_run_worker_unit.py` 与 `epsilon-boot/test/infrastructure/run/test_run_worker_workflow_unit.py` 中，将 `RunExecutionOutcome` import 改为 `domain.run.outcome.RunExecutionOutcome`，将 fake `_FakeCoordinator` / `_Coordinator` 命名或构造参数改为符合 `RunSegmentExecutor.execute(snapshot, progress)` 的协议。
+    - 覆盖 succeeded、paused、awaiting approval、missing approval id fallback、failed、cancelled、execution exception、heartbeat、cancel before/after segment、workflow/collaboration 字段传播和 segment event 去重。
+    - 在 `epsilon-boot/` 下运行：`PYTHONPATH=src uv run --frozen pytest test/infrastructure/run/test_run_worker_unit.py test/infrastructure/run/test_run_worker_workflow_unit.py`。
+    - **验证: 需求 1.2, 1.6, 1.7, 2.2, 2.3, 2.4, 2.7, 8.3；覆盖 Property 1, Property 2, Property 3, Property 4**
+  - [x] 2.4 修改 RunWorkerManager 使用协议而非 application concrete classes
+    - 在 `epsilon-boot/src/infrastructure/run/run_worker_manager.py` 中移除 `RunRuntimeMetrics`、`RunRecoveryService`、`RunExecutionCoordinator` 的 application import。
+    - 导入 `RunRecoverySweep`、`RunRuntimeMetricsSink`、`RunSegmentExecutor`；将构造函数改为 `executor: RunSegmentExecutor`、`metrics: RunRuntimeMetricsSink | None = None`、`recovery_sweep: RunRecoverySweep | None = None`。
+    - `start()` 创建 `RunWorker(..., executor=self._executor, metrics=self._metrics)`；`_should_use_checkpoint_recovery()` 检查 `self._recovery_sweep is not None`；`_lost_sweep_loop()` 调用 `await self._recovery_sweep.sweep_expired_leases(now=now)`。
+    - 保留 worker task lifecycle、`wake_up()`、poll wait、stage-three `mark_lost_expired_leases(...)`、checkpoint recovery 优先分支和 lost metrics 行为。
+    - _需求: 1.3, 1.4, 1.6, 1.7, 2.6, 6.3, 8.3_
+  - [x] 2.5 更新组合根 RunWorkerManager 装配
+    - 在 `epsilon-boot/src/application/container_config.py::_create_run_worker_manager()` 中保留组合根例外，继续解析 `RunExecutionCoordinator`、`RunRecoveryService`、`RunRuntimeMetrics` 等 application collaborator。
+    - 将局部变量 `coordinator` 改为 `executor`，`recovery_service` 改为 `recovery_sweep`，并调用 `RunWorkerManager(run_store=..., event_store=..., executor=executor, config=run_runtime_config, recovery_sweep=recovery_sweep)`；如实现选择保留旧参数名，测试必须证明 `RunWorkerManager` 文件仍无 application import。
+    - 确认 `container.register(RunWorkerManager, _create_run_worker_manager, Scope.SINGLETON)` 不变，`_wake_run_worker_if_ready()` 仍只调用 manager `wake_up()`。
+    - _需求: 1.4, 1.7, 6.4, 7.5_
+  - [x] 2.6 更新 Run worker manager 与容器装配测试
+    - 在 `epsilon-boot/test/infrastructure/run/test_run_worker_manager_checkpoint_recovery_unit.py` 中将 fake `_RecoveryService` 改名或适配为 `RunRecoverySweep` 协议，将 `RunWorkerManager` 构造参数改为 `executor=`、`recovery_sweep=`。
+    - 在 `epsilon-boot/test/application/test_run_container_wiring_unit.py` 与 `epsilon-boot/test/application/test_run_checkpoint_container_wiring_unit.py` 中断言 fake manager 收到 `executor` 和 `recovery_sweep`，checkpoint 关闭时 `recovery_sweep is None`。
+    - 在 `epsilon-boot/` 下运行：`PYTHONPATH=src uv run --frozen pytest test/infrastructure/run/test_run_worker_manager_checkpoint_recovery_unit.py test/application/test_run_container_wiring_unit.py test/application/test_run_checkpoint_container_wiring_unit.py`。
+    - **验证: 需求 1.3, 1.4, 1.6, 1.7, 6.3, 6.6, 8.3；覆盖 Property 1, Property 2**
+
+- [x] 3. 检查点 — Run worker 第一切片完成
+  - 在 `epsilon-boot/` 下运行：`PYTHONPATH=src uv run --frozen pytest test/domain/run/test_run_outcome_persistence_unit.py test/infrastructure/run/test_run_worker_unit.py test/infrastructure/run/test_run_worker_workflow_unit.py test/infrastructure/run/test_run_worker_manager_checkpoint_recovery_unit.py test/application/test_run_container_wiring_unit.py test/application/test_run_checkpoint_container_wiring_unit.py`。
+  - 在 `epsilon-boot/` 下运行全量：`PYTHONPATH=src uv run --frozen pytest`，全部通过；如失败，先定位是否为第一切片回归，不扩大改动范围。
+  - **验证: 需求 1.1, 1.2, 1.3, 1.4, 1.6, 1.7, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 6.6, 6.8, 7.5, 8.3**
+
+- [x] 4. 静态 import guard 加固
+  - [x] 4.1 扩展 AST import 收集与例外表达
+    - 在 `epsilon-boot/test/static/test_architecture_import_boundaries.py` 中保留 `_parse()` 通过 AST 读取源码且不 import 生产模块。
+    - 新增 `APPLICATION_ROOT = SRC_ROOT / "application"`、`INFRASTRUCTURE_ROOT = SRC_ROOT / "infrastructure"`、`APPLICATION_COMPOSITION_ROOT_PATHS`，至少包含 `src/application/container_config.py`、`src/application/api/server_app.py`；并按现有启动装配事实评估是否包含 `src/application/server_app.py` 与 `src/application/cli/main.py`。
+    - 新增收集函数，例如 `_collect_forbidden_import_pairs(root: Path, forbidden_prefix: str) -> dict[str, tuple[str, ...]]`，返回仓库相对路径到命中模块的精确映射；不得使用 prefix 白名单吞掉整包。
+    - _需求: 5.5, 6.1, 6.2, 6.4, 6.5_
+  - [x] 4.2 增加 infrastructure -> application 禁止规则
+    - 在 `epsilon-boot/test/static/test_architecture_import_boundaries.py` 中新增 `test_infrastructure_layer_does_not_import_application_layer()`。
+    - 扫描 `epsilon-boot/src/infrastructure/**/*.py`，断言不存在 `application` 或 `application.*` import；第一切片完成后 `src/infrastructure/run/run_worker.py` 与 `src/infrastructure/run/run_worker_manager.py` 必须零命中。
+    - 测试失败输出使用仓库相对路径和模块列表，便于定位。
+    - _需求: 1.2, 1.3, 6.2, 6.3_
+  - [x] 4.3 增加 application -> infrastructure 精确例外规则
+    - 在 `epsilon-boot/test/static/test_architecture_import_boundaries.py` 中新增 `APPLICATION_INFRASTRUCTURE_IMPORT_EXCEPTIONS: dict[str, tuple[str, ...]]`。
+    - 精确登记当前迁移期 serializer/presenter 例外，包括 `src/application/api/routers/health.py -> infrastructure.health.health_serialization`、`src/application/api/routers/task.py -> infrastructure.agent.segment_serialization`、`src/application/run/run_execution_coordinator.py -> infrastructure.agent.segment_serialization`、`src/application/run/run_application_service.py -> infrastructure.run.workflow_serialization`、`src/application/run/run_checkpoint_recovery_service.py -> infrastructure.agent.guardrail_serialization`、`src/application/run/run_guardrail_recorder.py -> infrastructure.agent.guardrail_serialization`、`src/application/run/workflow_orchestrator.py -> infrastructure.run.workflow_serialization`；组合根路径不放入该迁移例外表。
+    - 新增 `test_application_layer_imports_infrastructure_only_through_declared_exceptions()` 和 `test_application_infrastructure_exception_scope_is_exact()`：实际命中必须等于组合根命中 + 精确例外表，新增路径或新增模块均需修改测试常量才能通过。
+    - _需求: 1.5, 5.1, 5.2, 5.5, 5.6, 6.4, 6.5_
+  - [x] 4.4 执行静态 import guard 聚焦验证
+    - 在 `epsilon-boot/` 下运行：`PYTHONPATH=src uv run --frozen pytest test/static/test_architecture_import_boundaries.py`。
+    - 断言 domain baseline、common baseline、infra->app 禁止、app->infra 组合根/迁移例外和白名单不可静默扩大均通过；若发现额外 application->infrastructure import，先登记为受控迁移例外或拆出后续任务，不直接放宽规则。
+    - **验证: 需求 5.1, 5.2, 5.5, 5.6, 6.1, 6.2, 6.3, 6.4, 6.5, 6.7；覆盖 Property 1, Property 5, Property 6**
+
+- [x] 5. API presenter/serializer 边界收敛
+  - [x] 5.1 建立 application API presenter 包与迁移入口
+    - 新增 `epsilon-boot/src/application/api/presenters/__init__.py`，包含中文模块 docstring，说明该包承载 HTTP/API response presenter，不属于 domain。
+    - 在 `epsilon-boot/src/application/api/presenters/health_presenter.py` 中定义 `def readiness_result_to_response_body(value: ReadinessResult) -> dict[str, object]`，初始实现可逐字段迁移 `infrastructure.health.health_serialization.readiness_result_to_dict` 的线格式，不再从 router 直接导入 infrastructure mapper。
+    - 在 `epsilon-boot/src/application/api/presenters/task_presenter.py` 中定义 `def segment_budget_usage_to_response_body(value: SegmentBudgetUsage) -> dict[str, int | float]`，返回字段与 `segment_budget_usage_to_dict` 等价。
+    - presenter 不导入 Pydantic、FastAPI 或 infrastructure；Pydantic DTO 仍保留在 router 边界，domain 不感知 HTTP body。
+    - _需求: 5.1, 5.3, 5.7, 6.4_
+  - [x] 5.2 迁移 health router 使用 health presenter
+    - 在 `epsilon-boot/src/application/api/routers/health.py` 中将 `from infrastructure.health.health_serialization import readiness_result_to_dict` 替换为 `from application.api.presenters.health_presenter import readiness_result_to_response_body`。
+    - `readiness_check(...) -> JSONResponse` 保持 status code 判定：`HealthStatus.UP` 返回 200，其他返回 503；`JSONResponse(content=readiness_result_to_response_body(result), status_code=status_code)`。
+    - 不修改 `health_check()`、`prometheus_metrics()`、路由路径、tags 或 DI 注入。
+    - _需求: 5.1, 5.3, 5.7, 7.5_
+  - [x] 5.3 验证 health presenter 与 router 响应等价
+    - 在 `epsilon-boot/test/application/routers/test_health.py`、`epsilon-boot/test/application/routers/test_health_property.py` 中补充或更新断言，覆盖 UP/DOWN readiness body 字段、checks 嵌套结构和 status code。
+    - 可新增 `epsilon-boot/test/application/api/presenters/test_health_presenter_unit.py`，对 `readiness_result_to_response_body(...)` 与既有线格式做字面断言。
+    - 在 `epsilon-boot/` 下运行：`PYTHONPATH=src uv run --frozen pytest test/application/routers/test_health.py test/application/routers/test_health_property.py`。
+    - **验证: 需求 5.1, 5.3, 5.7, 6.8；覆盖 Property 6**
+  - [x] 5.4 迁移 task router 使用 task presenter
+    - 在 `epsilon-boot/src/application/api/routers/task.py` 中将 `from infrastructure.agent.segment_serialization import segment_budget_usage_to_dict` 替换为 `from application.api.presenters.task_presenter import segment_budget_usage_to_response_body`。
+    - `_budget_usage_body(metadata: SegmentRunMetadata) -> BudgetUsageBody` 改为 `BudgetUsageBody(**segment_budget_usage_to_response_body(metadata.budget_usage))`；`_task_response_body(result) -> TaskExecuteResponseBody` 的 content/status/model/usage/trace/latency/prompt/segment 字段保持不变。
+    - 不迁移 `TaskExecuteRequestBody`、`TaskExecuteResponseBody`、`BudgetUsageBody` 等 Pydantic DTO 到 domain。
+    - _需求: 5.1, 5.3, 5.7, 7.5_
+  - [x] 5.5 验证 task presenter 与 task router 响应等价
+    - 在 `epsilon-boot/test/application/routers/test_task_router_unit.py`、`epsilon-boot/test/application/routers/test_task_continue_router_unit.py`、`epsilon-boot/test/application/routers/test_segmented_response_model_unit.py` 中补充或更新断言，覆盖 `budget_usage` 全字段、trace 序列、paused/approval/succeeded 响应结构和 BizException 映射。
+    - 可新增 `epsilon-boot/test/application/api/presenters/test_task_presenter_unit.py`，对 `segment_budget_usage_to_response_body(...)` 做字面字段断言。
+    - 在 `epsilon-boot/` 下运行：`PYTHONPATH=src uv run --frozen pytest test/application/routers/test_task_router_unit.py test/application/routers/test_task_continue_router_unit.py test/application/routers/test_segmented_response_model_unit.py`。
+    - **验证: 需求 5.1, 5.3, 5.7, 6.8；覆盖 Property 6**
+  - [x] 5.6 收缩 API serializer 迁移例外并保留 application/run 受控例外
+    - 在 `epsilon-boot/test/static/test_architecture_import_boundaries.py` 中从 `APPLICATION_INFRASTRUCTURE_IMPORT_EXCEPTIONS` 删除 `src/application/api/routers/health.py` 与 `src/application/api/routers/task.py` 的 serializer 例外。
+    - 保留并注释 `application/run/*` 的受控迁移例外：`workflow_serialization`、`guardrail_serialization`、`segment_serialization`，注释包含原因、精确 import 范围、清理计划和对应后续任务。
+    - 在 `epsilon-boot/` 下运行：`PYTHONPATH=src uv run --frozen pytest test/static/test_architecture_import_boundaries.py`。
+    - **验证: 需求 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 6.4, 6.5, 6.7；覆盖 Property 6**
+
+- [x] 6. 检查点 — 静态边界与 API presenter 阶段完成
+  - 在 `epsilon-boot/` 下运行：`PYTHONPATH=src uv run --frozen pytest test/static/test_architecture_import_boundaries.py test/application/routers/test_health.py test/application/routers/test_health_property.py test/application/routers/test_task_router_unit.py test/application/routers/test_task_continue_router_unit.py test/application/routers/test_segmented_response_model_unit.py`。
+  - 在 `epsilon-boot/` 下运行全量：`PYTHONPATH=src uv run --frozen pytest`，全部通过；若 app->infra allowlist 变化，必须由测试常量精确显示，不能放宽为 prefix。
+  - **验证: 需求 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 7.5**
+
+- [x] 7. ChatServiceAdapter 边界拆分
+  - [x] 7.1 编写 ChatServiceAdapter 边界保护测试
+    - 在 `epsilon-boot/test/infrastructure/chat/test_chat_service_adapter_boundary_characterization.py` 中新增 characterization tests，或扩展现有 `test_chat_service_adapter_session_id_unit.py`、`test_chat_service_session_index_unit.py`、`test_chat_service_continue_unit.py`、`test_chat_service_stream_resume_unit.py`。
+    - 覆盖 `chat()` 加载/设置 `context.session_id`、系统 prompt 幂等注入、用户消息追加、`_save_context_and_index(...)` 保存上下文与 `SessionIndexPort.upsert(...)`、`continue_chat()` 不重复追加用户消息、`resume_approval()` 的 load/is_expired/consume/resume 顺序、`stream_resume_approval()` 与同步恢复共用一次 resume 核心。
+    - 在 `epsilon-boot/` 下运行：`PYTHONPATH=src uv run --frozen pytest test/infrastructure/chat/test_chat_service_adapter_session_id_unit.py test/infrastructure/chat/test_chat_service_session_index_unit.py test/infrastructure/chat/test_chat_service_continue_unit.py test/infrastructure/chat/test_chat_service_stream_resume_unit.py`。
+    - **验证: 需求 3.1, 3.2, 3.3, 3.4, 3.6, 3.7, 3.8；覆盖 Property 7**
+  - [x] 7.2 创建 application.chat 会话上下文 workflow
+    - 新增 `epsilon-boot/src/application/chat/__init__.py` 与 `epsilon-boot/src/application/chat/session_context_workflow.py`，均包含中文 docstring。
+    - 在 `session_context_workflow.py` 中定义 `class ChatSessionContextWorkflow`，构造函数接收 `session_store: SessionContextStorePort`、`session_index: SessionIndexPort | None`、`system_prompt: str`、`prompt_id: str`。
+    - 实现 `async def load_for_chat(self, request: ChatRequestVO) -> ConversationContext`、`async def load_for_continue(self, request: ChatContinueRequestVO) -> ConversationContext`、`def ensure_system_prompt(self, context: ConversationContext) -> None`、`async def save_context_and_index(self, session_id: str, context: ConversationContext) -> None`。
+    - `ensure_system_prompt(...)` 只做“无 system message 时插入 system prompt”的幂等判定；prompt 文件加载、workspace guidance 追加、模型解析、stream 包装均不得移入该 application workflow。
+    - _需求: 3.2, 3.3, 3.4, 3.7, 3.8, 7.1, 7.3_
+  - [x] 7.3 验证 ChatSessionContextWorkflow 行为
+    - 在 `epsilon-boot/test/application/chat/test_session_context_workflow_unit.py` 中新增 pytest 单元测试。
+    - 使用 fake `SessionContextStorePort` 与 `SessionIndexPort` 覆盖新 chat、continue 缺失上下文、已有 system prompt 不重复插入、保存上下文后索引更新、`prompt_id` 与 session preview 写入保持现有格式。
+    - 在 `epsilon-boot/` 下运行：`PYTHONPATH=src uv run --frozen pytest test/application/chat/test_session_context_workflow_unit.py`。
+    - **验证: 需求 3.2, 3.3, 3.4, 3.8；覆盖 Property 7**
+  - [x] 7.4 修改 ChatServiceAdapter 委托会话加载/保存与 prompt 判定
+    - 在 `epsilon-boot/src/infrastructure/chat/chat_service_adapter.py` 中新增构造依赖 `session_workflow: ChatSessionContextWorkflow | None = None`，默认可由现有 `session_store`、`session_index`、`_system_prompt`、`_prompt_id` 构造，保持旧测试可逐步迁移。
+    - 将 `_ensure_system_prompt(context, self._system_prompt)`、`_save_context_and_index(...)`、chat/continue/stream 入口的会话加载保存路径委托给 `self._session_workflow`；保留 `_resolve_model_access(...)`、direct LLM path、`_stream_model_events(...)`、`StreamingChunk` / `AgentStreamEvent` 包装在 infrastructure。
+    - 不改变 `ChatServicePort` 方法签名：`chat(...)`、`continue_chat(...)`、`stream_chat(...)`、`stream_chat_events(...)`、`stream_continue_chat_events(...)`、`restore_checkpoint_context(...)`。
+    - _需求: 3.2, 3.3, 3.4, 3.7, 3.8, 8.3_
+  - [x] 7.5 验证 ChatServiceAdapter 会话委托后行为等价
+    - 更新 `epsilon-boot/test/infrastructure/chat/test_chat_service_adapter_session_id_unit.py`、`test_chat_service_session_index_unit.py`、`test_chat_service_stream_paused_unit.py`、`test_chat_service_adapter.py` 中 adapter 构造和断言，确保 session_id 写入、index 更新、stream save、prompt 注入与原行为一致。
+    - 在 `epsilon-boot/` 下运行：`PYTHONPATH=src uv run --frozen pytest test/infrastructure/chat/test_chat_service_adapter_session_id_unit.py test/infrastructure/chat/test_chat_service_session_index_unit.py test/infrastructure/chat/test_chat_service_stream_paused_unit.py test/infrastructure/chat/test_chat_service_adapter.py`。
+    - **验证: 需求 3.2, 3.3, 3.4, 3.7, 3.8；覆盖 Property 7**
+  - [x] 7.6 创建 ChatApplicationService 承载 continue/resume 用例编排
+    - 在 `epsilon-boot/src/application/chat/chat_application_service.py` 中定义 `class ChatApplicationService`，包含中文 docstring；若实现评审认为该类是长期一等抽象或改变 Port/Adapter 归属，先执行 ADR 判断任务 11.2。
+    - 构造函数接收 `session_workflow: ChatSessionContextWorkflow`、`agent: AgentPort`、`approval_store: ApprovalStateStorePort | None`、`segment_policy: SegmentExecutionPolicy` 以及必要的领域 Port；不得接收具体 infrastructure adapter。
+    - 实现 `async def continue_chat(self, request: ChatContinueRequestVO, *, run_agent: Callable[[ConversationContext, str | None], Awaitable[AgentResult]]) -> ChatResponseVO`，复用现有 `_can_continue_from_context` 语义，不重复追加用户消息。
+    - 实现 `async def resume_approval_to_agent_result(self, request: ApprovalResumeRequestVO) -> tuple[ConversationContext, AgentResult]`，迁移 `_resume_to_agent_result` 的 load、not found、expired、decision count/order/not allowed、consume、`agent.resume(...)` 顺序与异常语义。
+    - 流式事件包装、`StreamingChunk` 包装、`approval_payload_to_metadata(...)`、模型技术适配和 direct model path 仍留 `ChatServiceAdapter`。
+    - _需求: 3.2, 3.3, 3.5, 3.6, 3.7, 3.8, 7.1, 7.2, 7.3, 8.3_
+  - [x] 7.7 修改 ChatServiceAdapter 继续/审批恢复路径委托应用服务
+    - 在 `epsilon-boot/src/infrastructure/chat/chat_service_adapter.py` 中新增 `chat_application_service: ChatApplicationService | None = None` 构造参数，并由默认构造保持兼容；组合根后续可显式注入。
+    - 将 `continue_chat(...)` 的上下文校验与 run agent 编排委托给 `ChatApplicationService.continue_chat(...)`，adapter 只保留模型解析/agent callable 适配和 response 包装。
+    - 将 `resume_approval(...)` 与 `stream_resume_approval(...)` 的审批恢复核心委托给 `ChatApplicationService.resume_approval_to_agent_result(...)`；adapter 保留 `_to_chat_response(...)`、`approval_payload_to_metadata(...)`、`AgentStreamEvent` 产出和 metadata 合并。
+    - 在 `epsilon-boot/src/application/container_config.py` 中如需显式装配，注册 `ChatSessionContextWorkflow` / `ChatApplicationService` 并注入 `ChatServiceAdapter`，同时保持组合根例外集中在该文件。
+    - _需求: 3.1, 3.2, 3.3, 3.5, 3.6, 3.7, 3.8, 7.5, 8.3_
+  - [x] 7.8 验证 Chat continue/resume/stream 行为等价
+    - 更新或新增 `epsilon-boot/test/application/chat/test_chat_application_service_unit.py`，覆盖 continue 上下文校验、resume approval load/is_expired/consume/resume 顺序、not found/expired/consumed/order/count/not allowed 异常传播。
+    - 更新 `epsilon-boot/test/infrastructure/chat/test_chat_service_continue_unit.py`、`test_chat_service_stream_resume_unit.py`、`test_chat_segmented_execution_unit.py`、`test_chat_segmented_stream_unit.py`，断言 `ChatResponseVO`、`AgentStreamEvent`、approval metadata、segment metadata、context save 行为不变。
+    - 在 `epsilon-boot/` 下运行：`PYTHONPATH=src uv run --frozen pytest test/application/chat/test_chat_application_service_unit.py test/infrastructure/chat/test_chat_service_continue_unit.py test/infrastructure/chat/test_chat_service_stream_resume_unit.py test/infrastructure/chat/test_chat_segmented_execution_unit.py test/infrastructure/chat/test_chat_segmented_stream_unit.py`。
+    - **验证: 需求 3.1, 3.2, 3.3, 3.5, 3.6, 3.7, 3.8, 8.3；覆盖 Property 7**
+
+- [x] 8. Handoff 纯判定领域策略
+  - [x] 8.1 新增 handoff_policy 领域判定模块
+    - 在 `epsilon-boot/src/domain/agent/handoff_policy.py` 中新增模块级中文 docstring。
+    - 定义 `@dataclass(frozen=True) class HandoffDecision`，字段为 `allowed: bool`、`next_depth: int`、`effective_max_depth: int`、`reason: str | None = None`。
+    - 实现 `def decide_handoff(*, current_depth: int, max_delegation_depth: int, workflow_context: WorkflowCollaborationContext | None) -> HandoffDecision`。
+    - 规则保持当前 `HandoffToAgentTool.execute(...)` 等价：`next_depth = current_depth + 1`；若有 workflow context，则 `effective_max_depth = min(max_delegation_depth, workflow_context.limit.max_recursion_depth)`；当 `DelegationDepthPolicy.exceeds_for_next_depth(current_depth, effective_max_depth)` 为真时返回 `allowed=False, reason="handoff_depth_exceeded"`；当 `workflow_context.handoff_count + 1 > workflow_context.limit.max_handoff_count` 时返回 `allowed=False, reason=f"handoff_count_exceeded:{...}>{...}"`；否则 `allowed=True`。
+    - 该模块不读取 `get_workflow_collaboration_context()`、不访问 ContextVar、不导入 infrastructure、不调用 `DelegationPort`、不构造 `ToolExecutionResult`、不记录 collaboration event。
+    - _需求: 4.1, 4.2, 4.3, 4.5, 4.6, 4.7, 4.8, 8.3, 8.4_
+  - [x] 8.2 编写 handoff_policy 单元测试
+    - 在 `epsilon-boot/test/domain/agent/test_handoff_policy_unit.py` 中新增 pytest 单元测试。
+    - 覆盖无 workflow context 时只使用 `max_delegation_depth`、workflow max recursion 更严格时使用较小值、深度命中时 reason 为 `handoff_depth_exceeded`、handoff count 命中时 reason 保持 `handoff_count_exceeded:{next}>{max}`、允许路径返回 `allowed=True`。
+    - 测试不得设置 `domain.run.workflow_context` 的 ContextVar，不构造 `ToolExecutionResult`，不使用 fake `DelegationPort` 或 event store。
+    - 在 `epsilon-boot/` 下运行：`PYTHONPATH=src uv run --frozen pytest test/domain/agent/test_handoff_policy_unit.py`。
+    - **验证: 需求 4.1, 4.2, 4.3, 4.5, 4.6, 4.7, 4.8, 8.3, 8.4；覆盖 Property 5, Property 8, Property 9**
+
+- [x] 9. 检查点 — Chat 边界保护与 Handoff policy 完成
+  - 在 `epsilon-boot/` 下运行：`PYTHONPATH=src uv run --frozen pytest test/application/chat/test_session_context_workflow_unit.py test/application/chat/test_chat_application_service_unit.py test/infrastructure/chat/test_chat_service_adapter_session_id_unit.py test/infrastructure/chat/test_chat_service_session_index_unit.py test/infrastructure/chat/test_chat_service_continue_unit.py test/infrastructure/chat/test_chat_service_stream_resume_unit.py test/infrastructure/chat/test_chat_segmented_execution_unit.py test/infrastructure/chat/test_chat_segmented_stream_unit.py test/domain/agent/test_handoff_policy_unit.py`。
+  - 在 `epsilon-boot/` 下运行全量：`PYTHONPATH=src uv run --frozen pytest`，全部通过；若 Chat 应用服务或 handoff policy 被评审为新一等抽象，先执行 ADR 任务再继续后续集成。
+  - **验证: 需求 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 4.1, 4.2, 4.3, 4.5, 4.6, 4.7, 4.8, 6.6, 6.8, 7.1, 7.2, 7.3, 8.3, 8.4**
+
+- [x] 10. HandoffToAgentTool 集成纯判定
+  - [x] 10.1 修改 HandoffToAgentTool 委托 handoff_policy
+    - 在 `epsilon-boot/src/infrastructure/agent/handoff_to_agent_tool.py` 中导入 `decide_handoff`，保留 `get_workflow_collaboration_context()`、`get_parent_context()`、`record_collaboration_limit_hit(...)`、`record_collaboration_step(...)`、`record_workflow_handoff(...)`、`DelegationPort.handoff(...)` 和 `ToolExecutionResult` 构造在 infrastructure。
+    - 在 `execute(...)` 中用 `decision = decide_handoff(current_depth=self._current_delegation_depth, max_delegation_depth=self._max_delegation_depth, workflow_context=workflow_context)` 替换内联 depth/count 判定；使用 `decision.next_depth` 与 `decision.effective_max_depth` 调用 `DelegationPort.handoff(...)`。
+    - 当 `decision.reason == "handoff_depth_exceeded"` 时，保留当前中文错误 content 和 `metadata={"target_agent": agent_name, "success": False}`，并继续调用 `record_collaboration_limit_hit(...)`，reason 为 `handoff_depth_exceeded`。
+    - 当 `decision.reason` 以 `handoff_count_exceeded:` 开头时，保留当前英文错误 content、metadata shape 和 collaboration limit event；不得改变成功路径 `HandoffPerformed(target_agent, content, usage, model)`，不得修复 handoff model discrepancy。
+    - _需求: 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 8.3, 8.4_
+  - [x] 10.2 验证 Handoff 工具适配语义不变
+    - 更新 `epsilon-boot/test/infrastructure/agent/test_handoff_and_parallel_tools_unit.py`、`epsilon-boot/test/infrastructure/agent/test_workflow_collaboration_governance_unit.py` 和 `epsilon-boot/test/infrastructure/agent/test_react_agent_handoff_unit.py`。
+    - 断言 depth rejected、handoff count rejected 均不调用 `delegation.handoff`，错误 `ToolExecutionResult.content` 与 metadata shape 不变，collaboration limit event 仍由 infrastructure recorder 写入；成功 handoff 仍记录 step/workflow handoff 后抛 `HandoffPerformed`，ReActAgentAdapter 四条入口仍短路并写 `handoff_target` metadata。
+    - 在 `epsilon-boot/` 下运行：`PYTHONPATH=src uv run --frozen pytest test/infrastructure/agent/test_handoff_and_parallel_tools_unit.py test/infrastructure/agent/test_workflow_collaboration_governance_unit.py test/infrastructure/agent/test_react_agent_handoff_unit.py`。
+    - **验证: 需求 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 8.4；覆盖 Property 8, Property 9**
+
+- [x] 11. 文档同步与 ADR 判断
+  - [x] 11.1 同步当前架构主题文档
+    - 若已实现 Run worker 依赖反转，在 `docs/architecture.md`、`docs/domain-model.md`、`docs/di-container.md` 中更新 Run outcome、worker contracts、组合根注入和 import boundary 的当前状态描述。
+    - 若已实现 API presenter 边界，在 `docs/api.md` 与 `docs/architecture.md` 中更新 health/task presenter 归属、剩余 `application/run/*` serializer 受控例外和清理计划。
+    - 若已实现 ChatServiceAdapter 拆分，在 `docs/agent.md`、`docs/architecture.md`、`docs/di-container.md` 中更新 `ChatSessionContextWorkflow` / `ChatApplicationService` 与 infrastructure stream/model adapter 的职责边界。
+    - 若已实现 handoff policy，在 `docs/agent.md` 与 `docs/domain-model.md` 中更新 `domain/agent/handoff_policy.py` 只承载 depth/handoff count 纯判定，ContextVar/DelegationPort/ToolExecutionResult/recorder 仍在 infrastructure。
+    - _需求: 7.4, 7.5, 7.6, 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7_
+  - [x] 11.2 执行 ADR 判断检查点
+    - 对照 `docs/steering/adr.md` 与 `docs/adr/README.md`：第一 Run worker 切片默认不新增 ADR；若实现阶段改变 Port/Adapter 归属、依赖方向，或确认 `application/api/presenters/`、`ChatApplicationService`、`domain/agent/handoff_policy.py` 成为长期一等抽象，则按 `docs/adr/0000-template.md` 新增 `docs/adr/NNNN-*.md` 并更新 `docs/adr/README.md`。
+    - ADR 结论不得静默推翻 ADR-0001、ADR-0010、ADR-0011、ADR-0012、ADR-0013、ADR-0015；如需改变既定结论，使用 supersede 流程。
+    - 若评审认为不需要新增 ADR，在实现说明中记录“不新增 ADR”的理由，不修改 ADR 文件。
+    - _需求: 7.1, 7.2, 7.3, 7.7, 8.1, 8.2, 8.4, 8.5, 8.7_
+
+- [x] 12. 检查点 — 最终验证
+  - 在 `epsilon-boot/` 下运行静态边界：`PYTHONPATH=src uv run --frozen pytest test/static/test_architecture_import_boundaries.py`。
+  - 在 `epsilon-boot/` 下运行聚焦回归：`PYTHONPATH=src uv run --frozen pytest test/domain/run/test_run_outcome_persistence_unit.py test/infrastructure/run/test_run_worker_unit.py test/infrastructure/run/test_run_worker_workflow_unit.py test/infrastructure/run/test_run_worker_manager_checkpoint_recovery_unit.py test/application/routers/test_health.py test/application/routers/test_task_router_unit.py test/application/chat/test_chat_application_service_unit.py test/domain/agent/test_handoff_policy_unit.py test/infrastructure/agent/test_handoff_and_parallel_tools_unit.py test/infrastructure/agent/test_workflow_collaboration_governance_unit.py`。
+  - 在 `epsilon-boot/` 下运行全量：`PYTHONPATH=src uv run --frozen pytest`，全部通过；若未运行或失败，记录具体原因和失败测试，不能勾选最终检查点。
+  - **验证: 需求 1.7, 2.7, 3.8, 4.8, 5.7, 6.6, 6.7, 6.8, 7.4, 7.5, 7.6, 7.7, 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7；覆盖 Property 1-9**
+
+## 备注
+
+- 当前计划只定义实现与验证任务，不执行实现；需用户确认后才进入 `spec-generator` 阶段。
+- 第一切片不得新增 ADR，除非实现评审发现实际改变了长期 Port/Adapter 归属或依赖方向。
+- 不引入数据库 DDL、索引、Redis key schema、文件布局迁移、配置键变更或 backfill。
+- 不重开 Agent Loop P2 第三片，不移动 concurrent tool skeleton、OTel、ContextVar、Redis/file persistence、OpenAI SDK、Pydantic DTO 或 stream wrapper 到 domain。
+- 所有任务应保持最小改动，不做全仓重排、无关重命名或批量格式化；遇到范围外问题记录为后续事项，不并入当前切片。

@@ -1,0 +1,39 @@
+# 评测参数配置（spec-ai-evaluation）
+#
+# 本文件仅存放评测脚本自身的参数（样本数、阈值等），与业务运行时配置
+# `epsilon-boot/config.properties` 物理隔离。若评测脚本需要业务配置
+# （如 AGENT_MAX_DELEGATION_DEPTH），一律通过 `common/configuration/config_proxy.py`
+# 从 `config.properties` 读取，不在此文件中重复声明。
+#
+# 修改本文件不会触发业务依赖变更；但所有键应在设计文档
+# `docs/spec/spec-ai-evaluation/design.md` "评测脚本自身的配置" 章节中
+# 出现过，禁止擅自新增未备案的键。
+
+[runner]
+# 评测结果 JSON 的默认落盘目录（相对仓库根）。
+output_dir = "docs/evaluation/results"
+# 报告骨架的默认输出根目录（相对仓库根）。
+report_dir = "docs/evaluation"
+# 上下文压缩指标默认使用的滑动窗口长度，供样本构造时覆盖。
+default_window_n = 10
+
+[regression]
+# 回归阈值，单位为"百分点"（pp）。
+# 任一指标 ratio 相对基线下降 >= 该值 → 评测脚本以退出码 2 结束。
+threshold_percent_points = 5.0
+
+[metrics.tool_call_success_rate]
+# 工具调用成功率评测的最少样本数。
+sample_count = 20
+
+[metrics.delegation_correctness]
+# 委派正确性评测的最少样本数。
+sample_count = 12
+
+[metrics.context_compaction_effectiveness]
+# 上下文压缩有效性评测的最少样本数。
+sample_count = 30
+
+[metrics.real_task_golden_success_rate]
+# 真实任务 golden set 的最少样本数。
+sample_count = 8

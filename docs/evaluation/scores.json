@@ -1,0 +1,131 @@
+{
+  "generated_at": "2026-06-03T11:08:13.604691+00:00",
+  "total_score": 3.5600000000000005,
+  "dimensions": [
+    {
+      "id": "architecture",
+      "title": "架构与工程化",
+      "score": 4,
+      "weight": 0.18,
+      "rationale": "仓库采用 DDD 六边形架构，`container_config.py` 以组合根形式集中装配所有 Port→Adapter，自建 DI 容器通过 `_registry` / `_async_resources` 两套注册表 明确区分\"装配\"与\"启停\"，符合 OpenAI \"A Practical Guide to Building Agents — Agent design patterns\" 对核心 Loop 与 Provider/Tool 解耦的要求。Google ADK \"Multi-agent architecture patterns\" 建议的注册中心与委派入口 已通过 `AgentRegistryPort` + `DelegationPort` 落地，异步资源按五段式顺序启停 并逆序清理；距离 5 分的差距是缺少机器可读的架构守卫（如 `import-linter`）与 Adapter 策略配置化，这些按 Anthropic \"Building effective agents\" 组合式 Workflow 建议是下一步方向。",
+      "evidence_refs": [
+        "epsilon-boot/src/application/container_config.py:1017-1042",
+        "epsilon-boot/src/common/container.py:80-98",
+        "epsilon-boot/src/application/container_config.py:982-1011",
+        "docs/steering/ddd-architecture.md"
+      ]
+    },
+    {
+      "id": "agent_core",
+      "title": "Agent 核心能力",
+      "score": 4,
+      "weight": 0.22,
+      "rationale": "`ReActAgentAdapter` 完整实现 ReAct 循环、最大轮次保护、权限拒绝与异常回写 `ToolMessage`，契合 Anthropic \"Tool use with Claude — Tool definition best practices\" 对\"异常路径模型可感知\"的要求；`ScopedToolRegistry.create_scoped_view` 按 `frozenset` 白名单暴露工具子集，实现 LangChain \"LangGraph Agent patterns / ReAct architecture\" 强调的状态可控与权限隔离。`DelegateToAgentTool` 对 `delegation_depth` 做 `next_depth = current + 1 ≤ MAX` 越限校验，`SlidingWindowCompactionAdapter` 全量保留 SystemMessage + 末尾 N 条非 system 消息，覆盖 Berkeley FCL 对工具 选择准确率的判据；4 → 5 的差距是缺少 tool_call / delegation 的端到端 span 与 CI 级回归守卫。",
+      "evidence_refs": [
+        "epsilon-boot/src/infrastructure/agent/react_agent_adapter.py:128-189",
+        "epsilon-boot/src/domain/agent/tools.py:331-401",
+        "epsilon-boot/src/infrastructure/agent/delegate_to_agent_tool.py:128-142",
+        "epsilon-boot/src/infrastructure/chat/sliding_window_compaction_adapter.py:42-64"
+      ]
+    },
+    {
+      "id": "model_prompt",
+      "title": "模型与提示工程",
+      "score": 3,
+      "weight": 0.14,
+      "rationale": "多 Provider 注册、Round-Robin 路由、配置热重载、Prompt 资产目录与版本化注册均已落地，满足 OpenAI \"A Practical Guide to Building Agents\"（Agent design patterns）对 Provider 解耦的要求，也部分对齐 OpenAI \"Function calling best practices\" 对工具 schema 复用的建议。但 \"提示工程\"侧仍缺少 Anthropic \"Prompt caching — Efficient long-context usage\" 推荐的 可缓存块声明、Prompt 评估集与 A/B 对照，路由策略也仅限\"模型名映射\"，距离 Anthropic \"Long context prompting — Context window management\" 所建议的按任务类型/成本智能路由有明显差距，因此评 3 分。",
+      "evidence_refs": [
+        "epsilon-boot/src/application/container_config.py:60-65",
+        "epsilon-boot/src/infrastructure/model_access/provider_registry.py:146-200",
+        "epsilon-boot/src/infrastructure/model_access/router_config.py:17-43",
+        "epsilon-boot/config.properties:MODEL_CLIPROXY_MODELS"
+      ]
+    },
+    {
+      "id": "security",
+      "title": "安全与合规",
+      "score": 4,
+      "weight": 0.16,
+      "rationale": "`ShellExecTool` / `PythonExecTool` 具备环境变量脱敏（`API_KEY` / `PASSWORD` / `SECRET` / `TOKEN` / `CREDENTIAL` 前缀）、超时与输出截断、cwd 被 Workspace 锁定 以及启动期 `_validate_exec_working_dir` 二次校验；`SymlinkGuard` / `IdentityGuard` 覆盖符号链接与跨设备身份两类逃逸；`AGENT_MAX_DELEGATION_DEPTH=3` 在运行期与评测 样本两侧被同时验证。这与 OpenAI \"Function calling best practices\"、Google ADK \"Safety & guardrails\"、Anthropic \"Building effective agents\" 建议的沙箱基线完全 一致。距离 5 分差距：缺少 Prompt Injection 防御分层、工具滥用检测告警、凭证轮转 runbook，这些都在 OWASP LLM Top 10（LLM01 / LLM02 / LLM09）中有明确要求。",
+      "evidence_refs": [
+        "epsilon-boot/src/infrastructure/tools/shell_exec/shell_exec_tool.py:59-98",
+        "epsilon-boot/src/infrastructure/tools/shell_exec/shell_exec_tool.py:217-249",
+        "epsilon-boot/src/infrastructure/tools/python_exec/python_exec_tool.py:42-50",
+        "epsilon-boot/src/infrastructure/workspace/local_filesystem/_guards.py:31-151",
+        "epsilon-boot/src/infrastructure/workspace/local_filesystem/_guards.py:154-215",
+        "epsilon-boot/src/application/container_config.py:212-275",
+        "epsilon-boot/config.properties:AGENT_MAX_DELEGATION_DEPTH"
+      ]
+    },
+    {
+      "id": "reliability",
+      "title": "可靠性与性能",
+      "score": 3,
+      "weight": 0.12,
+      "rationale": "SSE 流式错误恢复 + `[DONE]` 协议、ReAct 失败路径以 `ToolMessage` 回写、Provider Round-Robin 自愈、OpenTelemetry 可观测性骨架均已就位，部分对齐 OpenAI \"A Practical Guide to Building Agents — Reliability & cost control\" 对错误恢复的要求，以及 Anthropic \"Observability best practices\" 对 trace 基建的要求。但项目缺少 Google SRE Book 强调的 SLI/SLO 与错误预算定义、无主动 retry / circuit breaker / Provider 健康探测、无 wall-clock 预算，τ-bench 所建议的持续回归也尚未进入 CI 门禁，因此处于 3 与 4 之间，评 3 更贴合现状。",
+      "evidence_refs": [
+        "epsilon-boot/src/application/routers/chat.py:108-134",
+        "epsilon-boot/src/infrastructure/agent/react_agent_adapter.py:155-178",
+        "epsilon-boot/src/infrastructure/model_access/provider_registry.py:170-200",
+        "epsilon-boot/src/infrastructure/telemetry/otel_config.py:16-75",
+        "epsilon-boot/src/infrastructure/telemetry/otel_setup.py:1-44"
+      ]
+    },
+    {
+      "id": "testability",
+      "title": "可测试性与质量",
+      "score": 3,
+      "weight": 0.1,
+      "rationale": "后端 `epsilon-boot/test/` 按 `domain / application / infrastructure / integration` 分层组织测试，覆盖值对象、Adapter、Router、多进程并发与启动期校验；本次交付的 `Evaluation_Script` 补齐了 Tool_Call_Success_Rate / Delegation_Correctness / Context_Compaction_Effectiveness 三项回归指标，接近 Berkeley Function-Calling Leaderboard 所强调的\"Execution accuracy\"判据。距离 4 分的差距：指标未按 BFCL 进一步拆成\"Tool selection / Parameter accuracy / Execution success\"三层，评测脚本尚未接入 CI 门禁，LangSmith 建议的\"Dataset + Evaluator + Experiment\"流程还没文档化；τ-bench 所建议的多轮委派端到端任务集 也尚未引入。",
+      "evidence_refs": [
+        "epsilon-boot/test",
+        "tests/evaluation/metrics/test_tool_call_success_rate.py",
+        "tests/evaluation/metrics/test_delegation_correctness.py",
+        "tests/evaluation/metrics/test_context_compaction_effectiveness.py",
+        "tests/evaluation/self_tests/test_rubric_consistency.py"
+      ]
+    },
+    {
+      "id": "frontend_ux",
+      "title": "前端/UX",
+      "score": 3,
+      "weight": 0.08,
+      "rationale": "`ChatPanel` + `useChat` 实现了 SSE 流式增量渲染、`[DONE]` 协议、`AbortController` 主动中止、错误态占位清理、模型选择与会话清除，`TaskWorkspace` 能展示 status / latency / model / execution_trace，满足 OpenAI \"A Practical Guide to Building Agents — UX for Agent output\" 对流式渲染与中止的要求，也部分满足 LangChain \"LangGraph Agent patterns\" 对状态可见性的建议。但聊天侧没有 trace 可见性、没有 Anthropic \"Building effective agents — Human feedback loops\" 所强调的点赞/点踩/复制/重试反馈通道，没有系统化的可访问性（a11y）验证，错误仅以顶部全局 banner 展示 而未做分级——距离 4 分仍有明显差距。",
+      "evidence_refs": [
+        "epsilon-client/src/hooks/use-chat.ts:56-128",
+        "epsilon-client/src/lib/chat-api.ts:86-154",
+        "epsilon-client/src/components/chat/chat-panel.tsx:35-78",
+        "epsilon-client/src/components/task/task-workspace.tsx:61-229"
+      ]
+    }
+  ],
+  "metrics": [
+    {
+      "metric": "tool_call_success_rate",
+      "sample_count": 20,
+      "numerator_sum": 6,
+      "denominator_sum": 20,
+      "ratio": 0.3,
+      "failed_samples": 2,
+      "error_samples": 0
+    },
+    {
+      "metric": "delegation_correctness",
+      "sample_count": 15,
+      "numerator_sum": 6,
+      "denominator_sum": 15,
+      "ratio": 0.4,
+      "failed_samples": 0,
+      "error_samples": 0
+    },
+    {
+      "metric": "context_compaction_effectiveness",
+      "sample_count": 36,
+      "numerator_sum": 36,
+      "denominator_sum": 36,
+      "ratio": 1.0,
+      "failed_samples": 0,
+      "error_samples": 0
+    }
+  ]
+}

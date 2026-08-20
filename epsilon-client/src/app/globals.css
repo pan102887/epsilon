@@ -1,0 +1,174 @@
+/**
+ * 全局样式表。
+ *
+ * 引入 Tailwind CSS 并定义亮色/暗色主题的 CSS 变量，
+ * 设置基础的 body 样式和字体。
+ */
+
+@import "tailwindcss";
+
+:root {
+  --background: #f4ecdd;
+  --foreground: #201811;
+  --color-ink-strong: #201811;
+  --color-ink-soft: #5f5245;
+  --color-ink-muted: #8b7c6d;
+  --color-line: rgba(95, 82, 69, 0.16);
+  --color-line-strong: rgba(95, 82, 69, 0.28);
+  --color-surface: rgba(255, 248, 238, 0.78);
+  --color-surface-strong: rgba(246, 234, 214, 0.9);
+  --color-accent: #0f766e;
+  --color-accent-secondary: #1d4ed8;
+  --font-sans-stack: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono-stack: "SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace;
+  --font-display: var(--font-mono-stack);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans-stack);
+  --font-mono: var(--font-mono-stack);
+}
+
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(15, 118, 110, 0.18), transparent 24%),
+    radial-gradient(circle at top right, rgba(29, 78, 216, 0.16), transparent 26%),
+    linear-gradient(180deg, #f8f2e8 0%, #f1e7d6 48%, #ecdfca 100%);
+  color: var(--foreground);
+  font-family: var(--font-sans-stack);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.24) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.18) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.8), transparent 92%);
+  opacity: 0.45;
+}
+
+::selection {
+  background: rgba(15, 118, 110, 0.2);
+  color: var(--color-ink-strong);
+}
+
+.hero-shell {
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background:
+    linear-gradient(140deg, rgba(255, 250, 243, 0.9), rgba(244, 233, 214, 0.82)),
+    rgba(255, 255, 255, 0.55);
+  box-shadow:
+    0 30px 80px rgba(73, 58, 42, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+.hero-shell::after {
+  content: "";
+  position: absolute;
+  right: -5rem;
+  top: -5rem;
+  height: 16rem;
+  width: 16rem;
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(15, 118, 110, 0.28), transparent 65%);
+  filter: blur(12px);
+}
+
+.panel-shell {
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  background:
+    linear-gradient(180deg, rgba(255, 250, 244, 0.92), rgba(246, 237, 223, 0.88)),
+    rgba(255, 255, 255, 0.6);
+  box-shadow:
+    0 28px 68px rgba(73, 58, 42, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(20px);
+}
+
+.glass-panel {
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background:
+    linear-gradient(180deg, rgba(255, 252, 247, 0.88), rgba(248, 241, 230, 0.78)),
+    rgba(255, 255, 255, 0.6);
+  box-shadow:
+    0 20px 52px rgba(73, 58, 42, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.eyebrow::before {
+  content: "";
+  height: 0.55rem;
+  width: 0.55rem;
+  border-radius: 9999px;
+  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-secondary));
+  box-shadow: 0 0 0 0.25rem rgba(15, 118, 110, 0.12);
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 6rem;
+  border-radius: 1.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.52);
+  background:
+    linear-gradient(180deg, rgba(255, 251, 245, 0.88), rgba(246, 235, 217, 0.82)),
+    rgba(255, 255, 255, 0.6);
+  padding: 1rem 1.1rem;
+  box-shadow: 0 18px 42px rgba(73, 58, 42, 0.08);
+}
+
+.stat-card-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.52);
+  background:
+    linear-gradient(180deg, rgba(255, 251, 245, 0.88), rgba(246, 235, 217, 0.82)),
+    rgba(255, 255, 255, 0.6);
+  padding: 0.6rem 0.9rem;
+  box-shadow: 0 8px 20px rgba(73, 58, 42, 0.06);
+}
+
+.stat-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.stat-value {
+  font-family: var(--font-display), monospace;
+  font-size: 1.1rem;
+  line-height: 1.3;
+  color: var(--color-ink-strong);
+}
+
+@media (max-width: 640px) {
+  body {
+    background:
+      radial-gradient(circle at top left, rgba(15, 118, 110, 0.14), transparent 28%),
+      linear-gradient(180deg, #f8f2e8 0%, #efe3cf 100%);
+  }
+}

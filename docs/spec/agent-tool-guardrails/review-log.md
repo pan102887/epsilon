@@ -1,0 +1,13 @@
+# Review Log：Agent Tool Guardrails
+
+- 2026-06-16 任务 1.1 attempt 1：PASS。Evaluator 确认 ShellExecTool 已新增危险命令文本/正则策略、`blocked-command` 分类、前置 `_reject_dangerous_command()` 调用，且未削弱 Workspace、环境变量清理、超时、输出截断、HITL/权限语义；复核 focused check `uv run pytest test/infrastructure/tools/shell_exec/test_shell_exec_tool_unit.py -v` 为 11 passed。无阻断问题。
+- 2026-06-16 任务 1.2 attempt 1：PASS。Evaluator 确认 ShellExecTool 危险命令行为测试覆盖任务列出的危险命令、前置阻断调用顺序、防泄漏错误消息与 `echo hi` 正常执行回归；focused check `uv run pytest test/infrastructure/tools/shell_exec/test_shell_exec_tool_unit.py -v` 为 23 passed。无阻断问题。
+- 2026-06-16 任务 2.1 attempt 1：PASS。Evaluator 确认 HttpRequestTool 已新增敏感 Header 名称集合、Header 名规范化、敏感 Header reason/reject helper，并在 `validate_url_safety()`、DNS 解析和 `self._client.request()` 前调用 `_reject_sensitive_headers()`；focused check `uv run pytest test/infrastructure/tools/http_request/test_http_request_tool.py -v` 为 28 passed。无阻断问题。
+- 2026-06-16 任务 2.2 attempt 1：PASS。Evaluator 确认 HttpRequestTool 敏感 Header 行为测试覆盖六个敏感 Header 变体、helper 行为、前置阻断不调用 URL 校验/DNS/网络请求、错误不泄漏 `secret-token`，并验证 `User-Agent` 与 `Accept` 非敏感 Header 可透传；focused check `uv run pytest test/infrastructure/tools/http_request/test_http_request_tool.py -v` 为 41 passed。无阻断问题。
+- 2026-06-16 任务 3.1 attempt 1：PASS。Evaluator 确认 HttpRequestTool 已新增 metadata/localhost host 语义阻断、IP literal 复用 `_ip_block_reason()`、`validate_url_safety()` 在 DNS 前调用 `_host_block_reason()`，并保留 scheme、hostname、DNS 多地址逐一校验；focused check `uv run pytest test/infrastructure/tools/http_request/test_http_request_tool.py -v` 为 41 passed。无阻断问题。
+- 2026-06-16 任务 3.2 attempt 1：PASS。Evaluator 确认 HttpRequestTool SSRF host 行为测试已导入 `_host_block_reason`，覆盖 metadata、localhost、IP literal、非法 scheme、DNS 多结果与 http/https 公网 DNS 允许场景，并验证 SSRF 阻断时不调用 DNS 或 `tool._client.request`；focused check `uv run pytest test/infrastructure/tools/http_request/test_http_request_tool.py -v` 为 51 passed。无阻断问题。
+- 2026-06-16 任务 4.1：SKIPPED evaluator。纯文档 slice，仅新增 `docs/security/agent-tool-guardrails.md`，按 generator 规则不调用 evaluator；后续 4.2 静态策略测试会校验文档必需策略标记。
+- 2026-06-16 任务 4.2 attempt 1：PASS。Evaluator 确认新增静态策略测试文件、模块级中文 docstring、路径常量、只读 helper 和三组策略标记断言均符合设计；focused check `uv run pytest test/static/test_tool_guardrail_policy.py -v` 为 3 passed。无阻断问题。
+- 2026-06-16 任务 5.1：SKIPPED evaluator。验证-only checkpoint，运行 `uv run pytest test/static/test_tool_guardrail_policy.py -v`，结果 3 passed。
+- 2026-06-16 任务 5.2：SKIPPED evaluator。验证-only checkpoint，运行 `uv run pytest test/infrastructure/tools/shell_exec/test_shell_exec_tool_unit.py test/infrastructure/tools/http_request/test_http_request_tool.py -v`，结果 74 passed。
+- 2026-06-16 任务 6：SKIPPED evaluator。完整回归 checkpoint，运行 `uv run pytest -m "not benchmark"`，结果 2630 passed, 2 skipped。

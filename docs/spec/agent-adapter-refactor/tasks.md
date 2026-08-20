@@ -1,0 +1,271 @@
+# 实现计划：Agent 适配器重构（ReAct 三循环合并与代码质量收口）
+
+## 概述
+
+本计划将 `design.md` 中的 5 个 PR 拆分方案转化为可执行的实现任务。任务按依赖顺序排列：PR-1（公开 API + 静态替换） → PR-2（审批序列化 helper） → PR-3（工具失败日志 + respond 死分支删除） → PR-4（_iter_rounds 核心重构 + 流式心跳） → PR-5（TaskAgentAdapter 幂等注入 + 时间戳修正）。
+
+依赖关系：PR-1 与 PR-2、PR-3 之间无依赖；PR-4 依赖 PR-1；PR-5 依赖 PR-4。
+
+## Tasks
+
+- [x] 1. PR-1：`ConversationContext.add_assistant_message_with_tool_calls` + 静态替换
+  - [x] 1.1 在 `ConversationContext` 新增 `add_assistant_message_with_tool_calls` 公开方法
+    - 修改 `epsilon-boot/src/domain/chat/context.py`
+    - 在已有 `add_assistant_message` 方法之后新增 `add_assistant_message_with_tool_calls(self, content: str, tool_calls: list[ToolCallRequest]) -> None`
+    - 方法内部构造 `AssistantMessage(content=content, tool_calls=list(tool_calls))` 并 `self._messages.append(...)`
+    - 配备完整中文 docstring，说明与 `add_assistant_message` 的差异、参数含义
+    - 确认 `ToolCallRequest` 的 import 路径（来自 `domain/model_access/value_objects.py`）
+    - _需求: 2.1, 2.2, 2.3_
+  - [x] 1.2 替换 `react_agent_adapter.py` 中 4 处 `context._messages.append(AssistantMessage(...))` 调用
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - 逐一替换为 `context.add_assistant_message_with_tool_calls(content=response.content, tool_calls=list(response.tool_calls))`
+    - 原代码约位于行 272-274, 363-365, 582-584, 675-677（需按实际行号确认）
+    - 确保不再有任何 `context._messages` 直接访问
+    - _需求: 2.4, 2.5, 2.6_
+  - [x] 1.3 验证：新增 `add_assistant_message_with_tool_calls` 单元测试
+    - 新建 `epsilon-boot/test/domain/chat/test_context_add_assistant_with_tool_calls_unit.py`
+    - 测试场景：(a) 追加携带 tool_calls 的助手消息后消息列表末尾正确；(b) 多次调用累积追加不覆盖；(c) `tool_calls=[]` 时退化为纯文本语义
+    - _需求: 2.1, 2.2, 2.3_
+  - [x] 1.4 验证：静态扫描确认 `infrastructure/` 下不再存在 `_messages.append`
+    - 执行 `grep -r "_messages\.append\|_messages\[" epsilon-boot/src/infrastructure/`，确认输出为空
+    - _需求: 2.6_
+  - [x] 1.5 检查点：编译与测试通过
+    - 在 `epsilon-boot/` 目录执行 `uv run pytest test/domain/chat/ test/infrastructure/agent/test_react_agent_adapter_unit.py test/infrastructure/agent/test_react_agent_hitl_unit.py -x`
+    - 确保既有测试全部通过，无回归
+    - _需求: NFR.7_
+
+- [x] 2. PR-2：`approval_serialization.py` 与 HITL 元数据 JSON 化
+  - [x] 2.1 新增 `approval_serialization.py` 共享 helper 模块
+    - 新建 `epsilon-boot/src/infrastructure/agent/approval_serialization.py`
+    - 实现 `approval_actions_to_dicts(actions: tuple[PendingActionRequest, ...]) -> list[dict[str, Any]]`
+    - 实现 `approval_payload_to_metadata(payload: ApprovalRequiredPayload) -> dict[str, Any]`
+    - `allowed_decisions` 通过 `sorted(...)` 转 list 确保 JSON 安全
+    - 模块级中文 docstring + 两个函数中文 docstring
+    - _需求: 6.4, 6.5_
+  - [x] 2.2 替换 `react_agent_adapter.py` 中 2 处 `[action.__dict__ for action in approval.actions]`
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - 约行 599-605 处替换为 `metadata=approval_payload_to_metadata(approval)`
+    - 约行 692-698 处替换为 `metadata=approval_payload_to_metadata(approval) | {"round": round_num}`
+    - 新增 `from infrastructure.agent.approval_serialization import approval_payload_to_metadata` 导入
+    - _需求: 6.1, 6.2, 6.3_
+  - [x] 2.3 替换 `approval_state_store.py` 中 actions 序列化代码
+    - 修改 `epsilon-boot/src/infrastructure/agent/approval_state_store.py`
+    - 约行 28-37 处原有 actions 字典生成改为调用 `approval_actions_to_dicts(interrupt.actions)`
+    - 新增 `from infrastructure.agent.approval_serialization import approval_actions_to_dicts` 导入
+    - _需求: 6.5_
+  - [x] 2.4 验证：HITL 元数据 `json.dumps` 可序列化测试
+    - 修改 `epsilon-boot/test/infrastructure/agent/test_react_agent_hitl_unit.py`
+    - 新增测试用例：构造含 `frozenset` 的 `PendingActionRequest`，调用 `approval_payload_to_metadata`，断言 `json.dumps(result)` 不抛异常
+    - 断言 `result["actions"]` 与 `approval_interrupt_to_dict` 的 actions 字段集合及类型一致
+    - _需求: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6_
+  - [x] 2.5 检查点：编译与测试通过
+    - 执行 `uv run pytest test/infrastructure/agent/test_react_agent_hitl_unit.py test/infrastructure/agent/test_approval_state_store_serialization_property.py -x`
+    - _需求: NFR.7_
+
+- [x] 3. PR-3：`Tool_Failure_Log` + `respond` 死分支删除
+  - [x] 3.1 在 `react_agent_adapter.py` 中抽取 `_log_tool_failure` 静态方法
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - 新增 `@staticmethod _log_tool_failure(tool_call: ToolCallRequest, exc: BaseException, reason: str) -> None`
+    - 使用模块级 `logger.warning(...)` 输出工具名、tool_call_id、异常类名/摘要
+    - 日志中不包含 `tool_call.arguments` 完整文本
+    - 配备中文 docstring
+    - _需求: 5.1, 5.2, 5.3, 5.6_
+  - [x] 3.2 在 `_execute_tool_call` 的异常分支调用 `_log_tool_failure`
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - `except ToolPermissionDeniedError as exc:` 分支增加 `self._log_tool_failure(tool_call, exc, "permission_denied")`
+    - `except Exception as exc:` 分支增加 `self._log_tool_failure(tool_call, exc, "execution_error")`
+    - 保留原有 `str(exc)` 作为工具结果回灌语义不变
+    - _需求: 5.1, 5.4, 5.5_
+  - [x] 3.3 在 `run_events` 内联工具执行块复用 `_log_tool_failure`
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - `run_events` 中工具执行的 except 分支同步调用 `self._log_tool_failure`
+    - _需求: 5.4_
+  - [x] 3.4 删除 `_apply_approval_decisions` 中 `respond` 分支
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - 删除约行 471-478 处 `elif decision.type == "respond":` 整段分支
+    - 移除顶部 `from domain.agent.exceptions import ... ApprovalRespondNotAllowedError ...` 中对该异常的导入（保留异常类本身）
+    - _需求: 9.1_
+  - [x] 3.5 收窄 `ApprovalDecisionType` Literal 类型
+    - 修改 `epsilon-boot/src/domain/agent/value_objects.py`
+    - 约行 84 处将 `ApprovalDecisionType = Literal["approve", "edit", "reject", "respond"]` 改为 `Literal["approve", "edit", "reject"]`
+    - 删除 docstring 中 `respond` 解释（约行 86-89）
+    - 修订约行 153 处 `ApprovalDecision.message` 注释，删除 "或 `respond`"
+    - _需求: 9.2_
+  - [x] 3.6 同步修订文档中 `respond` 字样
+    - 修改 `docs/agent.md` 约行 97：将"按顺序应用 `approve/edit/reject/respond` 决策"改为"按顺序应用 `approve/edit/reject` 决策"
+    - 修改 `docs/tools.md` 约行 89：删除"现有工具默认不开放 `respond`；该决策仅作为未来 ask-user 类工具的扩展点。"整句
+    - 修改 `docs/api.md` 约行 55：删除"`respond` 未开放返回 400" 短语
+    - 不动 `docs/spec/human-in-the-loop/*` 历史文档
+    - _需求: 9.3_
+  - [x] 3.7 同步修改受影响的测试文件
+    - 修改 `epsilon-boot/test/domain/agent/test_approval_value_objects_property.py` 约行 15：`decision_st = st.sampled_from(["approve", "edit", "reject"])`
+    - 修改 `epsilon-boot/test/infrastructure/agent/test_approval_policy_provider_property.py` 约行 14 和 34：移除 `"respond"` 取值
+    - 不动 `test/domain/agent/test_approval_exceptions_unit.py`（异常类仍保留）
+    - _需求: 9.4_
+  - [x] 3.8 验证：新增工具失败日志单元测试
+    - 新建 `epsilon-boot/test/infrastructure/agent/test_react_agent_tool_failure_log_unit.py`
+    - 使用 `caplog` fixture：(a) 工具内部异常 → WARNING 日志含工具名 / tool_call_id / 异常类名，不含 arguments；(b) `ToolPermissionDeniedError` → WARNING 且 `reason="permission_denied"`
+    - _需求: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6_
+  - [x] 3.9 验证：`respond` 决策被 `ApprovalDecisionNotAllowedError` 拒绝测试
+    - 修改 `epsilon-boot/test/infrastructure/agent/test_react_agent_hitl_unit.py`
+    - 新增用例：构造 `decision.type == "respond"` 的恢复请求，断言被 `ApprovalDecisionNotAllowedError` 拒绝
+    - _需求: 9.5_
+  - [x] 3.10 检查点：全量测试通过
+    - 执行 `uv run pytest test/domain/agent/ test/infrastructure/agent/ -x`
+    - _需求: NFR.7_
+
+- [x] 4. PR-4：`_iter_rounds` 核心重构 + 三入口改为消费者 + 流式心跳/工具进度
+  - [x] 4.1 新建 `RoundOutcome` 值对象模块
+    - 新建 `epsilon-boot/src/infrastructure/agent/round_outcome.py`
+    - 实现 `RoundOutcomeKind = Literal["text", "tool_calls", "approval", "final"]`
+    - 实现 `@dataclass(frozen=True) class RoundOutcome`，包含字段：`kind`, `round_num`, `response`, `total_usage`, `tool_calls`, `approval`, `assistant_message_index`
+    - 完整中文 docstring（模块级 + 类级 + 各字段说明）
+    - _需求: 1.2_
+  - [x] 4.2 在 `ReActAgentAdapter` 中实现 `_ensure_agent_system_prompt` 静态方法
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - 新增 `@staticmethod _ensure_agent_system_prompt(context, config)` 方法
+    - 判定：`config.system_prompt` 为空则 return；`context.get_messages()` 中已有任何 `role == "system"` 的消息则 return；否则 `context.add_system_message(config.system_prompt)`
+    - 中文 docstring 明确"per-Agent 独立、幂等注入"语义
+    - _需求: 7.1, 7.2, 7.4_
+  - [x] 4.3 在 `ReActAgentAdapter` 中实现 `_stamp_event` 与 `_record_assistant_with_tool_calls` 私有方法
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - `_stamp_event(context, message_index)`：在 `context` 上 `setattr("_event_timestamps", {})` 懒创建，记录 `int(time.time() * 1000)`
+    - `_record_assistant_with_tool_calls(self, context, response) -> int`：调用 `context.add_assistant_message_with_tool_calls`，计算 `msg_index = context.message_count - 1`（或 `len(context.get_messages()) - 1`），调用 `_stamp_event`，返回 `msg_index`
+    - 中文 docstring
+    - _需求: 4.1, 4.2, 4.3_
+  - [x] 4.4 实现 `_iter_rounds` 异步生成器
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - 签名：`async def _iter_rounds(self, context, config, model_access, *, start_round=1, initial_usage=None, terminal_round=None) -> AsyncIterator[RoundOutcome]`
+    - 实现内容：幂等注入 system → 循环 `range(start_round, (terminal_round or config.max_rounds) + 1)` → build context → chat → 判定 tool_calls / approval / text → yield RoundOutcome → 循环耗尽 yield final
+    - 使用 `_record_assistant_with_tool_calls` 替代直接消息追加
+    - 不执行工具（交给 caller）
+    - 中文 docstring（完整参数说明、Yields 说明）
+    - _需求: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6_
+  - [x] 4.5 实现 `_outcome_to_agent_result` 辅助方法
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - 将 `RoundOutcome` 按 `kind` 翻译为 `AgentResult`：`text/final → status="completed"`；`approval → status="approval_required"`
+    - _需求: 1.7, 1.11_
+  - [x] 4.6 改写 `run` 为 `_iter_rounds` 消费者
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - 删除原有循环主体，改为 `async for outcome in self._iter_rounds(...)` + 按 kind 分支处理
+    - `tool_calls` → 执行工具 → continue；其余 → break → `_outcome_to_agent_result`
+    - _需求: 1.7, 1.12_
+  - [x] 4.7 改写 `run_streaming` 为 `_iter_rounds` 消费者 + 心跳/工具进度分片
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - 对 `_iter_rounds` 传入 `terminal_round=config.max_rounds - 1`（当 `max_rounds > 1`），最后一轮由 `run_streaming` 自行调用 `model_access.stream()`
+    - 当 `max_rounds == 1` 时，不进入 `_iter_rounds`，直接调用 `model_access.stream()` 产出单轮流式分片
+    - 中间轮次 `tool_calls`：先 yield `_heartbeat_chunk(round_num)`，逐工具 yield `_tool_progress_chunk(round_num, tool_call, "start")` → 执行 → yield `_tool_progress_chunk(round_num, tool_call, "end")`
+    - `approval`：yield `StreamingChunk(finished=True, metadata=approval_payload_to_metadata(...))`
+    - `text`：yield 单一 `finished=True` 分片
+    - 新增 `_heartbeat_chunk(round_num)` 与 `_tool_progress_chunk(round_num, tool_call, phase)` 辅助方法
+    - 心跳/进度分片：`delta_content=""`、`finished=False`、metadata 含 `round`/`tool_name`/`tool_call_id`/`phase`，不含 `arguments` 全文
+    - _需求: 1.8, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8_
+  - [x] 4.8 改写 `run_events` 为 `_iter_rounds` 消费者
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - 同 `run_streaming`，向 `_iter_rounds` 传入 `terminal_round=config.max_rounds - 1`（当 `max_rounds > 1`）；当 `max_rounds == 1` 时不进入 `_iter_rounds`，直接调用 `model_access.stream()` 产出单轮流式事件
+    - `tool_calls` → yield `tool_start` / `tool_result` / `tool_error` 事件（保留现有语义）
+    - `approval` → yield `approval_required` 事件，使用 `approval_payload_to_metadata`
+    - `text` → yield `assistant_delta` + `assistant_done`
+    - `final` → 调用 `model_access.stream()` 产出最后一轮流式事件
+    - `run_events` 不产出 Heartbeat/Tool_Progress 分片
+    - _需求: 1.9, 1.11_
+  - [x] 4.9 改写 `resume` 为 `_iter_rounds` 消费者 + 删除 `_continue_after_tools`
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - `resume` 在 `_apply_approval_decisions` 之后直接调用 `_iter_rounds(start_round=interrupt.round_num+1, initial_usage=dict(interrupt.usage_so_far))`
+    - 完全删除 `_continue_after_tools` 方法（约行 237-302）
+    - _需求: 1.10, 1.12_
+  - [x] 4.10 修订 `AgentConfig.system_prompt` docstring（方案 A 落地标记)
+    - 修改 `epsilon-boot/src/domain/agent/value_objects.py`
+    - 更新 `system_prompt` 字段 docstring：明确"per-Agent 独立、由 ReActAgentAdapter 在首轮前幂等注入"
+    - _需求: 7.3, 7.8, 7.9_
+  - [x] 4.11 验证：新增流式心跳/工具进度分片单元测试
+    - 新建 `epsilon-boot/test/infrastructure/agent/test_react_agent_streaming_unit.py`
+    - 测试场景：(a) 中间轮次产出至少 1 个 Heartbeat（`finished=False`, `delta_content=""`）；(b) 每个工具产出 `phase="start"` / `phase="end"` 各 1 个 Tool_Progress_Chunk；(c) metadata 含 `round`/`tool_name`/`tool_call_id` 但不含 `arguments`
+    - _需求: 3.1, 3.2, 3.3, 3.4, 3.5, 3.8_
+  - [x] 4.12 验证：新增 `system_prompt` 幂等注入单元测试
+    - 新建 `epsilon-boot/test/infrastructure/agent/test_react_agent_system_prompt_injection_unit.py`
+    - 三场景：(a) 空 context → 注入；(b) 已含 SystemMessage → 跳过；(c) 多 Agent 委派双 context：父 ctx 注入父 prompt，子 ctx 注入子 prompt，互不污染
+    - _需求: 7.1, 7.2, 7.5, 7.6, 7.7, 7.8_
+  - [x] 4.13 验证：修改既有 `test_react_agent_adapter_unit.py` 确保回归通过
+    - 修改 `epsilon-boot/test/infrastructure/agent/test_react_agent_adapter_unit.py`
+    - 确保"单轮无工具调用"、"多轮工具调用"、"max_rounds"、"工具异常"现有用例通过
+    - 验证 `AgentResult.status` 取值集合、模型调用次数与原实现一致
+    - _需求: 1.11, NFR.6, NFR.8_
+  - [x] 4.14 验证：修改 `test_react_agent_adapter_property.py` 增补轮次推进 property
+    - 修改 `epsilon-boot/test/infrastructure/agent/test_react_agent_adapter_property.py`
+    - 新增 property："任意构造的多轮交互下，`run` 与直接消费 `_iter_rounds` 产出的最终内容等价"
+    - _需求: 1.11_
+  - [x] 4.15 验证：`run_events` 不产生新事件类型
+    - 修改 `epsilon-boot/test/infrastructure/agent/test_react_agent_events_unit.py`
+    - 新增断言：`run_events` 产出的所有事件 `kind` 属于 `{"status","assistant_delta","assistant_done","tool_start","tool_result","tool_error","approval_required","error"}`
+    - _需求: 1.11, NFR.6_
+  - [x] 4.16 检查点：全量测试通过 + 模型调用次数回归
+    - 执行 `uv run pytest test/infrastructure/agent/ test/infrastructure/chat/ test/domain/chat/ -x`
+    - 确认模型调用次数不变量（chat.call_count / stream.call_count）
+    - _需求: NFR.7, NFR.8_
+
+- [x] 5. PR-5：`TaskAgentAdapter` 系统消息幂等 + `Trace_Entry` 时间戳事件时刻
+  - [x] 5.1 修改 `TaskAgentAdapter.execute()` 实现系统消息幂等注入
+    - 修改 `epsilon-boot/src/infrastructure/task/task_agent_adapter.py`
+    - 约行 196-198 处原有 `context.add_system_message(system_prompt)` 改为先检查 `any(m.role == "system" for m in context.get_messages())`
+    - 已存在则跳过；若内容不一致输出 info 日志 `"复用既有 system 消息（与本次 build_system_prompt 不一致）"`
+    - _需求: 8.1, 8.2, 8.4, 8.5_
+  - [x] 5.2 修改 `TaskAgentAdapter._extract_trace` 接受 `event_timestamps` 参数
+    - 修改 `epsilon-boot/src/infrastructure/task/task_agent_adapter.py`
+    - 签名增加 `*, event_timestamps: dict[int, int] | None = None`
+    - 内部遍历时：对每条消息，优先从 `event_timestamps.get(index)` 获取时间戳；缺失项回退 `int(time.time() * 1000)`
+    - 更新中文 docstring 说明时间戳来源
+    - _需求: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6_
+  - [x] 5.3 修改 `TaskAgentAdapter.execute()` 中调用 `_extract_trace` 的位置
+    - 修改 `epsilon-boot/src/infrastructure/task/task_agent_adapter.py`
+    - 在调用 `_extract_trace` 之前读取 `event_timestamps = getattr(context, "_event_timestamps", {}) or {}`
+    - 传入 `event_timestamps=event_timestamps`
+    - _需求: 4.3_
+  - [x] 5.4 在 `_execute_tool_call` 完成工具执行后为 ToolMessage 打时间戳
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - 在 `context.add_tool_result(...)` 之后调用 `self._stamp_event(context, len(context.get_messages()) - 1)`
+    - 同理在 `run_events` 的内联工具执行块中 `context.add_tool_result(...)` 之后打戳
+    - _需求: 4.2_
+  - [x] 5.5 验证：`TaskAgentAdapter` 系统消息幂等测试
+    - 修改 `epsilon-boot/test/infrastructure/task/test_task_agent_adapter_unit.py`
+    - 新增场景：(a) 已含 SystemMessage 的 context 二次 execute 后 SystemMessage 数量保持 1；(b) 内容不一致时仅产出 info 日志不追加；(c) 首次新建 context 正常追加
+    - _需求: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6_
+  - [x] 5.6 验证：`Trace_Entry` 时间戳来源测试
+    - 修改 `epsilon-boot/test/infrastructure/task/test_task_agent_adapter_unit.py`
+    - 新增场景：mock `time.time` 在事件发生时返回 1000，在 `_extract_trace` 调用时返回 9999，断言 `trace[i].timestamp_ms == 1000_000`（取自事件时刻而非提取时刻）
+    - _需求: 4.1, 4.2, 4.3, 4.5_
+  - [x] 5.7 验证：Trace 时间戳递增 property 测试
+    - 修改 `epsilon-boot/test/infrastructure/task/test_task_agent_adapter_property.py`
+    - 新增 property："对任意工具调用序列，`trace[i].timestamp_ms <= trace[i+1].timestamp_ms`"
+    - _需求: 4.4_
+  - [x] 5.8 检查点：全量测试通过
+    - 执行 `uv run pytest test/infrastructure/task/ test/infrastructure/agent/ -x`
+    - 确认首次执行结果与重构前一致（TaskResult 字段、AgentResult 用量统计不变）
+    - _需求: NFR.7, 8.6_
+
+- [x] 6. 最终检查点：全仓测试 + 不变量回归
+  - [x] 6.1 全量测试通过
+    - 执行 `uv run pytest`（在 `epsilon-boot/` 目录下）
+    - 所有既有测试 + 本期新增测试全部绿色
+    - _需求: NFR.7_
+  - [x] 6.2 静态扫描验证
+    - `grep -rn "context._messages" epsilon-boot/src/infrastructure/` 输出为空（需求 2.6）
+    - `grep -rn "action.__dict__" epsilon-boot/src/infrastructure/agent/react_agent_adapter.py` 输出为空（需求 6.3）
+    - `grep -rn "_continue_after_tools" epsilon-boot/src/infrastructure/agent/react_agent_adapter.py` 输出为空（需求 1.10）
+    - `grep -rn '"respond"' epsilon-boot/src/domain/agent/value_objects.py` 输出为空（需求 9.2）
+    - _需求: 1.12, 2.6, 6.3, 9.5_
+  - [x] 6.3 不变量回归确认
+    - 确认 `AgentResult.status` 取值仍为 `Literal["completed", "approval_required"]`
+    - 确认 `AgentStreamEvent.kind` 取值集合未新增
+    - 确认 `StreamingChunk` 字段集合未破坏性变更
+    - 确认模型调用次数：`run` N 轮 = N 次 `chat()`；`run_streaming` = (N-1) 次 `chat()` + 1 次 `stream()`
+    - _需求: NFR.6, NFR.8, 1.11_
+
+## 备注
+
+1. **依赖关系总结**：PR-1/PR-2/PR-3 可并行开发；PR-4 依赖 PR-1 提供的 `add_assistant_message_with_tool_calls` 与 PR-2 提供的 `approval_payload_to_metadata`；PR-5 依赖 PR-4 提供的 `_stamp_event`/`_event_timestamps` 写入路径。
+2. **风险关注点**：PR-4 为最大改动切片（核心循环重写），建议在 CI 中增加"模型调用次数统计"断言，防止 `_iter_rounds` + `run_streaming` 最后一轮 stream() 的交接出现重复调用。
+3. **异常类保留说明**：`ApprovalRespondNotAllowedError` 仅删除 raise 调用点，类本身保留（`test_approval_exceptions_unit.py` 仍在断言其字段结构）。
+4. **本期不新增配置项**，不调整 `pyproject.toml` 依赖，不涉及 SQL/迁移脚本。
+5. **测试框架**：使用 pytest + Hypothesis（property 测试），异步测试默认 `asyncio_mode = "auto"`，`pythonpath = ["src"]`，`testpaths = ["test"]`。
+6. **编译/运行验证命令**：所有 `uv run pytest` 命令须在 `epsilon-boot/` 目录下执行。

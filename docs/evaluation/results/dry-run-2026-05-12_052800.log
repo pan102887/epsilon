@@ -1,0 +1,96 @@
+### [Step 1] uv run pytest tests/evaluation/self_tests -q
+..............................................                           [100%]
+=============================== warnings summary ===============================
+tests/evaluation/self_tests/test_end_to_end.py::test_end_to_end_run_then_baseline_then_regression
+tests/evaluation/self_tests/test_end_to_end.py::test_end_to_end_run_then_baseline_then_regression
+tests/evaluation/self_tests/test_end_to_end.py::test_run_eval_single_metric_writes_json
+tests/evaluation/self_tests/test_no_external_calls.py::test_runner_makes_no_external_calls_on_empty_metrics
+  /workspace/epsilon-boot/.venv/lib/python3.13/site-packages/pytest_asyncio/plugin.py:247: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+  The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+  
+    warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+46 passed, 4 warnings in 2.15s
+EXIT=0
+
+### [Step 2] uv run pytest tests/evaluation/metrics -m evaluation -q
+.......................................................................  [100%]
+71 passed, 3 deselected in 0.27s
+EXIT=0
+
+### [Step 3] uv run python -m scripts.evaluation.verify_evidence
+维度                路径                                                                      行段              状态      失败原因
+----------------------------------------------------------------------------------------------------------------------
+agent_core        epsilon-boot/src/infrastructure/agent/react_agent_adapter.py       L128-L189       OK      
+agent_core        epsilon-boot/src/domain/agent/tools.py                             L331-L401       OK      
+agent_core        epsilon-boot/src/infrastructure/agent/delegate_to_agent_tool.py    L128-L142       OK      
+agent_core        ...i-boot/src/infrastructure/chat/sliding_window_compaction_adapter.py  L42-L64         OK      
+architecture      epsilon-boot/src/application/container_config.py                   L1017-L1042     OK      
+architecture      epsilon-boot/src/common/container.py                               L80-L98         OK      
+architecture      epsilon-boot/src/application/container_config.py                   L982-L1011      OK      
+architecture      docs/steering/ddd-architecture.md                                       -               OK      
+frontend_ux       epsilon-client/src/hooks/use-chat.ts                               L56-L128        OK      
+frontend_ux       epsilon-client/src/lib/chat-api.ts                                 L86-L154        OK      
+frontend_ux       epsilon-client/src/components/chat/chat-panel.tsx                  L35-L78         OK      
+frontend_ux       epsilon-client/src/components/task/task-workspace.tsx              L61-L229        OK      
+model_prompt      epsilon-boot/src/application/container_config.py                   L60-L65         OK      
+model_prompt      epsilon-boot/src/infrastructure/model_access/provider_registry.py  L146-L200       OK      
+model_prompt      epsilon-boot/src/infrastructure/model_access/router_config.py      L17-L43         OK      
+model_prompt      epsilon-boot/config.properties                                     -               OK      
+reliability       epsilon-boot/src/application/routers/chat.py                       L108-L134       OK      
+reliability       epsilon-boot/src/infrastructure/agent/react_agent_adapter.py       L155-L178       OK      
+reliability       epsilon-boot/src/infrastructure/model_access/provider_registry.py  L170-L200       OK      
+reliability       epsilon-boot/src/infrastructure/telemetry/otel_config.py           L16-L75         OK      
+reliability       epsilon-boot/src/infrastructure/telemetry/otel_setup.py            L1-L44          OK      
+security          ...-cms-ai-boot/src/infrastructure/tools/shell_exec/shell_exec_tool.py  L59-L98         OK      
+security          ...-cms-ai-boot/src/infrastructure/tools/shell_exec/shell_exec_tool.py  L217-L249       OK      
+security          ...ms-ai-boot/src/infrastructure/tools/python_exec/python_exec_tool.py  L42-L50         OK      
+security          ...ms-ai-boot/src/infrastructure/workspace/local_filesystem/_guards.py  L31-L151        OK      
+security          ...ms-ai-boot/src/infrastructure/workspace/local_filesystem/_guards.py  L154-L215       OK      
+security          epsilon-boot/src/application/container_config.py                   L212-L275       OK      
+security          epsilon-boot/config.properties                                     -               OK      
+testability       epsilon-boot/test                                                  -               OK      
+testability       tests/evaluation/metrics/test_tool_call_success_rate.py                 -               OK      
+testability       tests/evaluation/metrics/test_delegation_correctness.py                 -               OK      
+testability       tests/evaluation/metrics/test_context_compaction_effectiveness.py       -               OK      
+testability       tests/evaluation/self_tests/test_rubric_consistency.py                  -               OK      
+----------------------------------------
+汇总：共 33 条证据，0 条失败。
+EXIT=0
+
+### [Step 4] uv run python -m scripts.evaluation.run_eval --metric=all
+.......................................................................  [100%]
+71 passed, 3 deselected in 0.27s
+指标                                    分子        分母        比率          样本数       失败      错误    
+----------------------------------------------------------------------------------------------
+tool_call_success_rate                6         20        0.3000      20        2       0     
+delegation_correctness                6         15        0.4000      15        0       0     
+context_compaction_effectiveness      36        36        1.0000      36        0       0     
+[run_eval] 结果已写入：/workspace/docs/evaluation/results/2026-05-12_052627_7e9c66c.json
+EXIT=0
+
+### [Step 5] uv run python -m scripts.evaluation.aggregate_scores --result=/workspace/docs/evaluation/results/2026-05-12_052627_7e9c66c.json
+[aggregate_scores] scores.json 已写入：/workspace/docs/evaluation/scores.json
+[aggregate_scores] report.md 已写入：/workspace/docs/evaluation/report.md
+[aggregate_scores] 完成。加权总分 = 3.560 / 5。
+EXIT=0
+
+### [Step 6] uv run python -m scripts.evaluation.run_eval --metric=all --baseline=/workspace/docs/evaluation/results/2026-05-12_052627_7e9c66c.json
+.......................................................................  [100%]
+71 passed, 3 deselected in 0.27s
+指标                                    分子        分母        比率          样本数       失败      错误    
+----------------------------------------------------------------------------------------------
+tool_call_success_rate                6         20        0.3000      20        2       0     
+delegation_correctness                6         15        0.4000      15        0       0     
+context_compaction_effectiveness      36        36        1.0000      36        0       0     
+[run_eval] 结果已写入：/workspace/docs/evaluation/results/2026-05-12_052645_7e9c66c.json
+
+[run_eval] 回归对比：
+指标                                    基线          最新          Δpp         状态
+--------------------------------------------------------------------------------
+context_compaction_effectiveness      1.0000      1.0000      +0.0000     OK
+delegation_correctness                0.4000      0.4000      +0.0000     OK
+tool_call_success_rate                0.3000      0.3000      +0.0000     OK
+EXIT=0
+

@@ -1,0 +1,273 @@
+# 实现计划：Token 语义摘要上下文压缩
+
+## 概述
+
+本计划按 DDD 分层和依赖顺序拆解：先补领域端口/值对象，再落地基础设施工具与 Prompt/配置，随后改造 Chat 与 Agent 调用链，最后迁移测试和评测。所有路径相对仓库根；后端命令均在 `epsilon-boot/` 下执行并使用 `uv`。
+
+## Tasks
+
+- [x] 1. 领域层压缩结果与异步端口
+  - [x] 1.1 创建 `ContextCompactionResult` 值对象
+    - 在 `epsilon-boot/src/domain/chat/value_objects.py` 中新增 `@dataclass(frozen=True) class ContextCompactionResult`
+    - 字段：`messages: list[BaseMessage]`、`usage: dict[str, int] = field(default_factory=dict)`、`summary_created: bool = False`
+    - `__post_init__(self) -> None` 校验：`messages` 必须为 list；`usage` 中所有 value 必须为非负 int；失败抛 `ValueError`
+    - 模块导入补齐 `field` 已存在则复用；因同模块已导入 `dataclass, field`，避免重复导入
+    - _需求: 6.1, 9.1_
+  - [x] 1.2 修改 `ContextCompactionPort` 为异步结构化返回
+    - 在 `epsilon-boot/src/domain/chat/ports.py` 中修改 `ContextCompactionPort.compact`
+    - 签名改为 `async def compact(self, messages: list["BaseMessage"], *, model_access: "ModelAccessPort | None" = None, model: str | None = None) -> "ContextCompactionResult": ...`
+    - `TYPE_CHECKING` 中补充导入 `ContextCompactionResult` 与 `ModelAccessPort`
+    - docstring 明确：返回 `ContextCompactionResult`；`model_access/model` 用于 LLM 摘要策略，滑动窗口策略可忽略；保存完整历史不属于端口职责
+    - _需求: 1.1, 6.1, 9.1_
+  - [x] 1.3 编写领域层端口和值对象测试
+    - 在 `epsilon-boot/test/domain/chat/test_compaction_result_unit.py` 中新增测试
+    - 覆盖：合法构造；默认 `usage={}` / `summary_created=False`；负数 usage 抛 `ValueError`；非 int usage 抛 `ValueError`
+    - 在 `epsilon-boot/test/domain/chat/test_compaction_port_signature_static.py` 中新增静态签名测试
+    - 覆盖：`ContextCompactionPort.compact` 是 async function；含 keyword-only `model_access` / `model`；返回注解指向 `ContextCompactionResult`
+    - **验证: 需求 6.1, 9.1, 9.9**
+
+- [x] 2. 基础工具：消息序列化、usage 合并、token 计数
+  - [x] 2.1 抽出模型消息序列化函数
+    - 新建 `epsilon-boot/src/infrastructure/chat/message_serialization.py`
+    - 实现 `def serialize_messages(messages: list[BaseMessage]) -> list[dict[str, Any]]`
+    - 逻辑从 `ReActAgentAdapter._serialize_messages` 迁移：`AssistantMessage.tool_calls` 输出 OpenAI `tool_calls` 嵌套结构；`ToolMessage` 输出 `tool_call_id`；其他消息输出 `role/content`
+    - 在 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py` 中将 `_serialize_messages` 改为调用 `serialize_messages(messages)` 的兼容薄壳
+    - _需求: 4.5, 9.2, 9.5_
+  - [x] 2.2 编写消息序列化测试
+    - 在 `epsilon-boot/test/infrastructure/chat/test_message_serialization_unit.py` 中新增测试
+    - 覆盖：system/user/assistant 普通消息；assistant 带 `ToolCallRequest`；tool 消息；与旧 `ReActAgentAdapter._serialize_messages` 输出一致
+    - **验证: 需求 4.5, 9.5**
+  - [x] 2.3 实现 usage 合并工具
+    - 新建 `epsilon-boot/src/infrastructure/chat/usage.py`
+    - 实现 `def merge_usage(*usages: dict[str, int] | None) -> dict[str, int]`
+    - 行为：跳过 None；缺失 key 按 0；保留所有出现过的 key；空输入返回 `{}`；非 int 或负数值抛 `ValueError`
+    - _需求: 6.2, 6.3, 6.4, 6.5, 6.6_
+  - [x] 2.4 编写 usage 合并测试
+    - 在 `epsilon-boot/test/infrastructure/chat/test_usage_unit.py` 中新增 example-based 测试
+    - 在同文件或 `test_usage_properties.py` 中用 Hypothesis 覆盖任意 usage 字典求和属性
+    - 场景：空输入、None、缺失 key、多个字典累加、非法值抛错
+    - **验证: 需求 6.2, 6.3, 6.4, 6.5, 6.6**
+  - [x] 2.5 添加 `tiktoken` 直接依赖
+    - 在 `epsilon-boot/pyproject.toml` 的 `[project.dependencies]` 中新增 `"tiktoken>=0.12.0"`
+    - 在 `epsilon-boot/` 下运行 `UV_CACHE_DIR=../.uv-cache uv lock`
+    - 确认 `epsilon-boot/uv.lock` 更新且仍只使用 `uv`
+    - _需求: 8.3, 10.6_
+  - [x] 2.6 实现 `TokenCounter`
+    - 新建 `epsilon-boot/src/infrastructure/chat/token_counter.py`
+    - 实现 `class TokenCounter`
+    - 构造签名：`def __init__(self, encoding_name: str) -> None`
+    - 方法：`count_text(self, text: str) -> int`、`count_message(self, message: BaseMessage) -> int`、`count_messages(self, messages: list[BaseMessage]) -> int`
+    - 使用 `tiktoken.get_encoding(encoding_name)`；编码非法时抛 `ConfigurationError`
+    - `count_message` 基于 `serialize_messages([message])[0]` 的 JSON 文本计数，并为每条消息加固定开销 4；该值只用于触发判断，不作为预算或截断上限
+    - _需求: 1.3, 1.4, 8.3_
+  - [x] 2.7 编写 `TokenCounter` 测试
+    - 在 `epsilon-boot/test/infrastructure/chat/test_token_counter_unit.py` 中新增测试
+    - 覆盖：`cl100k_base` 可用；空文本计数为非负 int；消息列表计数等于逐消息计数累加；非法编码抛 `ConfigurationError`
+    - **验证: 需求 1.3, 1.4, 8.3**
+
+- [x] 3. Prompt 与配置接入
+  - [x] 3.1 新增 `context-summary@v1` Prompt 资产
+    - 新建目录 `epsilon-boot/prompts/context-summary/`
+    - 新建 `epsilon-boot/prompts/context-summary/v1.md`
+    - 内容为可运行的结构化摘要提示词，要求输出栏目：`当前目标`、`已完成`、`关键文件`、`关键命令与结果`、`约束与偏好`、`错误与阻塞`、`下一步`
+    - 内容必须表达保留目标、约束、操作、错误、路径、命令结果、用户偏好；弱化重复日志、寒暄、无关过程、失效假设
+    - 不直接写入用户明确避免的那句提示词；不放入生产代码常量
+    - _需求: 2.1, 2.2, 2.3, 2.4, 3.1_
+  - [x] 3.2 扩展 Prompt 版本配置
+    - 在 `epsilon-boot/src/infrastructure/prompt/prompt_version_config.py` 中新增字段 `context_summary_version: str = "v1"`
+    - 将 `@field_validator` 装饰器参数加入 `"context_summary_version"`
+    - 确认 `PromptVersionConfig.as_mapping()` 自动返回 `"context-summary": "v1"`，不新增特殊分支
+    - _需求: 3.2, 3.6_
+  - [x] 3.3 更新 `config.properties` 的 Prompt 和压缩配置
+    - 在 `epsilon-boot/config.properties` 中新增 `PROMPT_CONTEXT_SUMMARY_VERSION=v1` 与中文注释
+    - 在聊天服务配置块新增 `CHAT_COMPACTION_TRIGGER_TOKENS=8000`、`CHAT_COMPACTION_KEEP_RECENT_MESSAGES=20`、`CHAT_COMPACTION_ENCODING=cl100k_base`
+    - 注释明确 trigger 是触发阈值，不是预算；不得出现“budget”配置键
+    - _需求: 3.3, 8.1, 8.2, 8.3, 8.4, 8.7_
+  - [x] 3.4 扩展 `ChatConfig` 字段与校验
+    - 在 `epsilon-boot/src/infrastructure/chat/chat_config.py` 中新增字段 `compaction_trigger_tokens: int = 8000`、`compaction_keep_recent_messages: int = 20`、`compaction_encoding: str = "cl100k_base"`
+    - 新增 `InvalidChatCompactionConfigError(ConfigurationError)` 或复用 `ConfigurationError`
+    - 添加 `@model_validator(mode="after")`：`compaction_trigger_tokens <= 0` 或 `compaction_keep_recent_messages <= 0` 时抛配置错误，拒绝启动
+    - 更新类 docstring，保留 `max_messages` 作为滑动窗口降级配置说明
+    - _需求: 8.1, 8.2, 8.3, 8.5, 8.6, 8.7_
+  - [x] 3.5 编写 Prompt 和配置测试
+    - 更新 `epsilon-boot/test/infrastructure/prompt/test_prompt_version_config_unit.py`
+    - 覆盖：`context_summary_version` 默认 `v1`；`as_mapping()` 包含 `"context-summary"`；非法版本触发 `InvalidPromptVersionTagError`
+    - 更新 `epsilon-boot/test/infrastructure/prompt/test_filesystem_prompt_registry_adapter_unit.py`
+    - 覆盖：`context-summary@v1` 可加载；文件缺失/空白按现有错误失败
+    - 更新或新增 `epsilon-boot/test/infrastructure/chat/test_chat_config.py`
+    - 覆盖：压缩配置默认值；非法 trigger / keep_recent 拒绝；字段名不含 budget
+    - **验证: 需求 3.1, 3.2, 3.3, 3.6, 8.1, 8.2, 8.3, 8.5, 8.6, 8.7**
+
+- [x] 4. 检查点 — 领域、基础工具与配置
+  - 在 `epsilon-boot/` 下运行 `UV_CACHE_DIR=../.uv-cache uv run pytest test/domain/chat test/infrastructure/chat test/infrastructure/prompt -q`
+  - 在 `epsilon-boot/` 下运行 `UV_CACHE_DIR=../.uv-cache uv run pytest -q`
+  - 所有测试必须通过；若依赖下载因网络受限失败，按权限流程请求允许 `uv lock` / `uv run`
+
+- [x] 5. 压缩适配器实现
+  - [x] 5.1 迁移 `SlidingWindowCompactionAdapter` 到新端口
+    - 修改 `epsilon-boot/src/infrastructure/chat/sliding_window_compaction_adapter.py`
+    - 新增 `compact_messages(self, messages: list[BaseMessage]) -> list[BaseMessage]`，保留现有同步滑动窗口逻辑
+    - 将 `compact` 改为 async 签名，返回 `ContextCompactionResult(messages=self.compact_messages(messages), usage={}, summary_created=False)`
+    - 保持构造参数 `max_messages: int = 50` 和 `ValueError` 行为不变
+    - _需求: 1.2, 7.1, 7.2, 10.1_
+  - [x] 5.2 编写/迁移滑动窗口测试
+    - 更新 `epsilon-boot/test/domain/chat/test_compaction_unit.py` 与 `test_compaction_properties.py`
+    - 旧同步不变量测试改为调用 `compact_messages`
+    - 新增 async `compact` 测试，验证返回 `ContextCompactionResult` 且 `summary_created=False`
+    - 更新 `tests/evaluation/metrics/test_context_compaction_effectiveness.py` 和 `test_meta_context_compaction_effectiveness.py` 使用 `compact_messages`，保持指标语义不变
+    - **验证: 需求 1.2, 10.1, 10.4**
+  - [x] 5.3 实现 `LLMSummaryCompactionAdapter`
+    - 新建 `epsilon-boot/src/infrastructure/chat/llm_summary_compaction_adapter.py`
+    - 实现构造签名 `__init__(self, *, prompt_registry: PromptRegistryPort, token_counter: TokenCounter, trigger_tokens: int, keep_recent_messages: int, fallback: SlidingWindowCompactionAdapter) -> None`
+    - 构造期调用 `prompt_registry.get("context-summary")` 并缓存 `LoadedPrompt`
+    - 实现 async `compact(self, messages, *, model_access=None, model=None) -> ContextCompactionResult`
+    - 低于 trigger 返回原消息拷贝、`usage={}`、`summary_created=False`
+    - 高于 trigger 且较早非 system 消息非空时，用当前 `model_access.chat(ChatRequest(..., model=model))` 生成摘要
+    - 摘要成功返回 `system_messages + [SystemMessage(content=response.content)] + recent_messages`，usage 使用摘要响应 usage，`summary_created=True`
+    - `model_access is None`、摘要异常、空白摘要、摘要响应含 tool_calls 均 warning 并降级到 fallback
+    - warning 日志 extra 包含 `message_count`、`trigger_tokens`、`reason_class`，不包含完整消息正文
+    - _需求: 1.1, 1.3, 1.4, 1.5, 1.6, 2.1, 2.2, 2.3, 2.4, 3.4, 3.5, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 7.1, 7.2, 7.3, 7.4, 7.5_
+  - [x] 5.4 编写 `LLMSummaryCompactionAdapter` 单元测试
+    - 新建 `epsilon-boot/test/infrastructure/chat/test_llm_summary_compaction_adapter_unit.py`
+    - 使用 fake `PromptRegistryPort` 返回 `LoadedPrompt(prompt_id="context-summary@v1", name="context-summary", version="v1", content="...")`
+    - 使用 fake `TokenCounter` 控制触发/不触发，避免测试依赖真实 token 数
+    - 覆盖：构造期加载 prompt；未触发不调用模型；触发时摘要请求使用 `LoadedPrompt.content`；保留全部 system；插入摘要 system；保留最近 N 条；较早消息为空不摘要；摘要 usage 返回；异常/空摘要/tool_calls 降级
+    - **验证: 需求 1.3, 1.4, 1.5, 2.1, 2.2, 2.3, 2.4, 3.4, 3.5, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 7.1, 7.2, 7.3, 7.4, 7.5, 10.2, 10.3**
+  - [x] 5.5 编写摘要压缩属性测试
+    - 新建 `epsilon-boot/test/infrastructure/chat/test_llm_summary_compaction_properties.py`
+    - Property 1：未达到触发阈值不调用摘要模型
+    - Property 2：触发后保留全部 system 与最近 N 条非 system，顺序不变
+    - Property 3：压缩不修改原输入消息列表或 `ConversationContext`
+    - Property 5：摘要失败降级不抛出
+    - **验证: 需求 1.3, 4.1, 4.2, 4.3, 4.6, 5.1, 5.3, 7.1, 7.2, 7.3, 7.4**
+
+- [x] 6. 容器默认装配
+  - [x] 6.1 修改压缩适配器工厂为 async 默认摘要策略
+    - 修改 `epsilon-boot/src/application/container_config.py`
+    - 将 `_create_compaction_adapter` 改为 `async def _create_compaction_adapter() -> "ContextCompactionPort"`
+    - 工厂内 `prompt_registry = await container.resolve(PromptRegistryPort)`
+    - 创建 `fallback = SlidingWindowCompactionAdapter(max_messages=chat_config.max_messages)`
+    - 返回 `LLMSummaryCompactionAdapter(prompt_registry=prompt_registry, token_counter=TokenCounter(chat_config.compaction_encoding), trigger_tokens=chat_config.compaction_trigger_tokens, keep_recent_messages=chat_config.compaction_keep_recent_messages, fallback=fallback)`
+    - 保持 `container.register(ContextCompactionPort, _create_compaction_adapter, Scope.SINGLETON)` 不变，利用容器 async provider 支持
+    - _需求: 1.1, 1.2, 3.4, 8.1, 8.2, 8.3_
+  - [x] 6.2 更新容器装配测试
+    - 修改 `epsilon-boot/test/application/test_container_config.py`
+    - 覆盖 `_create_compaction_adapter` await 后返回 `LLMSummaryCompactionAdapter`
+    - 使用 monkeypatch/mock 替换 `chat_config`、`PromptRegistryPort` 解析和 `TokenCounter`，验证参数来自配置
+    - 验证 `ContextCompactionPort` 注册仍为 singleton
+    - **验证: 需求 1.1, 3.4, 8.1, 8.2, 8.3**
+
+- [x] 7. ChatService 调用链改造
+  - [x] 7.1 改造 `ChatServiceAdapter.chat` 直接 LLM 路径
+    - 修改 `epsilon-boot/src/infrastructure/chat/chat_service_adapter.py`
+    - 导入 `serialize_messages` 与 `merge_usage`
+    - 在 `tool_calling_enabled=False` 或无工具路径中调用 `compaction_result = await self._compaction.compact(all_messages, model_access=model_access, model=resolved_model)`
+    - `ChatRequest.messages` 使用 `serialize_messages(compaction_result.messages)`
+    - `response_usage = merge_usage(compaction_result.usage, response.usage)`
+    - 保存完整上下文逻辑保持不变，不写回摘要消息
+    - _需求: 5.1, 5.2, 6.2, 9.2_
+  - [x] 7.2 改造 `ChatServiceAdapter.stream_chat`
+    - 修改 `epsilon-boot/src/infrastructure/chat/chat_service_adapter.py`
+    - 直接 LLM 流式路径 await 压缩并使用 `serialize_messages`
+    - 保存 `summary_usage = compaction_result.usage`
+    - 在产出最后一个 `StreamingChunk` 时，如 `chunk.finished`，yield 合并 usage 后的新 `StreamingChunk`；非最终 chunk 原样 yield
+    - 保存完整上下文逻辑保持不变
+    - _需求: 5.1, 5.2, 6.3, 9.3_
+  - [x] 7.3 改造 `ChatServiceAdapter.stream_chat_events`
+    - 修改 `epsilon-boot/src/infrastructure/chat/chat_service_adapter.py`
+    - 直接 LLM 事件路径 await 压缩并使用 `serialize_messages`
+    - `_stream_model_events` 增加可选 `summary_usage: dict[str, int] | None = None` 参数，`assistant_done` 事件 usage 使用 `merge_usage(summary_usage, chunk.usage or {})`
+    - 保存完整上下文逻辑保持不变
+    - _需求: 5.1, 5.2, 6.4, 9.4_
+  - [x] 7.4 更新 ChatService 相关测试
+    - 修改 `epsilon-boot/test/domain/chat/test_compaction_unit.py`
+    - 修改 `epsilon-boot/test/infrastructure/chat/test_chat_service_adapter_unit.py`
+    - 修改 `epsilon-boot/test/infrastructure/chat/test_chat_service_adapter_refactor_property.py`
+    - 修改 `epsilon-boot/test/infrastructure/chat/test_dynamic_model_routing_properties.py`
+    - 所有 `compaction.compact` 改为 `AsyncMock(return_value=ContextCompactionResult(...))`
+    - 新增同步、流式、事件流路径 summary usage 合并测试；验证 session_store.save 保存完整历史而非摘要消息
+    - **验证: 需求 5.1, 5.2, 6.2, 6.3, 6.4, 9.2, 9.3, 9.4, 9.9, 10.5**
+
+- [x] 8. 检查点 — 压缩适配器、容器与 ChatService
+  - 在 `epsilon-boot/` 下运行 `UV_CACHE_DIR=../.uv-cache uv run pytest test/domain/chat test/infrastructure/chat test/application/test_container_config.py -q`
+  - 在 `epsilon-boot/` 下运行 `UV_CACHE_DIR=../.uv-cache uv run pytest -q`
+  - 评测迁移后运行 `UV_CACHE_DIR=../.uv-cache uv run pytest ../../tests/evaluation/metrics/test_context_compaction_effectiveness.py ../../tests/evaluation/metrics/test_meta_context_compaction_effectiveness.py -q`
+
+- [x] 9. Agent 调用链改造
+  - [x] 9.1 改造 `ReActAgentAdapter.run`
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - 在每轮模型调用前：`compaction_result = await self._compaction.compact(context.get_messages(), model_access=model_access, model=config.model)`
+    - 将 `compaction_result.usage` 累加到 `total_usage`
+    - `ChatRequest.messages` 使用 `serialize_messages(compaction_result.messages)`
+    - 移除对本类 `_serialize_messages` 的内部依赖或保留薄壳但新代码用公共函数
+    - _需求: 5.3, 6.5, 9.5_
+  - [x] 9.2 改造 `ReActAgentAdapter._continue_after_tools` 与 `resume`
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - `_continue_after_tools` 中每轮模型调用前 await 压缩并累计 summary usage
+    - `resume` 通过 `_continue_after_tools` 自动使用异步压缩链路
+    - 保持审批恢复上下文快照和决策处理逻辑不变
+    - _需求: 5.3, 6.5, 9.8_
+  - [x] 9.3 改造 `ReActAgentAdapter.run_streaming`
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - 每轮模型调用前 await 压缩并保存 `summary_usage`
+    - 中间同步回复无 tool_calls 时，产出的最终 `StreamingChunk.usage` 合并 `summary_usage` 与 response usage
+    - 最后一轮流式调用时，对最终 chunk 合并 `summary_usage`
+    - 审批 required chunk usage 合并 `summary_usage` 与 response usage
+    - _需求: 6.5, 9.6_
+  - [x] 9.4 改造 `ReActAgentAdapter.run_events`
+    - 修改 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py`
+    - 每轮模型调用前 await 压缩并保存 `summary_usage`
+    - `assistant_done` 事件 usage 合并 `summary_usage`
+    - `approval_required` 事件 metadata 或 usage 维持现有结构，但内部累计 usage 用合并后的值
+    - _需求: 6.5, 9.7_
+  - [x] 9.5 更新 Agent 与 Task 相关测试替身
+    - 修改 `epsilon-boot/test/infrastructure/agent/test_react_agent_adapter_unit.py`
+    - 修改 `epsilon-boot/test/infrastructure/agent/test_react_agent_adapter_property.py`
+    - 修改 `epsilon-boot/test/infrastructure/agent/test_react_agent_events_unit.py`
+    - 修改 `epsilon-boot/test/infrastructure/agent/test_react_agent_hitl_unit.py`
+    - 修改 `epsilon-boot/test/infrastructure/chat/test_agent_loop_sync.py` 与 `test_agent_loop_streaming.py`
+    - 修改 `epsilon-boot/test/infrastructure/task/test_task_agent_adapter_unit.py`、`test_task_agent_adapter_property.py`、`test_task_agent_tool_subset_properties.py`
+    - 所有 fake/magic compaction 改为 async `compact`，返回 `ContextCompactionResult(messages=msgs)`
+    - **验证: 需求 6.5, 9.5, 9.6, 9.7, 9.8, 9.9**
+  - [x] 9.6 新增 Agent usage 累计测试
+    - 在 `epsilon-boot/test/infrastructure/agent/test_react_agent_adapter_unit.py` 中新增测试
+    - 构造 compaction `AsyncMock` 每轮返回 `usage={"summary_tokens": 3}` 或 `{"prompt_tokens": 2}`
+    - 验证 `AgentResult.usage` 包含所有摘要 usage 与主模型 usage 累加
+    - 覆盖 run、run_streaming、run_events 至少各一个 usage 合并场景
+    - **验证: 需求 6.5, 6.6, 10.5**
+
+- [x] 10. 全局测试与静态防回归
+  - [x] 10.1 添加 Prompt 不硬编码防回归测试
+    - 新建或更新 `epsilon-boot/test/infrastructure/chat/test_context_summary_prompt_static.py`
+    - 读取 `epsilon-boot/src/infrastructure/chat/llm_summary_compaction_adapter.py`
+    - 断言生产代码不包含 `当前目标`、`关键命令与结果`、`错误与阻塞` 等完整 Prompt 栏目组合；允许测试和 Prompt 文件包含
+    - 断言 `LLMSummaryCompactionAdapter` 构造期调用 `prompt_registry.get("context-summary")`
+    - **验证: 需求 2.4, 2.5, 3.4, 3.5, 10.3**
+  - [x] 10.2 添加 budget 命名防回归测试
+    - 新建或更新 `epsilon-boot/test/infrastructure/chat/test_compaction_no_budget_static.py`
+    - 扫描生产文件：`src/domain/chat/ports.py`、`src/domain/chat/value_objects.py`、`src/infrastructure/chat/chat_config.py`、`src/infrastructure/chat/llm_summary_compaction_adapter.py`、`config.properties`
+    - 断言没有新增 `COMPACTION_BUDGET`、`budget_tokens`、`compaction_budget` 等预算语义命名；允许文档测试中解释“不引入预算”的文本
+    - **验证: 需求 1.6, 8.7**
+  - [x] 10.3 更新评测 evidence 文案引用
+    - 检查 `tests/evaluation/evidence/catalog.py` 和 `docs/evaluation/scores.toml` 中关于 `SlidingWindowCompactionAdapter.compact` 的描述
+    - 如引用行号或方法名因 `compact_messages` 变化而失效，更新为新文件/方法引用
+    - 不改变人工评分结论，只保持 evidence 可验证
+    - _需求: 10.4_
+  - [x] 10.4 运行最终验证
+    - 在 `epsilon-boot/` 下运行 `UV_CACHE_DIR=../.uv-cache uv run pytest -q`
+    - 在仓库根运行或按现有方式运行评测自测：`cd epsilon-boot && UV_CACHE_DIR=../.uv-cache uv run pytest ../../tests/evaluation/metrics/test_context_compaction_effectiveness.py ../../tests/evaluation/metrics/test_meta_context_compaction_effectiveness.py -q`
+    - 记录失败项；若失败来自既有无关测试，需在 review-log 中注明证据和影响范围
+    - **验证: 需求 10.1, 10.2, 10.3, 10.4, 10.5, 10.6**
+
+- [x] 11. 检查点 — 全量回归
+  - 在 `epsilon-boot/` 下运行 `UV_CACHE_DIR=../.uv-cache uv run pytest -q`
+  - 在 `epsilon-boot/` 下运行 `UV_CACHE_DIR=../.uv-cache uv run python -m compileall src`
+  - 在仓库根检查 `rg -n "COMPACTION_BUDGET|compaction_budget|budget_tokens" epsilon-boot/src epsilon-boot/config.properties` 无命中
+  - 所有检查通过后才进入 `spec_generator` 实现验收
+
+## 备注
+
+- 本期不创建数据库迁移、Redis 结构或本地会话存储格式变更；摘要不持久化。
+- 默认启用通过容器注册 `LLMSummaryCompactionAdapter` 完成；`SlidingWindowCompactionAdapter` 仍保留给降级和评测。
+- 所有新增公开类、函数、模块必须按仓库规范写中文 docstring。
+- 依赖变更只允许使用 `uv`；不得使用 `pip`。

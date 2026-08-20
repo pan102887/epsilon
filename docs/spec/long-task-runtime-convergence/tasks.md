@@ -1,0 +1,312 @@
+# 实现计划：长任务运行时收敛修复
+
+## 概述
+
+本计划按设计文档的 P0 / P1 / P2 顺序拆分为可逐步提交的小任务，优先完成运行时事实源收敛、审批恢复复用、风险门禁接线与协作摘要 schema 归一，再补齐确定性统计，最后推进 workflow 角色能力、handoff 与 child run 的保守编排。任务顺序遵循仓库现有分层：领域模型与 Port → 应用编排 → 基础设施适配器 → 接口/CLI/前端展示；每一组后紧跟对应验证任务与检查点任务。
+
+本特性按当前设计不引入新的数据库表、DDL、索引或数据回填脚本；若后续范围变化需要新增 SQL，仓库约定目录为 `epsilon-boot/migrations/`，不得另起路径。
+
+## Tasks
+
+- [x] 1. P0 领域模型与运行上下文收敛底座
+  - [x] 1.1 扩展 guardrail 领域值对象与累计合并函数
+    - 在 `epsilon-boot/src/domain/agent/guardrails.py` 中创建/修改
+    - 新增 `GuardrailEvaluationStage`、`GuardrailRuntimeStats`、`GuardrailObservation`，扩展 `GuardrailSummary` 的累计字段与 `stale` 标记
+    - 实现 `merge_guardrail_summary(...)`、`mark_guardrail_summary_stale(...)`，保持 `GuardrailDecision.to_summary()` 仅生成最近一次动作基底
+    - 为 `estimated_cost`、`cost_available`、`last_tool_name`、`last_tool_error` 等字段提供 JSON-safe `to_dict()` 输出
+    - _需求: 1.2, 1.3, 1.5, 4.1, 4.3, 4.5, 8.5_
+  - [x] 1.2 扩展 Run/Task 领域 Port 与值对象契约
+    - 在 `epsilon-boot/src/domain/run/ports.py`、`epsilon-boot/src/domain/run/value_objects.py`、`epsilon-boot/src/domain/agent/ports.py`、`epsilon-boot/src/domain/task/ports.py`、`epsilon-boot/src/domain/task/value_objects.py` 中创建/修改
+    - 新增 `RunObservationStorePort.record_runtime_observation(...)`
+    - 扩展 `ApprovalResumeStoreResult` 支持 `awaiting_approval`、`approval_id`、`guardrail_summary`、`workflow_run_state`、`collaboration_summary`
+    - 为 `RunStorePort.mark_*`、`resolve_approval_resume(...)`、`enqueue_recovery(...)` 增加 `guardrail_summary` 参数
+    - 为 `RunEventType` 增加 `GUARDRAIL_EVALUATED`、`GUARDRAIL_BLOCKED`，并给 `TaskAgentPort` 增加 `resume_approval(...)`
+    - 为 `TaskResult` 增加 `approval_id`，新增 `TaskApprovalResumeRequest`
+    - _需求: 1.1, 1.2, 2.2, 2.4, 4.4, 8.2, 8.5_
+  - [x] 1.3 引入统一 Run 执行上下文与分段风险字段
+    - 在 `epsilon-boot/src/domain/run/runtime_context.py` 中创建，在 `epsilon-boot/src/domain/agent/segmented_execution.py` 中修改
+    - 定义 `RunExecutionContext`、`get_run_execution_context()`、`set_run_execution_context()`、`reset_run_execution_context()`
+    - 为 `SegmentRunMetadata` 增加 `risk_gate_required: bool = False` 与 `guardrail_reason: str | None = None`
+    - 保持领域层纯净，不导入 application / infrastructure / FastAPI / Redis
+    - _需求: 3.1, 3.2, 8.2, 8.5_
+  - [x] 1.4 验证领域层 guardrail / port / schema 不变量
+    - 在 `epsilon-boot/test/domain/agent/test_guardrail_summary_properties.py`、`epsilon-boot/test/domain/run/test_run_ports_unit.py`、`epsilon-boot/test/domain/run/test_collaboration_summary_schema_property.py`、`epsilon-boot/test/domain/agent/test_segmented_execution_value_objects_unit.py` 中创建/修改
+    - 用 Hypothesis 覆盖 `evaluation_count >= blocked_count >= approval_request_count`
+    - 校验 `ApprovalResumeStoreResult`、`RunObservationStorePort`、`TaskApprovalResumeRequest`、`TaskResult.approval_id` 的静态签名
+    - 校验 `recent_steps/latest_steps` 任意输入归一后只保留 `latest_steps`
+    - _需求: 1.2, 1.3, 2.2, 3.3, 3.4, 3.5, 8.2_
+  - [x] 1.5 检查点：验证 P0 领域底座可编译且静态边界未破坏
+    - 运行 `cd /Users/jupeter/Sources/epsilon/epsilon-boot && uv run pytest test/domain/agent/test_guardrail_summary_properties.py test/domain/run/test_run_ports_unit.py test/domain/run/test_collaboration_summary_schema_property.py test/domain/agent/test_segmented_execution_value_objects_unit.py`
+    - 追加运行 `cd /Users/jupeter/Sources/epsilon/epsilon-boot && uv run pytest test/application/test_long_task_phase3_architecture_static.py test/application/test_long_task_phase6_architecture_static.py`
+    - _需求: 1.2, 3.3, 8.2, 8.5_
+
+- [x] 2. P0 Run 观察写入与恢复保守语义
+  - [x] 2.1 实现本地文件 Run 观察原子写入与协作摘要读兼容
+    - 在 `epsilon-boot/src/infrastructure/run/local_file_run_store_adapter.py` 中创建/修改
+    - 让 `LocalFileRunStoreAdapter` 同时实现 `RunObservationStorePort`
+    - 在单个 Run 锁区内完成 cursor 分配、事件追加、`snapshot.latest_event_cursor` 更新，以及 `guardrail_summary` / `workflow_run_state` / `collaboration_summary` 覆盖写入
+    - 在快照反序列化时把历史 `recent_steps` 映射到 `latest_steps`，但不回写 `recent_steps`
+    - _需求: 1.1, 1.2, 1.4, 3.4, 3.5, 8.4_
+  - [x] 2.2 实现 Redis Run 观察原子写入与 owner 校验
+    - 在 `epsilon-boot/src/infrastructure/run/redis_run_store_adapter.py` 中创建/修改
+    - 让 `RedisRunStoreAdapter` 同时实现 `RunObservationStorePort`
+    - 在 `WATCH/MULTI/EXEC` 事务里完成事件追加与快照摘要同步，校验 `owner_id` 与当前租约一致
+    - 更新 `_snapshot_from_dict(...)` 的 `recent_steps -> latest_steps` 兼容归一
+    - _需求: 1.1, 1.2, 3.5, 8.4_
+  - [x] 2.3 让 Run 恢复路径保留或保守标记 guardrail_summary
+    - 在 `epsilon-boot/src/application/run/run_execution_coordinator.py`、`epsilon-boot/src/application/run/run_checkpoint_recovery_service.py` 中创建/修改
+    - 在所有执行段统一设置 `RunExecutionContext(run_id, owner_id, segment_index, recovery_mode)`，不再依赖 checkpoint 开关
+    - 恢复模式下只读取既有 `snapshot.guardrail_summary`，不重放历史 guardrail 事件
+    - 当 `latest_checkpoint_id` 存在但 `guardrail_summary` 缺失时，在 `enqueue_recovery(...)` 前写入 `stale=true` 的保守摘要
+    - _需求: 1.5, 4.6, 7.4, 8.3_
+  - [x] 2.4 配置与装配 Run guardrail 收敛开关
+    - 在 `epsilon-boot/src/infrastructure/run/run_config.py`、`epsilon-boot/config.properties`、`epsilon-boot/src/application/container_config.py` 中创建/修改
+    - 新增 `RUN_GUARDRAIL_RUNTIME_CONVERGENCE_ENABLED=true` 默认配置与解析字段
+    - 在容器中注册 `RunObservationStorePort`、后续 `RunGuardrailRecorder` 依赖，并保持 file/redis 双后端装配一致
+    - 保证默认配置主源仅来自 `config.properties`
+    - _需求: 1.2, 1.5, 8.1, 8.3, 8.5_
+  - [x] 2.5 验证 Run 观察存储与恢复契约
+    - 在 `epsilon-boot/test/infrastructure/run/test_local_file_run_observation_store.py`、`epsilon-boot/test/infrastructure/run/test_redis_run_observation_store.py`、`epsilon-boot/test/application/run/test_run_checkpoint_recovery_guardrail.py`、`epsilon-boot/test/infrastructure/run/test_run_config_unit.py` 中创建/修改
+    - 覆盖 file/redis 的 cursor 单调、摘要游标同步、owner 冲突失败、旧 `recent_steps` 兼容映射
+    - 覆盖恢复时保留已有 summary、缺失时写 `stale=true` 且不重复累计统计
+    - 覆盖新配置默认值与关闭开关兼容行为
+    - _需求: 1.1, 1.2, 1.5, 3.5, 4.6, 8.1, 8.3_
+  - [x] 2.6 检查点：验证 P0 存储与恢复边界
+    - 运行 `cd /Users/jupeter/Sources/epsilon/epsilon-boot && uv run pytest test/infrastructure/run/test_local_file_run_observation_store.py test/infrastructure/run/test_redis_run_observation_store.py test/application/run/test_run_checkpoint_recovery_guardrail.py test/infrastructure/run/test_run_config_unit.py`
+    - _需求: 1.1, 1.5, 3.5, 8.1_
+
+- [x] 3. P0 guardrail recorder 与审批恢复分派
+  - [x] 3.1 创建 Run guardrail recorder 应用服务
+    - 在 `epsilon-boot/src/application/run/run_guardrail_recorder.py` 中创建，在 `epsilon-boot/src/application/container_config.py` 中注册
+    - 实现 `RunGuardrailRecorder(RunGuardrailRecorderPort)`，从 `RunExecutionContext` 读取 `run_id/owner_id/segment_index`
+    - 依照 action 选择 `RunEventType.GUARDRAIL_EVALUATED` 或 `GUARDRAIL_BLOCKED`
+    - 通过 `merge_guardrail_summary(...)` 计算 `summary_after`，调用一次 `record_runtime_observation(...)` 原子写入
+    - 无 Run 上下文时返回 `None`，保持同步 chat/task 入口兼容
+    - _需求: 1.1, 1.2, 1.3, 1.4, 8.2, 8.5_
+  - [x] 3.2 创建 Run 审批恢复分派器并接入 RunApplicationService
+    - 在 `epsilon-boot/src/application/run/run_approval_resumer.py` 中创建，在 `epsilon-boot/src/application/run/run_application_service.py`、`epsilon-boot/src/application/container_config.py` 中修改
+    - 实现 `RunApprovalResumer.__call__(snapshot, decisions, model)`，按 `RunKind.CHAT` / `RunKind.TASK` 分派到 `ChatServicePort.resume_approval(...)` 或 `TaskAgentPort.resume_approval(...)`
+    - 映射 `queued`、`awaiting_approval`、`succeeded`、`failed`、`cancelled` 状态，并透传新的 `approval_id` 与最新 `guardrail_summary`
+    - 保持 `ApprovalNotFoundError`、`ApprovalExpiredError`、`ApprovalConsumedError` 等异常不改语义
+    - _需求: 2.2, 2.3, 2.4, 8.3, 8.5_
+  - [x] 3.3 扩展 Task 审批恢复领域到应用链路
+    - 在 `epsilon-boot/src/domain/task/ports.py`、`epsilon-boot/src/domain/task/value_objects.py`、`epsilon-boot/src/application/run/run_execution_coordinator.py` 中创建/修改
+    - 让 Run 执行协调器在 awaiting approval / continue 场景可无缝使用新的 task 恢复类型与结果字段
+    - 保持“不重复追加原始 user message / task goal”的 continue 语义
+    - _需求: 2.2, 2.3, 8.3_
+  - [x] 3.4 验证 recorder 与审批恢复应用服务
+    - 在 `epsilon-boot/test/application/run/test_run_guardrail_recorder.py`、`epsilon-boot/test/application/run/test_run_approval_resumer.py`、`epsilon-boot/test/application/run/test_run_application_service_unit.py` 中创建/修改
+    - 覆盖 allow/observe/require_approval/stop 的事件类型与 summary 计数
+    - 覆盖错误 `owner_id` 失败、Chat/Task 恢复、再次审批、审批拒绝/过期/消费失败
+    - 断言恢复后同一 Run 再入 `awaiting_approval` 时生成新 `approval_id`，且不重复追加原始输入
+    - _需求: 1.1, 1.2, 2.1, 2.2, 2.3, 2.4_
+  - [x] 3.5 检查点：验证 recorder 与审批分派可独立回归
+    - 运行 `cd /Users/jupeter/Sources/epsilon/epsilon-boot && uv run pytest test/application/run/test_run_guardrail_recorder.py test/application/run/test_run_approval_resumer.py test/application/run/test_run_application_service_unit.py`
+    - _需求: 1.1, 2.2, 2.3_
+
+- [x] 4. P0 ReAct、Chat、Task 路径接线
+  - [x] 4.1 在 ReActAdapter 接入 guardrail observation、审批复用与稳定风险标记
+    - 在 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py` 中创建/修改
+    - 构造函数注入 `run_guardrail_recorder: RunGuardrailRecorderPort | None = None`
+    - 在模型完成后、工具执行前、工具执行后创建 `GuardrailObservation` 并调用 `_record_guardrail_observation(...)`
+    - `require_approval` 改为复用 `_save_interrupt(...)` 生成 `ApprovalInterrupt(metadata.source="guardrail")`
+    - `stop` 仍写 `ToolMessage(error=true)`，但补齐 `guardrail_blocked`、`guardrail_action`、`guardrail_reason`、`risk_gate_required`
+    - 保持工具并发执行，但按 assistant `tool_calls` 原始顺序串行记账与事件 flush
+    - _需求: 1.1, 2.1, 2.2, 2.3, 3.2, 4.2, 8.4, 8.5_
+  - [x] 4.2 在 ChatServiceAdapter 所有分段入口接入 risk_gate_required
+    - 在 `epsilon-boot/src/infrastructure/chat/chat_service_adapter.py` 中创建/修改
+    - 增加 `_segment_risk_gate_required(...)`，从新增 `ToolMessage.metadata` 稳定标记读取风险门禁信号
+    - 让 `_run_segmented_agent_on_context(...)`、streaming 分段路径、`continue_chat(...)` 都把 `risk_gate_required` 与 `guardrail_reason` 传给 `decide_next_segment(...)`
+    - 保证 `approval_required` 且来源为 guardrail 时 `risk_gate_required=True`，observe 模式不置真
+    - _需求: 3.1, 3.2, 8.3, 8.4_
+  - [x] 4.3 在 TaskAgentAdapter 接入审批恢复与风险门禁
+    - 在 `epsilon-boot/src/infrastructure/task/task_agent_adapter.py` 中创建/修改
+    - 构造函数注入 `approval_store: ApprovalStateStorePort | None = None`
+    - 实现 `resume_approval(request: TaskApprovalResumeRequest) -> TaskResult`
+    - 在 `_to_task_result(...)` 先判断 `agent_result.status == "approval_required"`，映射为 `TaskStatus.HUMAN_INTERVENTION_REQUIRED` 并透传 `approval_id`
+    - 让首段与 `continue_task(...)` 路径都把 `risk_gate_required` 传入 `decide_next_segment(...)`
+    - _需求: 2.2, 2.3, 3.1, 3.2, 8.3_
+  - [x] 4.4 扩展运行配置与 guardrail policy 装配
+    - 在 `epsilon-boot/src/infrastructure/agent/guardrail_config.py`、`epsilon-boot/src/application/container_config.py` 中创建/修改
+    - 为后续 P1 成本格式兼容预留解析入口，并在本任务先接通 `RunGuardrailRecorder` 注入 `ReActAgentAdapter`
+    - 确保关闭 `RUN_GUARDRAIL_RUNTIME_CONVERGENCE_ENABLED` 时退回旧写路径，不改变默认 continue/approval 语义
+    - _需求: 2.2, 8.1, 8.3, 8.4_
+  - [x] 4.5 验证 ReAct / Chat / Task P0 接线
+    - 在 `epsilon-boot/test/infrastructure/agent/test_react_agent_guardrail_runtime.py`、`epsilon-boot/test/infrastructure/chat/test_segment_risk_gate_required.py`、`epsilon-boot/test/infrastructure/task/test_task_agent_approval_resume.py` 中创建/修改
+    - 覆盖 `require_approval` 走 `ApprovalInterrupt`、`stop` 走 ToolMessage error、审批恢复再次命中生成新 `approval_id`
+    - 覆盖 chat continue / task continue 都从稳定 metadata 导出 `risk_gate_required`
+    - 覆盖审批展示可读取完整 `PendingActionRequest.arguments`，但 Run 事件/日志不复制完整参数
+    - _需求: 2.1, 2.2, 2.3, 3.1, 3.2, 8.4_
+  - [x] 4.6 检查点：验证运行时主链路 P0 接线
+    - 运行 `cd /Users/jupeter/Sources/epsilon/epsilon-boot && uv run pytest test/infrastructure/agent/test_react_agent_guardrail_runtime.py test/infrastructure/chat/test_segment_risk_gate_required.py test/infrastructure/task/test_task_agent_approval_resume.py`
+    - _需求: 2.1, 2.2, 3.1, 3.2_
+
+- [x] 5. P0 协作摘要规范化与接口展示收敛
+  - [x] 5.1 统一 collaboration summary 写路径为 latest_steps
+    - 在 `epsilon-boot/src/infrastructure/agent/workflow_collaboration_recorder.py`、`epsilon-boot/src/domain/run/workflow.py` 中创建/修改
+    - 只维护 `latest_steps` 作为规范字段，保留 `child_links`、`delegation_count`、`handoff_count`、`max_depth_seen`、`limit_hit_reason`
+    - 确保协作 helper、领域值对象和 `to_dict()` 输出不再生成 `recent_steps`
+    - _需求: 3.3, 3.4, 8.4, 8.5_
+  - [x] 5.2 更新 Run API、CLI/TUI 与前端类型到 canonical schema
+    - 在 `epsilon-boot/src/application/api/routers/runs.py`、`epsilon-boot/src/application/cli/commands.py`、`epsilon-boot/src/application/cli/tui.py`、`epsilon-client/src/lib/chat-api.ts`、`epsilon-client/src/components/run/run-view.tsx` 中创建/修改
+    - 仅透传并渲染 `RunSnapshot.guardrail_summary`、`workflow_run_state`、`collaboration_summary.latest_steps`
+    - CLI/TUI 与前端保留历史快照 fallback：若后端旧数据仍含 `recent_steps`，展示层映射后读取，但不再写回双字段
+    - 更新 `CollaborationSummary` TypeScript 类型与 Run 视图摘要卡片
+    - _需求: 1.4, 3.4, 3.5, 6.5, 8.4_
+  - [x] 5.3 更新 Run 事件列表与快照契约展示
+    - 在 `epsilon-client/src/components/run/run-event-list.tsx`、`epsilon-client/src/components/run/run-view.tsx` 中创建/修改
+    - 为 `guardrail_evaluated`、`guardrail_blocked`、后续 workflow handoff / child run 事件预留标签与安全 payload 摘要展示
+    - 在 Run 面板中展示 `guardrail_summary.action/reason/runtime_stats` 与 `workflow_run_state.current_phase`
+    - _需求: 1.4, 3.4, 6.5, 8.4_
+  - [x] 5.4 验证 schema 契约与展示兼容
+    - 在 `epsilon-boot/test/integration/test_run_view_schema_contract.py`、`epsilon-boot/test/application/test_cli_run_rendering.py` 中创建/修改
+    - 断言 `RunSnapshotBody.collaboration_summary.latest_steps`、`guardrail_summary`、`workflow_run_state` 静态契约
+    - 断言 CLI/TUI 只读取 `latest_steps`，历史 `recent_steps` fallback 正常
+    - _需求: 1.4, 3.3, 3.4, 3.5, 8.4_
+  - [x] 5.5 检查点：验证接口与展示层只读 canonical snapshot/event
+    - 运行 `cd /Users/jupeter/Sources/epsilon/epsilon-boot && uv run pytest test/integration/test_run_view_schema_contract.py test/application/test_cli_run_rendering.py`
+    - 运行 `cd /Users/jupeter/Sources/epsilon/epsilon-client && npm run lint`
+    - _需求: 3.4, 3.5, 8.4_
+
+- [x] 6. P0 端到端回归与发布前验证
+  - [x] 6.1 构建 P0 chat/task/run 集成回归
+    - 在 `epsilon-boot/test/integration/test_long_task_runtime_convergence_p0.py` 中创建
+    - 覆盖 chat run 命中高风险工具 guardrail、事件流收到 `GUARDRAIL_BLOCKED`、`RunSnapshot.guardrail_summary` 更新、Run 进入 `awaiting_approval`、approve 后原 Run 继续
+    - 覆盖 task 路径 guardrail 审批恢复与“恢复后再次命中审批”重新生成 `approval_id`
+    - 覆盖默认开启 `RUN_GUARDRAIL_RUNTIME_CONVERGENCE_ENABLED=true` 时历史 snapshot/event 与旧客户端读取兼容
+    - _需求: 1.1, 1.4, 1.5, 2.1, 2.2, 2.3, 3.1, 3.2, 8.3, 8.4_
+  - [x] 6.2 补充静态架构边界测试
+    - 在 `epsilon-boot/test/static/test_long_task_runtime_convergence_architecture_boundaries.py` 中创建
+    - 断言 domain 不导入 infrastructure/FastAPI/Redis/外部 workflow engine
+    - 断言 `application/api/routers/runs.py`、CLI/TUI、前端不复制 guardrail 或 workflow 策略判断逻辑
+    - 断言新增公共模块、类、公开函数/方法具有中文 docstring
+    - _需求: 8.1, 8.2, 8.4, 8.5_
+  - [x] 6.3 检查点：完成 P0 回归基线
+    - 运行 `cd /Users/jupeter/Sources/epsilon/epsilon-boot && uv run pytest test/integration/test_long_task_runtime_convergence_p0.py test/static/test_long_task_runtime_convergence_architecture_boundaries.py`
+    - 运行 `cd /Users/jupeter/Sources/epsilon/epsilon-client && npm run build`
+    - _需求: 1, 2, 3, 8_
+
+- [x] 7. P1 确定性运行时统计与成本估算
+  - [x] 7.1 扩展 guardrail pricing 配置与领域统计模型
+    - 在 `epsilon-boot/src/domain/agent/guardrails.py`、`epsilon-boot/src/infrastructure/agent/guardrail_config.py`、`epsilon-boot/config.properties` 中创建/修改
+    - 让 `AGENT_GUARDRAILS_MODEL_PRICING` 同时支持旧标量格式与新对象格式 `{prompt_per_1m, completion_per_1m}` / `{total_per_1m}`
+    - 在 `GuardrailRuntimeStats` 中固化 `total_model_calls`、`total_tool_calls`、`context_growth_messages`、`estimated_cost`、`cost_available`
+    - 缺失价格时返回 `cost_available=false`，不得阻断运行
+    - _需求: 4.1, 4.3, 4.5, 8.1, 8.5_
+  - [x] 7.2 在 ReActAdapter 以真实模型/工具数据累计统计
+    - 在 `epsilon-boot/src/infrastructure/agent/react_agent_adapter.py` 中创建/修改
+    - 基于 `LLMResponse.usage`、真实时钟、消息增长、工具调用顺序、工具错误结果更新 `GuardrailRuntimeStats`
+    - 模型后评估接 `evaluate_model_completed(...)`，工具前后分别接 `evaluate_tool_before_execution(...)` / `evaluate_tool_after_execution(...)`
+    - 恢复场景读取已持久化统计继续累计，不重复记账历史 segment
+    - _需求: 4.1, 4.2, 4.3, 4.4, 4.6_
+  - [x] 7.3 在恢复与摘要合并中避免双计数
+    - 在 `epsilon-boot/src/application/run/run_checkpoint_recovery_service.py`、`epsilon-boot/src/application/run/run_guardrail_recorder.py` 中创建/修改
+    - 约束恢复只复用 snapshot/checkpoint 中已有统计，不回算已提交 token、工具调用与失败次数
+    - 确保新事件命中阈值时 `guardrail_summary.runtime_stats` 与事件 payload 一致更新
+    - _需求: 4.3, 4.4, 4.6_
+  - [x] 7.4 验证 P1 统计与价格兼容
+    - 在 `epsilon-boot/test/domain/agent/test_guardrail_runtime_stats_property.py`、`epsilon-boot/test/infrastructure/agent/test_react_agent_guardrail_runtime.py`、`epsilon-boot/test/infrastructure/agent/test_guardrail_config_unit.py`、`epsilon-boot/test/integration/test_long_task_runtime_convergence_p1.py` 中创建/修改
+    - 用属性测试覆盖恢复前后无双计数
+    - 覆盖 token/耗时/上下文增长/重复调用/连续失败/成本估算写入事件和 summary
+    - 覆盖缺失价格时 `cost_available=false` 且不改变 allow/observe/stop/require_approval 语义
+    - _需求: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6_
+  - [x] 7.5 检查点：在 observe 模式下验证 P1 不改变阻断语义
+    - 运行 `cd /Users/jupeter/Sources/epsilon/epsilon-boot && uv run pytest test/domain/agent/test_guardrail_runtime_stats_property.py test/infrastructure/agent/test_react_agent_guardrail_runtime.py test/infrastructure/agent/test_guardrail_config_unit.py test/integration/test_long_task_runtime_convergence_p1.py`
+    - _需求: 4.1, 4.4, 4.5, 4.6_
+
+- [x] 8. P2 角色能力最小权限强制
+  - [x] 8.1 扩展 workflow 领域模型表达角色能力与执行策略
+    - 在 `epsilon-boot/src/domain/run/workflow.py` 中创建/修改
+    - 为 `AgentRoleCapability` 增加 `allowed_tool_names`、`allowed_delegate_agents`、`allowed_handoff_agents`、`can_create_child_run`
+    - 新增 `WorkflowExecutionPolicy`，扩展 `WorkflowRunState.active_role`、`handoff_state` 等字段与 `to_dict()` 输出
+    - 默认值采用最小权限，未声明能力默认拒绝
+    - _需求: 5.1, 5.3, 5.4, 6.1, 8.5_
+  - [x] 8.2 增加 workflow capability 配置与装配开关
+    - 在 `epsilon-boot/src/infrastructure/run/workflow_config.py`、`epsilon-boot/config.properties`、`epsilon-boot/src/application/container_config.py` 中创建/修改
+    - 新增 `RUN_WORKFLOW_ROLE_CAPABILITY_ENABLED=false`
+    - 解析并装配 `WorkflowExecutionPolicy.role_capability_enabled`，未开启时保持当前兼容行为
+    - _需求: 5.4, 5.5, 8.1, 8.3_
+  - [x] 8.3 在 workflow orchestrator 中实现越权拒绝并转入既有审批
+    - 在 `epsilon-boot/src/application/run/workflow_orchestrator.py`、`epsilon-boot/src/domain/run/value_objects.py` 中创建/修改
+    - 新增 `RunEventType.ROLE_CAPABILITY_REJECTED`
+    - 在真实工具/委派/handoff/child run 执行前判定 capability，命中时写事件、更新 `workflow_run_state.phase_error_summary` 或 `handoff_state`，并复用现有 `ApprovalInterrupt` 进入 `awaiting_approval`
+    - 活动角色切换后重新读取能力声明，不复用旧缓存
+    - _需求: 5.2, 5.3, 5.4, 5.5, 6.2_
+  - [x] 8.4 验证 role capability 治理
+    - 在 `epsilon-boot/test/domain/run/test_role_capability_property.py`、`epsilon-boot/test/application/run/test_workflow_role_capability.py` 中创建/修改
+    - 覆盖 capability 集为空时所有未声明动作默认拒绝、切换角色后旧缓存不泄漏
+    - 覆盖开启/关闭开关切换与 `ROLE_CAPABILITY_REJECTED` 事件写入
+    - _需求: 5.1, 5.2, 5.3, 5.4, 5.5_
+  - [x] 8.5 检查点：验证 P2 capability 切片
+    - 运行 `cd /Users/jupeter/Sources/epsilon/epsilon-boot && uv run pytest test/domain/run/test_role_capability_property.py test/application/run/test_workflow_role_capability.py`
+    - _需求: 5.1, 5.2, 5.3, 5.4, 5.5_
+
+- [x] 9. P2 workflow handoff 可观测与 phase 策略深化
+  - [x] 9.1 在 workflow orchestrator 记录 workflow 级 handoff 事件与状态
+    - 在 `epsilon-boot/src/application/run/workflow_orchestrator.py`、`epsilon-boot/src/domain/run/value_objects.py` 中创建/修改
+    - 新增 `RunEventType.WORKFLOW_HANDOFF_RECORDED`
+    - 事件 payload 包含 `source_role`、`target_role`、`target_agent`、`reason`、结果性 `workflow_run_state`
+    - 将 phase handoff / review / revise 限额作为执行顺序约束，而非展示元数据
+    - _需求: 6.1, 6.2, 6.3, 6.4_
+  - [x] 9.2 让协作记录器与展示层消费 workflow handoff state
+    - 在 `epsilon-boot/src/infrastructure/agent/workflow_collaboration_recorder.py`、`epsilon-client/src/components/run/run-event-list.tsx`、`epsilon-client/src/components/run/run-view.tsx` 中创建/修改
+    - 展示 workflow handoff 事件与 `workflow_run_state.handoff_state`，但不得在前端重算策略判断
+    - 与既有 `latest_steps` 协作摘要并存展示，保持 adapter/thin UI 语义
+    - _需求: 6.1, 6.3, 6.5, 8.4_
+  - [x] 9.3 验证 workflow handoff / revise 限额
+    - 在 `epsilon-boot/test/application/run/test_workflow_role_capability.py`、`epsilon-boot/test/integration/test_long_task_runtime_convergence_p2.py` 中创建/修改
+    - 覆盖 handoff 事件写入、phase review/revise 约束生效、上限命中后停止推进并暴露稳定停止原因
+    - _需求: 6.1, 6.2, 6.3, 6.4, 6.5_
+  - [x] 9.4 检查点：验证 workflow handoff 切片
+    - 运行 `cd /Users/jupeter/Sources/epsilon/epsilon-boot && uv run pytest test/application/run/test_workflow_role_capability.py test/integration/test_long_task_runtime_convergence_p2.py -k "handoff or revise or review"`
+    - _需求: 6.1, 6.2, 6.3, 6.4, 6.5_
+
+- [x] 10. P2 保守 child run 编排与恢复语义
+  - [x] 10.1 扩展 workflow 配置与事件类型支持 child run
+    - 在 `epsilon-boot/src/infrastructure/run/workflow_config.py`、`epsilon-boot/src/domain/run/value_objects.py`、`epsilon-boot/config.properties` 中创建/修改
+    - 新增 `RUN_WORKFLOW_CHILD_RUN_ENABLED=false`
+    - 新增 `RunEventType.CHILD_RUN_LINKED`、`CHILD_RUN_WAITING`、`CHILD_RUN_RECONCILED`
+    - 保持未启用策略时继续走既有 in-run delegation / handoff 路径
+    - _需求: 7.1, 7.2, 7.5, 8.1, 8.3_
+  - [x] 10.2 在 workflow orchestrator 中实现 parent-child 链接、等待与 reconciliation 节点
+    - 在 `epsilon-boot/src/application/run/workflow_orchestrator.py`、`epsilon-boot/src/domain/run/workflow.py`、`epsilon-boot/src/application/run/run_checkpoint_recovery_service.py` 中创建/修改
+    - 在显式策略启用时创建真实 parent-child link，写入 `WorkflowRunState` 的所有权/等待状态
+    - 父 Run 进入等待态前保存恢复所需 workflow state；恢复时从最近持久化 reconciliation 节点继续，失败时进入保守可恢复失败态
+    - 不宣称超出 `Checkpoint_Ledger` 的 exactly-once 外部副作用保证
+    - _需求: 7.2, 7.3, 7.4, 7.5, 7.6_
+  - [x] 10.3 验证 child run 保守语义
+    - 在 `epsilon-boot/test/application/run/test_run_checkpoint_recovery_guardrail.py`、`epsilon-boot/test/integration/test_long_task_runtime_convergence_p2.py` 中创建/修改
+    - 覆盖未启用 child run 时保持兼容路径
+    - 覆盖启用后 parent-child 链接、等待、恢复、reconciliation 事件，以及异常场景下不假定子流程已成功
+    - _需求: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
+  - [x] 10.4 检查点：验证 P2 child run 切片
+    - 运行 `cd /Users/jupeter/Sources/epsilon/epsilon-boot && uv run pytest test/integration/test_long_task_runtime_convergence_p2.py test/application/run/test_run_checkpoint_recovery_guardrail.py -k "child_run or reconciliation or waiting"`
+    - _需求: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
+
+- [x] 11. 最终全量验证与评审检查点
+  - [x] 11.1 后端针对性回归
+    - 运行 `cd /Users/jupeter/Sources/epsilon/epsilon-boot && uv run pytest test/application/run/test_run_guardrail_recorder.py test/application/run/test_run_approval_resumer.py test/integration/test_long_task_runtime_convergence_p0.py test/integration/test_long_task_runtime_convergence_p1.py test/integration/test_long_task_runtime_convergence_p2.py test/static/test_long_task_runtime_convergence_architecture_boundaries.py`
+    - 记录失败用例并逐项回归修复，确认 P0/P1/P2 没有交叉回退
+    - _需求: 1, 2, 3, 4, 5, 6, 7, 8_
+  - [x] 11.2 后端全量测试与架构边界验证
+    - 运行 `cd /Users/jupeter/Sources/epsilon/epsilon-boot && env PYTHONPATH=src uv run --frozen pytest`
+    - 若时间受限，至少保证新增静态边界测试与既有 `test/application/test_long_task_phase3_architecture_static.py`、`test/application/test_long_task_phase6_architecture_static.py`、`test/static/test_run_checkpoint_architecture_boundaries.py` 全绿
+    - _需求: 8.1, 8.2, 8.4, 8.5_
+  - [x] 11.3 前端静态验证
+    - 运行 `cd /Users/jupeter/Sources/epsilon/epsilon-client && npm run lint`
+    - 运行 `cd /Users/jupeter/Sources/epsilon/epsilon-client && npm run build`
+    - 验证 `RunView`、`RunEventList` 与 `chat-api.ts` 类型契约已全部切换到 canonical snapshot/event 字段
+    - _需求: 3.4, 3.5, 6.5, 8.4_
+  - [x] 11.4 评审检查点：逐项核对需求覆盖与发布开关
+    - 核对每个设计组件均已有实现任务与验证任务
+    - 核对 `RUN_GUARDRAIL_RUNTIME_CONVERGENCE_ENABLED`、`RUN_WORKFLOW_ROLE_CAPABILITY_ENABLED`、`RUN_WORKFLOW_CHILD_RUN_ENABLED` 的默认值、回滚路径与兼容行为
+    - 核对 adapter / router / CLI / Web 仅消费 `RunSnapshot` 与 `Run_Event_Stream`，未复制 guardrail / workflow 决策逻辑
+    - _需求: 1, 2, 3, 4, 5, 6, 7, 8_
+
+## 备注
+
+- 本计划未包含 DDL、索引或 backfill 任务，因为设计明确声明 Run 持久化仍基于 file/Redis 快照与事件，不新增数据库表。若后续需求变更引入 SQL，必须使用 `epsilon-boot/migrations/`。
+- 后端命令必须在 `epsilon-boot/` 下使用 `uv` 运行；前端命令在 `epsilon-client/` 下运行，当前可使用 `npm run lint` / `npm run build`。
+- 所有新增公共模块、类、公开函数、公开方法必须补中文 docstring；静态架构测试应覆盖该约束。
+- 任务执行建议按组提交：P0 至少拆成“领域/存储”“recorder/审批”“运行时接线”“展示/集成”四批；P1、P2 各自独立灰度，避免一次性大包提交。
+- `RUN_GUARDRAIL_RUNTIME_CONVERGENCE_ENABLED` 为默认开启项，开发与评审时优先在 `AGENT_GUARDRAILS_MODE=observe` 配置下做回归，再覆盖 enforce / require_approval 场景。

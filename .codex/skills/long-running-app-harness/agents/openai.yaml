@@ -1,0 +1,4 @@
+interface:
+  display_name: "Harness"
+  short_description: "Planner-generator-evaluator app workflow"
+  default_prompt: "Use $long-running-app-harness with Harness to turn this app idea into a planned, built, and evaluated implementation."
