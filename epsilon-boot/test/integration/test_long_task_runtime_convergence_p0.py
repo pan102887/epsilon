@@ -11,12 +11,13 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
-from application.api.routers.runs import _event_body, _snapshot_body
-from application.run.run_application_service import RunApplicationService
+from application.api.routers.runs import event_body as to_event_body
+from application.api.routers.runs import snapshot_body as to_snapshot_body
+from application.run.run_application_service import ApprovalResumer, RunApplicationService
 from application.run.run_approval_resumer import RunApprovalResumer
 from application.run.run_execution_coordinator import RunExecutionCoordinator
 from application.run.run_guardrail_recorder import RunGuardrailRecorder
@@ -24,11 +25,19 @@ from domain.agent.guardrails import GuardrailMode, GuardrailPolicy, ToolRiskLeve
 from domain.agent.segmented_execution import SegmentExecutionPolicy
 from domain.agent.tools import Tool, ToolExecutionResult, ToolRegistry
 from domain.agent.value_objects import ApprovalDecision
-from domain.chat.context import ConversationContext, UserMessage
-from domain.chat.value_objects import ContextBuilderResult
+from domain.chat.context import BaseMessage, ConversationContext, UserMessage
+from domain.chat.ports import ChatServicePort
+from domain.chat.value_objects import (
+    ApprovalResumeRequestVO,
+    ChatResponseVO,
+    ContextBuilderResult,
+    ContextCompactionResult,
+)
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import (
     ChatRequest,
     LLMResponse,
+    ModelInfo,
     StreamingChunk,
     ToolCallRequest,
 )
@@ -44,7 +53,8 @@ from domain.run.value_objects import (
     RunSnapshot,
     RunStatus,
 )
-from domain.task.value_objects import TaskApprovalResumeRequest
+from domain.task.ports import TaskAgentPort
+from domain.task.value_objects import TaskApprovalResumeRequest, TaskResult
 from infrastructure.agent.approval_state_store import LocalFileApprovalStateStore
 from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 from infrastructure.agent.static_guardrail_policy import StaticAgentGuardrailPolicy
@@ -104,7 +114,7 @@ class _QueueModel:
         for chunk in response_to_chunks(response):
             yield chunk
 
-    def count_tokens(self, messages: list[Any]) -> int:
+    def count_tokens(self, messages: list[BaseMessage]) -> int:
         """返回用于测试的近似 token 数。"""
 
         return len(messages)
@@ -124,10 +134,20 @@ class _ModelRegistry:
 
         return self._default_model
 
-    def get_adapter_for_model(self, model: str):
+    def get_adapter_for_model(self, model: str) -> ModelAccessPort:
         """返回指定模型对应的 fake adapter。"""
 
         return self._mapping[model]
+
+    def register_provider(
+        self, provider_name: str, adapter: ModelAccessPort, models: list[str]
+    ) -> bool:
+        raise AssertionError(
+            f"unexpected provider registration: {provider_name}, {adapter}, {models}"
+        )
+
+    def list_models(self) -> list[ModelInfo]:
+        return []
 
 
 class _PromptRegistry:
@@ -150,14 +170,34 @@ class _PromptRegistry:
             content="chat system",
         )
 
+    def list_names(self) -> list[str]:
+        return ["chat-default", "task-template"]
+
 
 class _ContextBuilder:
     """原样透传会话消息的上下文构建器 fake。"""
 
-    async def build(self, messages: list[Any], **kwargs: Any) -> ContextBuilderResult:
+    async def build(
+        self,
+        messages: list[BaseMessage],
+        *,
+        model_access: ModelAccessPort | None = None,
+        model: str | None = None,
+    ) -> ContextBuilderResult:
         """构造 ContextBuilderResult，不访问外部模型或存储。"""
 
+        del model_access, model
         return ContextBuilderResult(messages=list(messages), usage={})
+
+    async def compact(
+        self,
+        messages: list[BaseMessage],
+        *,
+        model_access: ModelAccessPort | None = None,
+        model: str | None = None,
+    ) -> ContextCompactionResult:
+        del model_access, model
+        return ContextCompactionResult(messages=list(messages))
 
 
 class _MutableRiskTool(Tool):
@@ -209,7 +249,7 @@ class _MutableRiskTool(Tool):
 class _NoopTaskAgent:
     """聊天测试中不应被调用的任务 Agent fake。"""
 
-    async def resume_approval(self, request: TaskApprovalResumeRequest):
+    async def resume_approval(self, request: TaskApprovalResumeRequest) -> TaskResult:
         """若被调用则说明 RunKind 分派错误。"""
 
         raise AssertionError(f"unexpected task resume request: {request!r}")
@@ -218,7 +258,7 @@ class _NoopTaskAgent:
 class _NoopChatService:
     """任务测试中不应被调用的聊天服务 fake。"""
 
-    async def resume_approval(self, request):
+    async def resume_approval(self, request: ApprovalResumeRequestVO) -> ChatResponseVO:
         """若被调用则说明 RunKind 分派错误。"""
 
         raise AssertionError(f"unexpected chat resume request: {request!r}")
@@ -279,7 +319,7 @@ def _session_store(root: Path) -> LocalFileSessionContextAdapter:
 def _service(
     store: LocalFileRunStoreAdapter,
     *,
-    approval_resumer=None,
+    approval_resumer: ApprovalResumer | None = None,
 ) -> RunApplicationService:
     """构造只依赖本地 store 的 Run 应用服务。"""
 
@@ -399,8 +439,8 @@ def _task_agent(
 def _worker(
     *,
     store: LocalFileRunStoreAdapter,
-    chat_service,
-    task_agent,
+    chat_service: object,
+    task_agent: object,
     owner_id: str,
 ) -> RunWorker:
     """构造执行单个 run 段的 focused worker。"""
@@ -409,8 +449,8 @@ def _worker(
         run_store=store,
         event_store=store,
         executor=RunExecutionCoordinator(
-            chat_service=chat_service,
-            task_agent=task_agent,
+            chat_service=cast(ChatServicePort, chat_service),
+            task_agent=cast(TaskAgentPort, task_agent),
             segment_serializer=SegmentSerializerAdapter(),
         ),
         lease_seconds=60,
@@ -501,7 +541,7 @@ async def test_chat_run_uses_real_guardrail_path_for_event_summary_approval_and_
         store,
         approval_resumer=RunApprovalResumer(
             chat_service=chat_service,
-            task_agent=_NoopTaskAgent(),
+            task_agent=cast(TaskAgentPort, _NoopTaskAgent()),
         ),
     )
 
@@ -606,7 +646,7 @@ async def test_task_resume_uses_real_task_agent_and_regenerates_guardrail_approv
     service = _service(
         store,
         approval_resumer=RunApprovalResumer(
-            chat_service=_NoopChatService(),
+            chat_service=cast(ChatServicePort, _NoopChatService()),
             task_agent=task_agent,
         ),
     )
@@ -787,8 +827,8 @@ async def test_default_convergence_enabled_keeps_historical_snapshot_and_event_r
         created_at=_NOW,
     )
 
-    snapshot_body = _snapshot_body(historical_snapshot).model_dump(mode="json")
-    event_body = _event_body(historical_event).model_dump(mode="json")
+    snapshot_body = to_snapshot_body(historical_snapshot).model_dump(mode="json")
+    event_body = to_event_body(historical_event).model_dump(mode="json")
 
     assert snapshot_body["guardrail_summary"] == historical_snapshot.guardrail_summary
     assert snapshot_body["collaboration_summary"]["latest_steps"] == [

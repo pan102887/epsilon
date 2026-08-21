@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -15,6 +16,7 @@ from domain.run.checkpoint_context import (
     reset_run_checkpoint_context,
     set_run_checkpoint_context,
 )
+from domain.run.ports import RunCheckpointStorePort, RunEventStorePort, RunStorePort
 from domain.run.value_objects import (
     CheckpointPhase,
     CheckpointRetentionPolicy,
@@ -57,12 +59,10 @@ class _CheckpointStore:
         self.saved: list[DurableCheckpoint] = []
 
     async def save_checkpoint(self, checkpoint: DurableCheckpoint) -> DurableCheckpoint:
-        saved = DurableCheckpoint(
-            **{
-                **checkpoint.__dict__,
-                "checkpoint_id": f"chk-{len(self.saved) + 1}",
-                "sequence": len(self.saved) + 1,
-            }
+        saved = replace(
+            checkpoint,
+            checkpoint_id=f"chk-{len(self.saved) + 1}",
+            sequence=len(self.saved) + 1,
         )
         self.saved.append(saved)
         self.checkpoint = saved
@@ -125,14 +125,12 @@ class _RunStore:
                 "collaboration_summary": collaboration_summary,
             }
         )
-        self.snapshot = RunSnapshot(
-            **{
-                **self.snapshot.__dict__,
-                "status": RunStatus.QUEUED,
-                "latest_checkpoint_id": latest_checkpoint_id,
-                "workflow_run_state": workflow_run_state,
-                "collaboration_summary": collaboration_summary,
-            }
+        self.snapshot = replace(
+            self.snapshot,
+            status=RunStatus.QUEUED,
+            latest_checkpoint_id=latest_checkpoint_id,
+            workflow_run_state=workflow_run_state,
+            collaboration_summary=collaboration_summary,
         )
         return self.snapshot
 
@@ -144,12 +142,10 @@ class _RunStore:
         recovery_error: dict[str, Any] | None = None,
     ) -> RunSnapshot:
         self.lost.append({"run_id": run_id, "reason": reason, "recovery_error": recovery_error})
-        self.snapshot = RunSnapshot(
-            **{
-                **self.snapshot.__dict__,
-                "status": RunStatus.LOST,
-                "last_recovery_error": recovery_error,
-            }
+        self.snapshot = replace(
+            self.snapshot,
+            status=RunStatus.LOST,
+            last_recovery_error=recovery_error,
         )
         return self.snapshot
 
@@ -228,9 +224,9 @@ def _service(
     event_store: _EventStore,
 ) -> RunRecoveryService:
     return RunRecoveryService(
-        run_store=run_store,
-        checkpoint_store=checkpoint_store,
-        event_store=event_store,
+        run_store=cast(RunStorePort, run_store),
+        checkpoint_store=cast(RunCheckpointStorePort, checkpoint_store),
+        event_store=cast(RunEventStorePort, event_store),
         retention_policy=_policy(),
         max_recovery_attempts=3,
         auto_recovery_enabled=True,
@@ -261,8 +257,8 @@ async def test_checkpoint_sink_merges_workflow_context_into_segment_metadata() -
     store = _CheckpointStore()
     events = _EventStore()
     sink = RunCheckpointSink(
-        checkpoint_store=store,
-        event_store=events,
+        checkpoint_store=cast(RunCheckpointStorePort, store),
+        event_store=cast(RunEventStorePort, events),
         retention_policy=_policy(),
         now=lambda: _NOW,
     )
@@ -368,3 +364,13 @@ async def test_pending_tool_replay_policy_still_blocks_recovery() -> None:
 
     assert decision.recoverable is False
     assert decision.reason == "pending_tool_replay_blocked"
+
+
+# Public test builders reused by higher-level integration coverage.
+checkpoint = _checkpoint
+CheckpointStore = _CheckpointStore
+pending_ledger = _pending_ledger
+RunStore = _RunStore
+build_service = _service
+snapshot = _snapshot
+EventStore = _EventStore

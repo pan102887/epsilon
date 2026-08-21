@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import Any, cast
 
 from application.cli.commands import SlashCommandRouter
-from application.cli.runtime import ResumeSessionResult
+from application.cli.runtime import DoctorResult, ResumeSessionResult
 from application.cli.session import TuiSessionState
 from application.cli.workflow import (
     CodingDiffSnapshot,
@@ -15,7 +16,7 @@ from application.cli.workflow import (
     CodingTestsSnapshot,
     WorkflowTestRecord,
 )
-from domain.agent.value_objects import ApprovalInterruptSummary
+from domain.agent.value_objects import ApprovalDecision, ApprovalInterruptSummary
 from domain.chat.value_objects import SessionMetadata
 from domain.run.exceptions import RunContinuationUnavailableError, RunNotFoundError
 from domain.run.value_objects import RunKind, RunPayload, RunSnapshot, RunStatus
@@ -25,7 +26,7 @@ class FakeRuntime:
     def __init__(self) -> None:
         self.cleared: list[str] = []
         self.deleted: list[str] = []
-        self.calls: list[tuple] = []
+        self.calls: list[tuple[object, ...]] = []
         self.pending_approvals: list[ApprovalInterruptSummary] = []
         self.sessions: list[SessionMetadata] = [
             SessionMetadata(
@@ -58,7 +59,7 @@ class FakeRuntime:
             preview="hello world",
             model="qwen3",
         )
-        approvals = []
+        approvals: list[ApprovalInterruptSummary] = []
         if session_id == "with-approval":
             approvals.append(
                 ApprovalInterruptSummary(
@@ -84,16 +85,15 @@ class FakeRuntime:
     def default_model(self) -> str:
         return "glm-4.7"
 
-    def doctor(self, state: TuiSessionState):
-        class Result:
-            session_id = state.session_id
-            model = state.model or "glm-4.7"
-            agent_mode = "main_agent"
-            workspace = "/tmp/workspace"
+    def doctor(self, state: TuiSessionState) -> DoctorResult:
+        return DoctorResult(
+            session_id=state.session_id,
+            model=state.model or "glm-4.7",
+            agent_mode="main_agent",
+            workspace="/tmp/workspace",
+        )
 
-        return Result()
-
-    def list_known_runs(self):
+    def list_known_runs(self) -> list[RunSnapshot]:
         return [
             _snapshot(
                 "run-known",
@@ -123,7 +123,7 @@ class FakeRuntime:
         return _snapshot(run_id, RunKind.CHAT, status=RunStatus.QUEUED)
 
     async def resume_approval_run(
-        self, run_id: str, decisions: list, model: str | None = None
+        self, run_id: str, decisions: list[ApprovalDecision], model: str | None = None
     ) -> RunSnapshot:
         self.calls.append(("resume_approval_run", run_id, decisions, model))
         return _snapshot(run_id, RunKind.CHAT, status=RunStatus.QUEUED)
@@ -183,7 +183,7 @@ def _snapshot(
     *,
     status: RunStatus = RunStatus.QUEUED,
     task_classification: str | None = None,
-    guardrail_summary: dict | None = None,
+    guardrail_summary: dict[str, Any] | None = None,
 ) -> RunSnapshot:
     now = datetime.now(UTC)
     payload = RunPayload(
@@ -512,11 +512,12 @@ async def test_run_control_commands_delegate_to_runtime() -> None:
     assert "status: queued" in continued.message
     assert "status: queued" in approved.message
     assert "status: cancel_requested" in cancelled.message
+    approved_call = cast(list[ApprovalDecision], runtime.calls[3][2])
     assert runtime.calls == [
         ("get_run", "run-1"),
         ("get_run", "run-1"),
         ("continue_run", "run-1", "qwen3"),
-        ("resume_approval_run", "run-1", approved_call := runtime.calls[3][2], "qwen3"),
+        ("resume_approval_run", "run-1", approved_call, "qwen3"),
         ("cancel_run", "run-1"),
     ]
     assert approved_call[0].tool_call_id == "call-1"

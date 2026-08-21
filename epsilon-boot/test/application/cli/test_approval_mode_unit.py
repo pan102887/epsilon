@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from application.cli.approval_mode import _APPROVAL_MODES, evaluate_approval_mode
+from application.cli.approval_mode import APPROVAL_MODES, evaluate_approval_mode
 from domain.agent.value_objects import (
     ApprovalDecisionType,
     ApprovalPolicy,
@@ -170,4 +170,4 @@ def test_decision_relies_only_on_injected_policy_for() -> None:
 
 def test_approval_modes_constant_shape() -> None:
     """取值域常量与需求 6.1 定义的三档一致，供 commands.py 复用。"""
-    assert frozenset({"ask", "auto", "manual"}) == _APPROVAL_MODES
+    assert frozenset({"ask", "auto", "manual"}) == APPROVAL_MODES

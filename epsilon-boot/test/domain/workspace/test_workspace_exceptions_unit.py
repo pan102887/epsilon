@@ -13,10 +13,10 @@ from common.exceptions import BizException
 from domain.workspace.exceptions import (
     ConfinementViolationReason,
     WorkspaceConfinementViolation,
+    WorkspaceError,
     WorkspaceIoError,
     WorkspaceNotFoundError,
     WorkspaceUnsupportedOperationError,
-    _WorkspaceError,
 )
 from domain.workspace.value_objects import WorkspacePath
 
@@ -64,7 +64,7 @@ class TestWorkspaceConfinementViolation:
             requested_path="../",
             reason=ConfinementViolationReason.ABSOLUTE_OUTSIDE,
         )
-        assert isinstance(exc, _WorkspaceError)
+        assert isinstance(exc, WorkspaceError)
         assert isinstance(exc, BizException)
 
     def test_preserves_reason_enum(self) -> None:
@@ -114,7 +114,7 @@ class TestWorkspaceNotFoundError:
 
     def test_inherits_from_workspace_error(self) -> None:
         exc = WorkspaceNotFoundError(workspace_path=_wp("/a"))
-        assert isinstance(exc, _WorkspaceError)
+        assert isinstance(exc, WorkspaceError)
         assert isinstance(exc, BizException)
 
     def test_retains_workspace_path(self) -> None:
@@ -145,7 +145,7 @@ class TestWorkspaceIoError:
             workspace_path=_wp("/a"),
             reason="permission_denied",
         )
-        assert isinstance(exc, _WorkspaceError)
+        assert isinstance(exc, WorkspaceError)
         assert isinstance(exc, BizException)
 
     def test_retains_all_fields(self) -> None:
@@ -194,7 +194,7 @@ class TestWorkspaceUnsupportedOperationError:
             operation="shell_exec",
             capability="local_materialization",
         )
-        assert isinstance(exc, _WorkspaceError)
+        assert isinstance(exc, WorkspaceError)
         assert isinstance(exc, BizException)
 
     def test_retains_all_fields(self) -> None:

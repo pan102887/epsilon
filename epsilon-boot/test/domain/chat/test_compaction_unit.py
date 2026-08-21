@@ -13,6 +13,8 @@
 - 需求 7.4: tool 消息视为非 system 参与裁剪
 """
 
+from collections.abc import AsyncIterator, Sequence
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -26,7 +28,7 @@ from domain.chat.context import (
     UserMessage,
 )
 from domain.chat.value_objects import ChatRequestVO, ContextBuilderResult, ContextCompactionResult
-from domain.model_access.value_objects import LLMResponse, StreamingChunk
+from domain.model_access.value_objects import ChatRequest, LLMResponse, StreamingChunk
 from domain.prompt.value_objects import LoadedPrompt
 from infrastructure.chat.chat_service_adapter import ChatServiceAdapter
 from infrastructure.chat.sliding_window_compaction_adapter import SlidingWindowCompactionAdapter
@@ -144,7 +146,7 @@ class TestCompactConfiguration:
         验证需求 5.3：SlidingWindowCompactionAdapter 默认 max_messages 为 50。
         """
         adapter = SlidingWindowCompactionAdapter()
-        assert adapter._max_messages == 50
+        assert adapter.max_messages == 50
 
     def test_custom_max_messages(self) -> None:
         """自定义 max_messages 值应生效。
@@ -152,7 +154,7 @@ class TestCompactConfiguration:
         验证需求 5.4：配置指定不同 max_messages 值时使用配置值。
         """
         adapter = SlidingWindowCompactionAdapter(max_messages=10)
-        assert adapter._max_messages == 10
+        assert adapter.max_messages == 10
 
     def test_max_messages_zero_raises_value_error(self) -> None:
         """max_messages 为 0 时应抛出 ValueError。"""
@@ -183,15 +185,18 @@ def _build_mock_dependencies() -> tuple[AsyncMock, AsyncMock, MagicMock]:
     return session_store, model_access, context_builder
 
 
-def _builder_result(messages: "list[BaseMessage] | None" = None) -> ContextBuilderResult:
+def _builder_result(messages: Sequence[BaseMessage] | None = None) -> ContextBuilderResult:
     """构造 ChatServiceAdapter 直接模型路径使用的 builder 结果。"""
 
     return ContextBuilderResult(
-        messages=messages
-        or [
-            SystemMessage(content="<environment_context>safe</environment_context>"),
-            UserMessage(content="builder message"),
-        ],
+        messages=(
+            list(messages)
+            if messages is not None
+            else [
+                SystemMessage(content="<environment_context>safe</environment_context>"),
+                UserMessage(content="builder message"),
+            ]
+        ),
         usage={"summary_tokens": 3},
         environment_injected=True,
     )
@@ -305,7 +310,7 @@ class TestChatServiceAdapterIntegration:
 
         # 验证 builder 被调用，且参数是完整消息列表（包含新追加的用户消息）
         context_builder.build.assert_awaited_once()
-        build_arg = context_builder.build.call_args.args[0]
+        build_arg = cast(list[BaseMessage], context_builder.build.call_args.args[0])
         assert isinstance(build_arg, list)
         # 原有 3 条 + 新追加的 1 条用户消息 = 4 条
         assert len(build_arg) == 4
@@ -348,9 +353,9 @@ class TestChatServiceAdapterIntegration:
         context_builder.build.return_value = _builder_result(messages=builder_messages)
 
         # 模拟流式响应：返回异步迭代器
-        captured_requests = []
+        captured_requests: list[ChatRequest] = []
 
-        async def mock_stream(request: object) -> AsyncMock:
+        async def mock_stream(request: ChatRequest) -> AsyncIterator[StreamingChunk]:
             """模拟流式响应的异步生成器。"""
             captured_requests.append(request)
             chunks = [
@@ -385,7 +390,7 @@ class TestChatServiceAdapterIntegration:
 
         # 验证 builder 被调用
         context_builder.build.assert_awaited_once()
-        build_arg = context_builder.build.call_args.args[0]
+        build_arg = cast(list[BaseMessage], context_builder.build.call_args.args[0])
         assert len(build_arg) == 4
         assert build_arg[-1].content == "流式问题"
         assert context_builder.build.call_args.kwargs["model"] == "gpt-4o"

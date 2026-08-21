@@ -16,7 +16,7 @@ import json
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from domain.agent.guardrails import GuardrailRuntimeStats, ToolRiskLevel
 from domain.model_access.value_objects import ToolCallRequest
@@ -93,8 +93,10 @@ class GuardrailRuntimeAccumulator:
     last_tool_error: bool = False
     context_key: tuple[str | None, str | None, int | None] = (None, None, None)
     _last_tool_signature: tuple[str, str] | None = None
-    _prepared_tool_stats: dict[str, GuardrailRuntimeStats] = field(default_factory=dict)
-    _prepared_checkpoint_keys: dict[str, str] = field(default_factory=dict)
+    _prepared_tool_stats: dict[str, GuardrailRuntimeStats] = field(
+        default_factory=dict[str, GuardrailRuntimeStats]
+    )
+    _prepared_checkpoint_keys: dict[str, str] = field(default_factory=dict[str, str])
 
     @classmethod
     def from_summary(
@@ -105,9 +107,10 @@ class GuardrailRuntimeAccumulator:
     ) -> GuardrailRuntimeAccumulator:
         """从已持久化 guardrail summary 恢复累计统计基线。"""
 
-        stats = summary.get("runtime_stats") if isinstance(summary, Mapping) else None
-        if not isinstance(stats, Mapping):
+        raw_stats = summary.get("runtime_stats") if isinstance(summary, Mapping) else None
+        if not isinstance(raw_stats, Mapping):
             return cls(context_key=context_key)
+        stats = cast(Mapping[str, Any], raw_stats)
         return cls(
             total_tokens=_safe_int(stats.get("total_tokens")),
             prompt_tokens=_safe_int(stats.get("prompt_tokens")),

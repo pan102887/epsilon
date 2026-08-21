@@ -81,7 +81,7 @@ def test_run_execution_context_is_isolated_between_async_tasks() -> None:
             reset_run_execution_context(token)
 
     async def main() -> list[tuple[str, str | None, int | None]]:
-        return await asyncio.gather(worker("run-a", 1), worker("run-b", 2))
+        return list(await asyncio.gather(worker("run-a", 1), worker("run-b", 2)))
 
     assert sorted(asyncio.run(main())) == [
         ("run-a", "run-a", 1),

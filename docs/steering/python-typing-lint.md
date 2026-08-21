@@ -1,6 +1,6 @@
 # Python 类型与 Lint 规范
 
-后端 `epsilon-boot` 使用 Python 3.11+，以 `ruff` 统一 lint 与格式化、以 `pyright` 保障类型正确性。所有 Python 代码提交前必须通过 lint 与类型检查基线。
+后端 `epsilon-boot` 使用 Python 3.11+，以 `ruff` 统一 lint 与格式化、以 `pyright` 的 `strict` 模式保障类型正确性。所有 Python 代码提交前必须通过 lint 与严格类型检查。
 
 ## 类型注解
 
@@ -8,7 +8,8 @@
 - 禁止使用裸 `Any` 规避类型检查；确需动态类型时优先用 `object`、`unknown` 语义的泛型或显式协议（`Protocol`）
 - 禁止随意使用 `# type: ignore`；确需忽略时必须在同行注明具体错误码与原因，如 `# type: ignore[arg-type]  # 原因`
 - 领域值对象优先使用不可变模型（Pydantic `frozen` 或 `@dataclass(frozen=True)`）
-- 保持 `pyright` 现有基线零新增错误，禁止提交引入新的类型错误
+- `pyrightconfig.json` 必须保持 `typeCheckingMode = "strict"`，禁止局部降级全局严格模式
+- `pyright` 必须零错误通过，禁止提交引入新的类型错误
 
 ## Lint 与格式化
 
@@ -27,4 +28,4 @@
 
 - 检查：`uv run ruff check .`
 - 格式化：`uv run ruff format .`
-- 类型检查：`uv run pyright`（命令须在 `epsilon-boot/` 目录下执行）
+- 严格类型检查：`uv run pyright`（命令须在 `epsilon-boot/` 目录下执行；后端 CI 同样执行此命令）

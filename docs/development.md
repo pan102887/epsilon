@@ -18,6 +18,7 @@ uv run --no-sync pytest                                        # 使用已同步
 uv run pytest test/path/to/test_file.py                        # 运行单个文件
 uv run pytest test/path/to/test_file.py::test_function_name    # 运行单个测试
 uv run pytest -k "pattern"                                     # 按模式筛选测试
+uv run pyright                                                 # Pyright 严格静态类型检查（CI 门禁）
 uv add <package>                                               # 添加依赖
 uv remove <package>                                            # 移除依赖
 ```

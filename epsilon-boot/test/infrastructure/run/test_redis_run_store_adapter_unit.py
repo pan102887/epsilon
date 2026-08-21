@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from typing import Protocol, cast
 
 import pytest
+import redis.asyncio as aioredis
 
 fakeredis = pytest.importorskip("fakeredis.aioredis")
 
@@ -28,14 +31,28 @@ from infrastructure.run.redis_run_store_adapter import RedisRunStoreAdapter  # n
 pytestmark = pytest.mark.asyncio
 
 
-@pytest.fixture
-def redis_client():
-    return fakeredis.FakeRedis()
+class _TestRedisClient(Protocol):
+    """测试断言直接使用的最小 Redis 命令集合。"""
+
+    async def exists(self, name: str) -> int: ...
+
+    async def llen(self, name: str) -> int: ...
+
+    async def ttl(self, name: str) -> int: ...
+
+    def scan_iter(self, match: str) -> AsyncIterator[bytes]: ...
 
 
 @pytest.fixture
-def store(redis_client) -> RedisRunStoreAdapter:
-    return RedisRunStoreAdapter(redis_client=redis_client, conflict_retry_max=8)
+def redis_client() -> _TestRedisClient:
+    return cast(_TestRedisClient, fakeredis.FakeRedis())
+
+
+@pytest.fixture
+def store(redis_client: _TestRedisClient) -> RedisRunStoreAdapter:
+    return RedisRunStoreAdapter(
+        redis_client=cast(aioredis.Redis, redis_client), conflict_retry_max=8
+    )
 
 
 def _payload(message: str = "hello") -> RunPayload:
@@ -58,7 +75,7 @@ def _request(
 
 async def test_create_run_persists_snapshot_index_and_default_keys(
     store: RedisRunStoreAdapter,
-    redis_client,
+    redis_client: _TestRedisClient,
 ) -> None:
     """创建 Run 应写入 spec 要求的快照、幂等索引和队列 key。"""
 
@@ -107,7 +124,7 @@ async def test_create_run_rejects_same_idempotency_key_with_different_payload(
 
 async def test_concurrent_create_run_with_same_idempotency_key_creates_one_snapshot(
     store: RedisRunStoreAdapter,
-    redis_client,
+    redis_client: _TestRedisClient,
 ) -> None:
     """并发提交相同幂等键和 payload 时只创建一个 queued Run。"""
 
@@ -115,7 +132,7 @@ async def test_concurrent_create_run_with_same_idempotency_key_creates_one_snaps
 
     assert len({snapshot.run_id for snapshot in results}) == 1
     assert await store.count_by_status({RunStatus.QUEUED}) == 1
-    snapshot_keys = [key async for key in redis_client.scan_iter(match="run:*:snapshot")]
+    snapshot_keys = [key async for key in redis_client.scan_iter("run:*:snapshot")]
     assert len(snapshot_keys) == 1
     assert await redis_client.llen("run:queue") == 1
 
@@ -244,7 +261,7 @@ async def test_event_cursor_is_monotonic_and_updates_snapshot(
 
 async def test_trim_events_exposes_retention_floor_and_sets_ttl(
     store: RedisRunStoreAdapter,
-    redis_client,
+    redis_client: _TestRedisClient,
 ) -> None:
     """LTRIM 裁剪后 first_cursor 暴露 replay 窗口，TTL 应写入事件 list。"""
 

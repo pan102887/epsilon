@@ -16,17 +16,21 @@ import os
 import threading
 from typing import Any, Generic, TypeVar
 
-from .configuration_utils import _LOCAL_PROPERTIES_FILE, _find_file
+from .configuration_utils import LOCAL_PROPERTIES_FILE, PropertiesBaseSettings, find_file
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar("T")
+T = TypeVar("T", bound=PropertiesBaseSettings)
+
+# Module-local aliases intentionally remain patchable for configuration tests.
+_find_file = find_file
+_LOCAL_PROPERTIES_FILE = LOCAL_PROPERTIES_FILE
 
 # 需要通过 object.__setattr__ 设置的内部属性名集合
 _INTERNAL_ATTRS = frozenset({"_config_class", "_instance", "_lock", "_mtimes", "_source_files"})
 
 
-class ConfigProxy(Generic[T]):
+class ConfigProxy(Generic[T]):  # noqa: UP046 - Python 3.11 compatibility
     """配置代理对象，透明转发属性访问并支持基于 mtime 的热更新。
 
     通过 ``__getattr__`` 将属性访问转发到内部缓存的真实配置实例。
@@ -94,6 +98,10 @@ class ConfigProxy(Generic[T]):
                 )
                 mtimes[filepath] = 0.0
         return mtimes
+
+    def current_mtimes(self) -> dict[str, float]:
+        """Return the current source-file modification times for diagnostics."""
+        return self._get_current_mtimes()
 
     def _mtimes_changed(self) -> bool:
         """比较当前 mtime 与缓存的 mtime，判断配置源文件是否发生变更。
@@ -201,7 +209,7 @@ class ConfigProxy(Generic[T]):
         return self._config_class
 
 
-def create_config(config_class: type[T]) -> T:
+def create_config(config_class: type[T]) -> T:  # noqa: UP047 - Python 3.11 compatibility
     """配置工厂函数，根据 ``hot_reload`` 标志创建配置实例。
 
     统一的配置实例创建入口。根据配置类上声明的 ``hot_reload`` 类变量，

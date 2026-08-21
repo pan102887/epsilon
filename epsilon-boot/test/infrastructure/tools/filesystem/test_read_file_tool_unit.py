@@ -21,6 +21,7 @@ from __future__ import annotations
 import ast
 import inspect
 from pathlib import Path, PurePosixPath
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -45,7 +46,10 @@ def _fake_workspace(*, root_hint: str = "/tmp/ws") -> MagicMock:
     """构造 mock workspace；所有 async I/O 用 AsyncMock。"""
     ws = MagicMock(name="Workspace")
     ws.display_root_hint.return_value = root_hint
-    ws.resolve_path.side_effect = lambda s: _make_ws_path(s if s.startswith("/") else f"/{s}")
+    def _resolve(value: str) -> WorkspacePath:
+        return _make_ws_path(value if value.startswith("/") else f"/{value}")
+
+    ws.resolve_path.side_effect = _resolve
     ws.read = AsyncMock(return_value=b"")
     return ws
 
@@ -86,7 +90,7 @@ async def test_execute_returns_execution_result_with_metadata() -> None:
     # line_range = [offset, offset + limit - 1]
     assert md["line_range"] == [1, 10]
     assert isinstance(md["line_range"], list)
-    assert all(isinstance(v, int) for v in md["line_range"])
+    assert all(isinstance(v, int) for v in cast(list[object], md["line_range"]))
     # 三行内容 → lines_returned == 3
     assert md["lines_returned"] == 3
     assert isinstance(md["lines_returned"], int)
@@ -244,7 +248,9 @@ async def test_invalid_limit_rejected_before_workspace_call() -> None:
 
 def test_source_does_not_import_os_or_pathlib() -> None:
     """AST 扫描 ReadFileTool 源码：不得 import os / pathlib / open / common_tools。"""
-    src_path = Path(inspect.getsourcefile(ReadFileTool))
+    source_file = inspect.getsourcefile(ReadFileTool)
+    assert source_file is not None
+    src_path = Path(source_file)
     tree = ast.parse(src_path.read_text(encoding="utf-8"))
 
     banned_modules = {"os", "pathlib", "common.tools.common_tools"}

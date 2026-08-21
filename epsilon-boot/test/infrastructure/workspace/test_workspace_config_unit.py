@@ -16,6 +16,8 @@
 在每个用例内部调整 ``WORKSPACE_*`` 环境变量后再构造实例。
 """
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -68,7 +70,7 @@ class TestWorkspaceConfigEnvPrefix:
 
     def test_env_prefix_is_workspace(self) -> None:
         """``model_config["env_prefix"]`` 应为 ``"WORKSPACE_"``。"""
-        assert WorkspaceConfig.model_config["env_prefix"] == "WORKSPACE_"
+        assert WorkspaceConfig.model_config.get("env_prefix") == "WORKSPACE_"
 
 
 class TestWorkspaceConfigUnsupportedBackend:
@@ -123,7 +125,9 @@ class TestWorkspaceConfigHotReloadDisabled:
 class TestWorkspaceConfigEnvOverrides:
     """环境变量覆盖各字段（happy-path）。"""
 
-    def test_root_env_override(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    def test_root_env_override(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         """``WORKSPACE_ROOT`` 环境变量能正确注入到 ``root`` 字段。"""
         _clear_workspace_env(monkeypatch)
         monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path))

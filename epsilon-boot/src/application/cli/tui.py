@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Iterable
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from rich.console import Group, RenderableType
 from rich.text import Text
@@ -45,11 +45,11 @@ class TuiApp:
 
     async def run(self) -> int:
         """运行交互式 Textual 应用。"""
-        result = await _EpsilonTextualApp(self._runtime).run_async(mouse=True)
+        result = await EpsilonTextualApp(self._runtime).run_async(mouse=True)
         return int(result or 0)
 
 
-class _EpsilonTextualApp(App[int]):
+class EpsilonTextualApp(App[int]):
     """epsilon CLI 的全屏聊天交互界面。"""
 
     CSS_PATH = "tui.css"
@@ -85,6 +85,56 @@ class _EpsilonTextualApp(App[int]):
             yield Static("", id="status")
             yield TextArea("", id="composer")
         yield Footer()
+
+    @property
+    def current_task(self) -> asyncio.Task[None] | None:
+        """返回当前前台交互任务。"""
+        return self._current_task
+
+    @property
+    def session_state(self) -> TuiSessionState:
+        """返回当前 TUI 会话状态。"""
+        return self._state
+
+    def set_composer_text(self, text: str) -> None:
+        """设置输入框文本。"""
+        self._set_composer_text(text)
+
+    @property
+    def active_run_id(self) -> str | None:
+        """返回当前正在观察的 Run ID。"""
+        return self._active_run_id
+
+    @property
+    def clipboard_text(self) -> str:
+        """返回 Textual 当前剪贴板文本。"""
+        return self._clipboard
+
+    def start_run_watch(self, run_id: str) -> None:
+        """启动并登记 Run 事件观察任务。"""
+        self._current_task = asyncio.create_task(self._watch_run(run_id))
+
+    def attach_active_run_task(self, run_id: str, task: asyncio.Task[None]) -> None:
+        """登记外部创建的活动 Run 任务。"""
+        self._active_run_id = run_id
+        self._current_task = task
+
+    def set_last_assistant_text(self, text: str) -> None:
+        """设置最近一次完整助手回复文本。"""
+        self._last_assistant_text = text
+
+    def set_active_assistant_text(self, text: str) -> None:
+        """设置当前流式助手回复文本。"""
+        self._active_assistant_text = text
+
+    def record_transcript(self, title: str, body: str) -> None:
+        """向可复制会话记录追加一项。"""
+        self._record_transcript(title, body)
+
+    @staticmethod
+    def message_renderable(title: str, body: RenderableType, style: str) -> Group:
+        """构建 TUI 消息的 Rich 可渲染对象。"""
+        return EpsilonTextualApp._message_renderable(title, body, style)
 
     async def on_mount(self) -> None:
         """缓存界面组件并初始化展示状态。"""
@@ -178,7 +228,7 @@ class _EpsilonTextualApp(App[int]):
         task.add_done_callback(self._background_tasks.discard)
 
     async def request_cancel_active_run(self) -> RunSnapshot | None:
-        """Request cancellation for the active Run without cancelling watch task."""
+        """请求取消当前 Run，同时保留状态监听任务。"""
         if self._active_run_id is None:
             return None
         snapshot = await self._runtime.cancel_run(self._active_run_id)
@@ -235,14 +285,16 @@ class _EpsilonTextualApp(App[int]):
             assistant: 承载 assistant 累加文本的展示组件。
             assistant_content: assistant 已累加的文本分片列表。
         """
-        while event_source is not None:
+        while True:
             next_source: AsyncIterator[AgentStreamEvent] | None = None
             async for event in event_source:
                 if event.kind == "approval_required":
                     next_source = await self._resolve_approval(event)
                     break
                 await self._handle_event(event, assistant, assistant_content)
-            event_source = next_source  # type: ignore[assignment]
+            if next_source is None:
+                break
+            event_source = next_source
 
     async def _resolve_approval(
         self,
@@ -347,6 +399,7 @@ class _EpsilonTextualApp(App[int]):
             lines.append(f"approval_id={approval_id}")
         for summary in event.metadata.get("action_summaries", []):
             if isinstance(summary, dict):
+                summary = cast(dict[str, Any], summary)
                 lines.append(
                     self._compact(
                         f"{summary.get('tool_name', 'unknown')} "
@@ -650,10 +703,12 @@ def _render_workflow_metadata(snapshot: RunSnapshot) -> list[str]:
 def _phase_history_summary(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
+    value = cast(list[Any], value)
     phases: list[str] = []
     for item in value[-5:]:
         if not isinstance(item, dict):
             continue
+        item = cast(dict[str, Any], item)
         phase = _string_value(item.get("phase"))
         status = _string_value(item.get("status"))
         if phase and status:
@@ -671,10 +726,12 @@ def _collaboration_lines(value: dict[str, Any] | None) -> list[str]:
         return []
     latest_steps = canonical.get("latest_steps")
     if isinstance(latest_steps, list) and latest_steps:
+        latest_steps = cast(list[Any], latest_steps)
         lines: list[str] = []
         for item in latest_steps[-5:]:
             if not isinstance(item, dict):
                 continue
+            item = cast(dict[str, Any], item)
             action = _string_value(item.get("action"))
             target = _string_value(item.get("target_agent"))
             result = _string_value(item.get("result_summary") or item.get("task_summary"))
@@ -683,7 +740,7 @@ def _collaboration_lines(value: dict[str, Any] | None) -> list[str]:
                 lines.append(" / ".join(parts))
         if lines:
             return lines
-    counters = []
+    counters: list[str] = []
     for key in ("delegation_count", "handoff_count", "max_depth_seen", "limit_hit_reason"):
         if key in canonical:
             counters.append(f"{key}: {canonical[key]}")
@@ -700,3 +757,7 @@ def _run_error_summary(payload: dict[str, object]) -> str:
         if value:
             return str(value)
     return str(payload)
+
+
+# Backward-compatible alias for existing extensions; new code should use the public name.
+_EpsilonTextualApp = EpsilonTextualApp

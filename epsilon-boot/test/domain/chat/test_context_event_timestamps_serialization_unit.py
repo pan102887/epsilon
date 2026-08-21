@@ -16,6 +16,7 @@
 """
 
 import json
+from typing import Any
 
 from domain.chat.context import ConversationContext
 
@@ -72,21 +73,21 @@ class TestFromDictBackwardCompat:
 
     def test_only_event_timestamps_present(self) -> None:
         """仅含 event_timestamps 的混合旧格式应正确还原,session_id 默认 None。"""
-        data = {"messages": [], "event_timestamps": {0: 1000}}
+        data: dict[str, Any] = {"messages": [], "event_timestamps": {0: 1000}}
         ctx = ConversationContext.from_dict(data)
         assert ctx.event_timestamps == {0: 1000}
         assert ctx.session_id is None
 
     def test_only_session_id_present(self) -> None:
         """仅含 session_id 的混合旧格式应正确还原,event_timestamps 默认空 dict。"""
-        data = {"messages": [], "session_id": "sess-x"}
+        data: dict[str, Any] = {"messages": [], "session_id": "sess-x"}
         ctx = ConversationContext.from_dict(data)
         assert ctx.event_timestamps == {}
         assert ctx.session_id == "sess-x"
 
     def test_session_id_null_treated_as_none(self) -> None:
         """session_id 显式为 None 应等价于缺失。"""
-        data = {"messages": [], "session_id": None}
+        data: dict[str, Any] = {"messages": [], "session_id": None}
         ctx = ConversationContext.from_dict(data)
         assert ctx.session_id is None
 
@@ -97,7 +98,10 @@ class TestRoundtripWithJSONStringifiedKeys:
     def test_int_keys_recovered_from_string_keys(self) -> None:
         """JSON 反序列化得到 dict[str, int] 时应被 from_dict 还原为 dict[int, int]。"""
         # JSON 不支持 int 键,json.dumps 会自动 stringify 为 str
-        data = {"messages": [], "event_timestamps": {"2": 1000, "3": 2000}}
+        data: dict[str, Any] = {
+            "messages": [],
+            "event_timestamps": {"2": 1000, "3": 2000},
+        }
         ctx = ConversationContext.from_dict(data)
         assert ctx.event_timestamps == {2: 1000, 3: 2000}
         # 关键: 键的类型必须是 int
@@ -152,7 +156,7 @@ class TestRoundtripIdempotent:
 
     def test_legacy_then_to_dict_does_not_inject_pseudo_keys(self) -> None:
         """v1 旧格式 from_dict 后立即 to_dict,不应注入空 event_timestamps / session_id 键。"""
-        legacy = {"messages": []}
+        legacy: dict[str, Any] = {"messages": []}
         ctx = ConversationContext.from_dict(legacy)
         out = ctx.to_dict()
         assert set(out.keys()) == {"messages"}

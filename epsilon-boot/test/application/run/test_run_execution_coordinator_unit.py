@@ -4,14 +4,20 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from application.run.run_execution_coordinator import RunExecutionCoordinator
-from domain.agent.segmented_execution import SegmentBudgetUsage, SegmentRunMetadata
+from domain.agent.segmented_execution import (
+    SegmentBudgetUsage,
+    SegmentRunMetadata,
+    SegmentStopReason,
+)
+from domain.chat.ports import ChatServicePort
 from domain.chat.value_objects import ChatContinueRequestVO, ChatRequestVO, ChatResponseVO
 from domain.run.value_objects import RunKind, RunPayload, RunSnapshot, RunStatus
+from domain.task.ports import TaskAgentPort
 from domain.task.value_objects import (
     Task,
     TaskContinueRequest,
@@ -118,7 +124,7 @@ class _FakeTaskAgent:
         return self.continue_response
 
 
-def _metadata(count: int, reason: str) -> SegmentRunMetadata:
+def _metadata(count: int, reason: SegmentStopReason) -> SegmentRunMetadata:
     """构造分段元数据。"""
 
     return SegmentRunMetadata(
@@ -193,8 +199,8 @@ def _coordinator(
     progress = _FakeProgress()
     return (
         RunExecutionCoordinator(
-            chat_service=chat,
-            task_agent=task,
+            chat_service=cast(ChatServicePort, chat),
+            task_agent=cast(TaskAgentPort, task),
             segment_serializer=SegmentSerializerAdapter(),
         ),
         chat,
@@ -212,6 +218,8 @@ async def test_chat_first_execution_uses_create_payload_and_maps_completed() -> 
     outcome = await coordinator.execute(snapshot, progress)
 
     assert outcome.status is RunStatus.SUCCEEDED
+    assert outcome.result is not None
+    assert outcome.segment_metadata is not None
     assert outcome.result["reply"] == "done"
     assert outcome.result["usage"] == {"total_tokens": 3}
     assert outcome.segment_metadata["segment_count"] == 1
@@ -270,6 +278,7 @@ async def test_task_first_execution_uses_task_payload_and_maps_trace() -> None:
     outcome = await coordinator.execute(snapshot, progress)
 
     assert outcome.status is RunStatus.SUCCEEDED
+    assert outcome.result is not None
     assert outcome.result["content"] == "task done"
     assert outcome.result["trace"][0]["action"] == "llm_response"
     assert outcome.result["trace_id"] == "s-task"
@@ -338,6 +347,7 @@ async def test_approval_waiting_maps_chat_approval_metadata() -> None:
     assert outcome.approval_id == "approval-1"
     assert outcome.terminal_reason == "completed"
     assert outcome.can_continue is False
+    assert outcome.segment_metadata is not None
     assert outcome.segment_metadata["segment_stop_reason"] == "approval_required"
 
 
@@ -395,6 +405,7 @@ async def test_task_human_intervention_uses_explicit_approval_id_field() -> None
 
     assert outcome.status is RunStatus.AWAITING_APPROVAL
     assert outcome.approval_id == "approval-field"
+    assert outcome.segment_metadata is not None
     assert outcome.segment_metadata["segment_stop_reason"] == "approval_required"
 
 

@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -19,6 +20,7 @@ from domain.agent.exceptions import (
     DelegationDepthExceededError,
 )
 from domain.agent.value_objects import (
+    AgentConfig,
     AgentResult,
     DelegationRequest,
     HandoffResult,
@@ -26,22 +28,25 @@ from domain.agent.value_objects import (
 )
 from domain.chat.context import (
     AssistantMessage,
+    BaseMessage,
     ConversationContext,
     SystemMessage,
     UserMessage,
 )
+from domain.model_access.ports import ModelAccessPort
 from domain.run.runtime_context import (
     RunExecutionContext,
     reset_run_execution_context,
     set_run_execution_context,
 )
+from domain.run.value_objects import RunEvent, RunEventType
 from domain.run.workflow import AgentRoleCapability, CollaborationLimit, WorkflowPhase
 from domain.run.workflow_context import (
     WorkflowCollaborationContext,
     reset_workflow_collaboration_context,
     set_workflow_collaboration_context,
 )
-from domain.task.value_objects import TaskResult, TaskStatus
+from domain.task.value_objects import Task, TaskResult, TaskStatus
 from infrastructure.agent.agent_registry_adapter import AgentRegistryAdapter
 from infrastructure.agent.delegation_adapter import DelegationAdapter
 
@@ -50,17 +55,30 @@ class _EventStore:
     """记录 role capability 拒绝事件的 fake。"""
 
     def __init__(self) -> None:
-        self.events = []
+        self.events: list[RunEvent] = []
 
-    async def append_event(self, run_id, event_type, payload):
+    async def append_event(
+        self, run_id: str, event_type: RunEventType, payload: dict[str, object]
+    ) -> RunEvent:
         """追加事件。"""
 
-        event = MagicMock(run_id=run_id, event_type=event_type, payload=payload)
+        event = RunEvent(
+            run_id=run_id,
+            cursor=len(self.events) + 1,
+            event_type=event_type,
+            payload=payload,
+            created_at=datetime.now(UTC),
+        )
         self.events.append(event)
         return event
 
 
-def _make_named_config(name: str, *, tool_names=None, model: str | None = None) -> NamedAgentConfig:
+def _make_named_config(
+    name: str,
+    *,
+    tool_names: frozenset[str] | None = None,
+    model: str | None = None,
+) -> NamedAgentConfig:
     return NamedAgentConfig(
         name=name,
         description=f"agent {name}",
@@ -217,16 +235,8 @@ async def test_delegate_parallel_preserves_input_order_when_all_succeed() -> Non
 
     task_agent = AsyncMock()
 
-    async def _fake_execute(task):
-        return TaskResult(
-            content=f"reply-{task.tool_names if task.tool_names else 'all'}",
-            status=TaskStatus.SUCCESS,
-            model="m",
-            prompt_id="task-template@v1",
-        )
-
     # 让结果可与 agent_name 关联：把 agent_name 编码到 TaskResult.content
-    async def _delegate_side_effect(task):
+    async def _delegate_side_effect(task: Task) -> TaskResult:
         # task.goal 形如 "goal-a2"，借此识别
         return TaskResult(
             content=f"reply for {task.goal}",
@@ -295,7 +305,7 @@ async def test_delegate_parallel_isolates_runtime_failure() -> None:
     task_agent = AsyncMock()
     call_count = {"n": 0}
 
-    async def _execute(task):
+    async def _execute(task: Task) -> TaskResult:
         call_count["n"] += 1
         if task.goal == "boom":
             raise RuntimeError("internal failure")
@@ -387,7 +397,9 @@ async def test_handoff_calls_agent_run_with_cloned_context() -> None:
 
     agent = MagicMock()
 
-    async def _run(ctx, cfg, ma):
+    async def _run(
+        ctx: ConversationContext, cfg: AgentConfig, ma: ModelAccessPort
+    ) -> AgentResult:
         captured_ctx.append(ctx)
         return AgentResult(
             content="specialist 的最终回答",
@@ -412,7 +424,7 @@ async def test_handoff_calls_agent_run_with_cloned_context() -> None:
         tool_registry_provider=_tool_registry_provider,
     )
 
-    parent_messages = [
+    parent_messages: list[BaseMessage] = [
         SystemMessage(content="父系统提示"),
         UserMessage(content="请帮我处理"),
         AssistantMessage(content="收到", tool_calls=[]),
@@ -500,7 +512,9 @@ async def test_handoff_returns_failure_when_sub_agent_raises() -> None:
 
     agent = MagicMock()
 
-    async def _broken_run(ctx, cfg, ma):
+    async def _broken_run(
+        ctx: ConversationContext, cfg: AgentConfig, ma: ModelAccessPort
+    ) -> AgentResult:
         raise RuntimeError("LLM down")
 
     agent.run = _broken_run
@@ -543,7 +557,9 @@ async def test_handoff_propagates_terminated_reason_max_rounds_as_unsuccess() ->
 
     agent = MagicMock()
 
-    async def _run(ctx, cfg, ma):
+    async def _run(
+        ctx: ConversationContext, cfg: AgentConfig, ma: ModelAccessPort
+    ) -> AgentResult:
         return AgentResult(
             content="",
             model="m",

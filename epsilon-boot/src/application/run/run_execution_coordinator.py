@@ -11,7 +11,7 @@ import inspect
 from dataclasses import fields, is_dataclass, replace
 from datetime import date, datetime
 from enum import Enum, StrEnum
-from typing import Any
+from typing import Any, cast
 
 from application.run.run_checkpoint_sink import RunCheckpointSink
 from application.run.serialization_ports import SegmentSerializerPort
@@ -384,7 +384,7 @@ class RunExecutionCoordinator:
                 self._segment_serializer.segment_run_metadata_to_http_dict(metadata)
             )
         safe = _json_safe(metadata)
-        return safe if isinstance(safe, dict) else {}
+        return cast(dict[str, Any], safe) if isinstance(safe, dict) else {}
 
 
 def _with_runtime_workflow_state(outcome: RunExecutionOutcome) -> RunExecutionOutcome:
@@ -533,14 +533,16 @@ def _required_str(payload: dict[str, Any], field_name: str) -> str:
 def _dict_or_empty(value: Any) -> dict[str, Any]:
     """返回 dict 值或空字典。"""
 
-    return value if isinstance(value, dict) else {}
+    return cast(dict[str, Any], value) if isinstance(value, dict) else {}
 
 
 def _list_or_empty(value: Any) -> list[str]:
     """返回字符串列表或空列表。"""
 
-    if isinstance(value, list) and all(isinstance(item, str) for item in value):
-        return value
+    if isinstance(value, list):
+        items = cast(list[Any], value)
+        if all(isinstance(item, str) for item in items):
+            return cast(list[str], items)
     return []
 
 
@@ -549,8 +551,10 @@ def _tool_names(value: Any) -> frozenset[str] | None:
 
     if value is None:
         return None
-    if isinstance(value, (list, tuple, set)) and all(isinstance(item, str) for item in value):
-        return frozenset(value)
+    if isinstance(value, (list, tuple, set)):
+        items = cast(list[Any] | tuple[Any, ...] | set[Any], value)
+        if all(isinstance(item, str) for item in items):
+            return frozenset(cast(list[str] | tuple[str, ...] | set[str], items))
     raise ValueError("Run payload tool_names 必须为字符串集合")
 
 
@@ -607,7 +611,9 @@ def _json_safe(value: Any) -> Any:
     if not isinstance(value, type) and is_dataclass(value):
         return _json_safe({field.name: getattr(value, field.name) for field in fields(value)})
     if isinstance(value, dict):
+        value = cast(dict[Any, Any], value)
         return {str(key): _json_safe(item) for key, item in value.items()}
     if isinstance(value, (list, tuple, set, frozenset)):
+        value = cast(list[Any] | tuple[Any, ...] | set[Any] | frozenset[Any], value)
         return [_json_safe(item) for item in value]
     return str(value)

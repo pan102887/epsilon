@@ -45,3 +45,13 @@ def _current_agent_id_or_none() -> str | None:
         字符串形式的 ``agent_id``；无可用值时返回 ``None``。
     """
     return None
+
+
+def current_trace_id_or_none() -> str | None:
+    """返回当前请求链路的 trace ID。"""
+    return _current_trace_id_or_none()
+
+
+def current_agent_id_or_none() -> str | None:
+    """返回当前调用方 Agent ID。"""
+    return _current_agent_id_or_none()

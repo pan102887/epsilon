@@ -15,14 +15,22 @@
 覆盖需求 5.8 / 5.9。
 """
 
+from collections.abc import AsyncIterator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from domain.agent.value_objects import AgentResult
+from domain.agent.value_objects import (
+    AgentConfig,
+    AgentResult,
+    ApprovalDecision,
+    ApprovalInterrupt,
+)
 from domain.chat.context import ConversationContext, UserMessage
 from domain.chat.value_objects import ApprovalResumeRequestVO, ChatRequestVO, ContextBuilderResult
-from domain.model_access.value_objects import LLMResponse, StreamingChunk
+from domain.model_access.ports import ModelAccessPort
+from domain.model_access.value_objects import ChatRequest, LLMResponse, StreamingChunk
 from domain.prompt.value_objects import LoadedPrompt
 from infrastructure.chat.chat_service_adapter import ChatServiceAdapter
 from test.infrastructure.chat.chat_adapter_test_utils import make_chat_adapter_dependencies
@@ -35,7 +43,7 @@ def _make_adapter(
     context_builder: MagicMock,
     agent: MagicMock | None = None,
     tool_calling_enabled: bool = False,
-    tool_schemas: list[dict] | None = None,
+    tool_schemas: list[dict[str, Any]] | None = None,
     approval_store: MagicMock | None = None,
 ) -> ChatServiceAdapter:
     """构造一个用于 session_id 测试的 ChatServiceAdapter。"""
@@ -49,7 +57,7 @@ def _make_adapter(
         content="你是助手",
     )
     effective_agent = agent or MagicMock()
-    effective_tool_schemas = tool_schemas or []
+    effective_tool_schemas: list[dict[str, Any]] = tool_schemas or []
     return ChatServiceAdapter(
         session_store=session_store,
         model_registry=model_registry,
@@ -126,7 +134,8 @@ class TestStreamChatSessionIdWrite:
         session_store.load = AsyncMock(return_value=context)
         session_store.save = AsyncMock()
 
-        async def _stream(_request):
+        async def _stream(request: ChatRequest) -> AsyncIterator[StreamingChunk]:
+            del request
             yield StreamingChunk(delta_content="ok", finished=True, usage={})
 
         model_access = MagicMock()
@@ -158,7 +167,8 @@ class TestStreamChatEventsSessionIdWrite:
         session_store.load = AsyncMock(return_value=context)
         session_store.save = AsyncMock()
 
-        async def _stream(_request):
+        async def _stream(request: ChatRequest) -> AsyncIterator[StreamingChunk]:
+            del request
             yield StreamingChunk(delta_content="ok", finished=True, usage={})
 
         model_access = MagicMock()
@@ -186,8 +196,6 @@ class TestResumeApprovalSessionIdWrite:
     async def test_resume_approval_assigns_session_id(self) -> None:
         """``resume_approval`` 入口反序列化上下文后应直接赋值 ``context.session_id``。"""
         from domain.agent.value_objects import (
-            ApprovalDecision,
-            ApprovalInterrupt,
             PendingActionRequest,
         )
 
@@ -216,7 +224,14 @@ class TestResumeApprovalSessionIdWrite:
 
         captured_ctx: list[ConversationContext] = []
 
-        async def _resume(context, _config, _model_access, _interrupt, _decisions):
+        async def _resume(
+            context: ConversationContext,
+            config: AgentConfig,
+            model_access: ModelAccessPort,
+            interrupt: ApprovalInterrupt,
+            decisions: tuple[ApprovalDecision, ...],
+        ) -> AgentResult:
+            del config, model_access, interrupt, decisions
             captured_ctx.append(context)
             return AgentResult(content="done", model="test-model", usage={})
 

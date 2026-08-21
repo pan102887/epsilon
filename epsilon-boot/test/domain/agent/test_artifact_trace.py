@@ -2,6 +2,8 @@
 
 import dataclasses
 import time
+from collections.abc import Callable
+from typing import cast
 
 import pytest
 
@@ -24,8 +26,9 @@ class TestArtifactTraceKind:
 
     def test_kind_is_init_false(self):
         """kind 使用 init=False，构造器不接受 kind 参数。"""
+        constructor = cast(Callable[..., ArtifactTrace], ArtifactTrace)
         with pytest.raises(TypeError):
-            ArtifactTrace(  # type: ignore[call-arg]
+            constructor(
                 session_id="s-1",
                 logical_path="out/report.md",
                 artifact_type="file",

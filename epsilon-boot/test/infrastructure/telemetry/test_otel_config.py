@@ -7,15 +7,17 @@
 """
 
 import os
+from typing import Any
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 from infrastructure.telemetry.otel_config import OtelConfig
 
 
-def _make_isolated_config(**env_overrides) -> OtelConfig:
+def _make_isolated_config(**env_overrides: Any) -> OtelConfig:
     """创建隔离的 OtelConfig 实例，仅使用 init_settings 和 env_settings。
 
     通过覆盖 settings_customise_sources 排除 .env 和 config.properties 文件源，
@@ -33,13 +35,13 @@ def _make_isolated_config(**env_overrides) -> OtelConfig:
 
         @classmethod
         def settings_customise_sources(
-            cls,
-            settings_cls,
-            init_settings,
-            env_settings,
-            dotenv_settings,
-            file_secret_settings,
-        ):
+            cls: type[BaseSettings],
+            settings_cls: type[BaseSettings],
+            init_settings: PydanticBaseSettingsSource,
+            env_settings: PydanticBaseSettingsSource,
+            dotenv_settings: PydanticBaseSettingsSource,
+            file_secret_settings: PydanticBaseSettingsSource,
+        ) -> tuple[PydanticBaseSettingsSource, ...]:
             return (init_settings, env_settings)
 
     return _IsolatedOtelConfig(**env_overrides)
@@ -123,79 +125,79 @@ class TestOtelConfigDefaults:
 class TestOtelConfigEnvOverride:
     """OtelConfig 环境变量覆盖测试，验证通过 OTEL_ 前缀环境变量覆盖各字段。"""
 
-    def test_override_enabled(self, monkeypatch):
+    def test_override_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """验证通过 OTEL_ENABLED 环境变量覆盖 enabled 字段。"""
         monkeypatch.setenv("OTEL_ENABLED", "true")
         config = _make_isolated_config()
         assert config.enabled is True
 
-    def test_override_service_name(self, monkeypatch):
+    def test_override_service_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """验证通过 OTEL_SERVICE_NAME 环境变量覆盖 service_name 字段。"""
         monkeypatch.setenv("OTEL_SERVICE_NAME", "my-custom-service")
         config = _make_isolated_config()
         assert config.service_name == "my-custom-service"
 
-    def test_override_service_version(self, monkeypatch):
+    def test_override_service_version(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """验证通过 OTEL_SERVICE_VERSION 环境变量覆盖 service_version 字段。"""
         monkeypatch.setenv("OTEL_SERVICE_VERSION", "2.0.0")
         config = _make_isolated_config()
         assert config.service_version == "2.0.0"
 
-    def test_override_environment(self, monkeypatch):
+    def test_override_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """验证通过 OTEL_ENVIRONMENT 环境变量覆盖 environment 字段。"""
         monkeypatch.setenv("OTEL_ENVIRONMENT", "production")
         config = _make_isolated_config()
         assert config.environment == "production"
 
-    def test_override_exporter_endpoint(self, monkeypatch):
+    def test_override_exporter_endpoint(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """验证通过 OTEL_EXPORTER_ENDPOINT 环境变量覆盖 exporter_endpoint 字段。"""
         monkeypatch.setenv("OTEL_EXPORTER_ENDPOINT", "http://localhost:4317")
         config = _make_isolated_config()
         assert config.exporter_endpoint == "http://localhost:4317"
 
-    def test_override_exporter_insecure(self, monkeypatch):
+    def test_override_exporter_insecure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """验证通过 OTEL_EXPORTER_INSECURE 环境变量覆盖 exporter_insecure 字段。"""
         monkeypatch.setenv("OTEL_EXPORTER_INSECURE", "false")
         config = _make_isolated_config()
         assert config.exporter_insecure is False
 
-    def test_override_traces_sampler(self, monkeypatch):
+    def test_override_traces_sampler(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """验证通过 OTEL_TRACES_SAMPLER 环境变量覆盖 traces_sampler 字段。"""
         monkeypatch.setenv("OTEL_TRACES_SAMPLER", "always_on")
         config = _make_isolated_config()
         assert config.traces_sampler == "always_on"
 
-    def test_override_traces_sampler_arg(self, monkeypatch):
+    def test_override_traces_sampler_arg(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """验证通过 OTEL_TRACES_SAMPLER_ARG 环境变量覆盖 traces_sampler_arg 字段。"""
         monkeypatch.setenv("OTEL_TRACES_SAMPLER_ARG", "0.5")
         config = _make_isolated_config()
         assert config.traces_sampler_arg == 0.5
 
-    def test_override_log_correlation(self, monkeypatch):
+    def test_override_log_correlation(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """验证通过 OTEL_LOG_CORRELATION 环境变量覆盖 log_correlation 字段。"""
         monkeypatch.setenv("OTEL_LOG_CORRELATION", "false")
         config = _make_isolated_config()
         assert config.log_correlation is False
 
-    def test_override_instrument_fastapi(self, monkeypatch):
+    def test_override_instrument_fastapi(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """验证通过 OTEL_INSTRUMENT_FASTAPI 环境变量覆盖 instrument_fastapi 字段。"""
         monkeypatch.setenv("OTEL_INSTRUMENT_FASTAPI", "false")
         config = _make_isolated_config()
         assert config.instrument_fastapi is False
 
-    def test_override_instrument_httpx(self, monkeypatch):
+    def test_override_instrument_httpx(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """验证通过 OTEL_INSTRUMENT_HTTPX 环境变量覆盖 instrument_httpx 字段。"""
         monkeypatch.setenv("OTEL_INSTRUMENT_HTTPX", "false")
         config = _make_isolated_config()
         assert config.instrument_httpx is False
 
-    def test_override_instrument_redis(self, monkeypatch):
+    def test_override_instrument_redis(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """验证通过 OTEL_INSTRUMENT_REDIS 环境变量覆盖 instrument_redis 字段。"""
         monkeypatch.setenv("OTEL_INSTRUMENT_REDIS", "false")
         config = _make_isolated_config()
         assert config.instrument_redis is False
 
-    def test_override_instrument_sqlalchemy(self, monkeypatch):
+    def test_override_instrument_sqlalchemy(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """验证通过 OTEL_INSTRUMENT_SQLALCHEMY 环境变量覆盖 instrument_sqlalchemy 字段。"""
         monkeypatch.setenv("OTEL_INSTRUMENT_SQLALCHEMY", "false")
         config = _make_isolated_config()

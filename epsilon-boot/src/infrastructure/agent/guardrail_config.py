@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
 from pydantic import model_validator
 from pydantic_settings import SettingsConfigDict
@@ -63,8 +63,9 @@ class AgentGuardrailConfig(PropertiesBaseSettings):
             raise ConfigurationError("AGENT_GUARDRAILS_MODEL_PRICING 不是合法 JSON") from exc
         if not isinstance(parsed, dict):
             raise ConfigurationError("AGENT_GUARDRAILS_MODEL_PRICING 必须为 JSON object")
+        parsed_mapping = cast(dict[object, object], parsed)
         result: dict[str, GuardrailModelPricing] = {}
-        for key, value in parsed.items():
+        for key, value in parsed_mapping.items():
             if not isinstance(key, str) or not key:
                 raise ConfigurationError("AGENT_GUARDRAILS_MODEL_PRICING 模型名非法")
             result[key] = self._parse_model_pricing_entry(key, value)
@@ -74,7 +75,10 @@ class AgentGuardrailConfig(PropertiesBaseSettings):
         """解析单个模型价格项。"""
 
         if isinstance(value, dict):
-            return self._parse_model_pricing_object(model_name, value)
+            return self._parse_model_pricing_object(
+                model_name,
+                cast(dict[str, Any], value),
+            )
         return GuardrailModelPricing(
             total_per_1m=self._coerce_non_negative_price(model_name, value),
         )

@@ -17,7 +17,7 @@ from dataclasses import fields, is_dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from domain.run.exceptions import (
     RunCancelUnavailableError,
@@ -46,10 +46,7 @@ from domain.run.value_objects import (
 )
 from domain.run.workflow import canonicalize_collaboration_summary
 from infrastructure.persistence.local_file.atomic_writer import TempFileAtomicWriter
-from infrastructure.persistence.local_file.file_lock import (
-    CrossPlatformFileLock,
-    LockMode,
-)
+from infrastructure.persistence.local_file.file_lock import FileLock, LockMode
 from infrastructure.persistence.local_file.path_policy import CrossPlatformPathPolicy
 
 
@@ -69,7 +66,7 @@ class LocalFileRunStoreAdapter(RunStorePort, RunEventStorePort, RunObservationSt
     def __init__(
         self,
         root: Path,
-        lock_factory: Callable[[Path], CrossPlatformFileLock],
+        lock_factory: Callable[[Path], FileLock],
         path_policy: CrossPlatformPathPolicy,
         atomic_writer: TempFileAtomicWriter,
     ) -> None:
@@ -1036,6 +1033,10 @@ class LocalFileRunStoreAdapter(RunStorePort, RunEventStorePort, RunObservationSt
         self._policy.check_absolute_path_length(path)
         return self._policy.ensure_within_root(self._root, path)
 
+    def snapshot_path(self, run_id: str) -> Path:
+        """返回 Run 快照路径，供诊断与迁移工具使用。"""
+        return self._snapshot_path(run_id)
+
     def _events_path(self, run_id: str) -> Path:
         """根据 run_id 解析事件 JSONL 文件路径。"""
 
@@ -1049,6 +1050,10 @@ class LocalFileRunStoreAdapter(RunStorePort, RunEventStorePort, RunObservationSt
         """返回同一 Run 状态、lease 和事件 cursor 共用的锁文件路径。"""
 
         return self._snapshot_path(run_id).with_suffix(".json.lock")
+
+    def run_lock_path(self, run_id: str) -> Path:
+        """返回 Run 状态与事件写入共用的锁文件路径。"""
+        return self._run_lock_path(run_id)
 
     def _client_index_path(self, client_request_id: str) -> Path:
         """根据 client_request_id 解析幂等索引文件路径。"""
@@ -1139,9 +1144,11 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
+        mapping = cast(dict[object, object], value)
+        return {str(key): _json_safe(item) for key, item in mapping.items()}
     if isinstance(value, (list, tuple)):
-        return [_json_safe(item) for item in value]
+        sequence = cast(list[object] | tuple[object, ...], value)
+        return [_json_safe(item) for item in sequence]
     return value
 
 
@@ -1228,7 +1235,7 @@ def _next_observation_guardrail_summary(
     if not isinstance(next_summary, dict):
         return current
     next_summary["last_event_cursor"] = event_cursor
-    return next_summary
+    return cast(dict[str, Any], next_summary)
 
 
 def _next_collaboration_summary(

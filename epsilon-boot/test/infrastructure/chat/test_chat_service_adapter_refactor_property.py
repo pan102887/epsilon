@@ -6,6 +6,7 @@
 - tool_calling_enabled=True 但无工具时，chat() 直接调用 LLM
 """
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import hypothesis.strategies as st
@@ -40,9 +41,8 @@ chat_request_vo_st = st.builds(
     model=model_st,
 )
 
-# 工具 schema 策略：非空列表
-tool_schema_st = st.just(
-    [
+def _tool_schemas() -> list[dict[str, Any]]:
+    return [
         {
             "type": "function",
             "function": {
@@ -52,7 +52,10 @@ tool_schema_st = st.just(
             },
         }
     ]
-)
+
+
+# 工具 schema 策略：非空列表
+tool_schema_st: st.SearchStrategy[list[dict[str, Any]]] = st.just(_tool_schemas())
 
 # 系统提示词策略
 system_prompt_st = st.text(min_size=1, max_size=100).filter(lambda s: len(s.strip()) > 0)
@@ -63,7 +66,7 @@ max_tool_rounds_st = st.integers(min_value=1, max_value=20)
 
 def _build_mocks(
     tool_calling_enabled: bool,
-    tool_schemas: list[dict],
+    tool_schemas: list[dict[str, Any]],
     system_prompt: str,
     max_tool_rounds: int,
 ):
@@ -176,16 +179,7 @@ async def test_delegation_routing_enabled_with_tools(
 
     **Validates: Requirements 5.2, 5.3, 5.4**
     """
-    tool_schemas = [
-        {
-            "type": "function",
-            "function": {
-                "name": "test_tool",
-                "description": "A test tool",
-                "parameters": {"type": "object", "properties": {}},
-            },
-        }
-    ]
+    tool_schemas = _tool_schemas()
 
     adapter, _session_store, model_access, agent_mock, _ = _build_mocks(
         tool_calling_enabled=True,
@@ -227,16 +221,7 @@ async def test_delegation_routing_disabled(
 
     **Validates: Requirements 5.2, 5.3, 5.4**
     """
-    tool_schemas = [
-        {
-            "type": "function",
-            "function": {
-                "name": "test_tool",
-                "description": "A test tool",
-                "parameters": {"type": "object", "properties": {}},
-            },
-        }
-    ]
+    tool_schemas = _tool_schemas()
 
     adapter, _session_store, model_access, agent_mock, _ = _build_mocks(
         tool_calling_enabled=False,

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 from common.configuration import ConfigurationError, PropertiesFileSettingsSource
 from infrastructure.task.task_config import TaskAgentConfig
@@ -33,7 +36,7 @@ class TestTaskSegmentConfig:
         assert policy.max_total_tokens is None
         assert policy.max_duration_seconds is None
 
-    def test_loads_segment_policy_from_config_properties(self, tmp_path) -> None:
+    def test_loads_segment_policy_from_config_properties(self, tmp_path: Path) -> None:
         """config.properties 中的 TASK_AGENT_SEGMENT_* 可被读取并映射为策略。"""
         props_file = tmp_path / "config.properties"
         props_file.write_text(
@@ -56,13 +59,14 @@ class TestTaskSegmentConfig:
 
             @classmethod
             def settings_customise_sources(
-                cls,
-                settings_cls,
-                init_settings,
-                env_settings,
-                dotenv_settings,
-                file_secret_settings,
-            ):
+                cls: type[BaseSettings],
+                settings_cls: type[BaseSettings],
+                init_settings: PydanticBaseSettingsSource,
+                env_settings: PydanticBaseSettingsSource,
+                dotenv_settings: PydanticBaseSettingsSource,
+                file_secret_settings: PydanticBaseSettingsSource,
+            ) -> tuple[PydanticBaseSettingsSource, ...]:
+                del cls, init_settings, env_settings, dotenv_settings, file_secret_settings
                 return (
                     PropertiesFileSettingsSource(
                         settings_cls,
@@ -98,4 +102,4 @@ class TestTaskSegmentConfig:
     ) -> None:
         """非法分段阈值在配置层 fail-fast。"""
         with pytest.raises(ConfigurationError, match="TASK_AGENT_SEGMENT"):
-            TaskAgentConfig(**{field_name: value})
+            TaskAgentConfig.model_validate({field_name: value})

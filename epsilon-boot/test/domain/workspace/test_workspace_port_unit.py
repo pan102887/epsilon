@@ -16,9 +16,15 @@
 from __future__ import annotations
 
 import typing
+from collections.abc import Mapping
 from unittest.mock import MagicMock
 
 from domain.workspace.ports import LocallyMaterializable, Workspace
+from domain.workspace.value_objects import (
+    WorkspaceCapabilities,
+    WorkspacePath,
+    WorkspaceStatEntry,
+)
 
 # ── Workspace Port 应暴露的 10 个方法名 ──
 _EXPECTED_WORKSPACE_METHODS: frozenset[str] = frozenset(
@@ -48,40 +54,66 @@ class _WorkspaceStub:
     缺陷修复批次 C）。这里改用手写 stub 确保结构类型契约在 3.13+ 仍可验证。
     """
 
-    def resolve_path(self, requested):
-        return None
+    def resolve_path(self, requested: str) -> WorkspacePath:
+        raise NotImplementedError
 
-    async def exists(self, path, *, context=None):
+    async def exists(
+        self, path: WorkspacePath, *, context: Mapping[str, object] | None = None
+    ) -> bool:
         return False
 
-    async def stat(self, path, *, context=None):
-        return None
+    async def stat(
+        self, path: WorkspacePath, *, context: Mapping[str, object] | None = None
+    ) -> WorkspaceStatEntry:
+        raise NotImplementedError
 
     async def read(
-        self, path, *, start_line=None, end_line=None, context=None
-    ):
+        self,
+        path: WorkspacePath,
+        *,
+        start_line: int | None = None,
+        end_line: int | None = None,
+        context: Mapping[str, object] | None = None,
+    ) -> bytes:
         return b""
 
-    async def write(self, path, content, *, context=None):
+    async def write(
+        self,
+        path: WorkspacePath,
+        content: bytes,
+        *,
+        context: Mapping[str, object] | None = None,
+    ) -> int:
         return 0
 
     async def edit(
-        self, path, old_content, new_content, *, context=None
-    ):
+        self,
+        path: WorkspacePath,
+        old_content: bytes,
+        new_content: bytes,
+        *,
+        context: Mapping[str, object] | None = None,
+    ) -> int:
         return 0
 
     async def list_dir(
-        self, path, *, recursive=True, context=None
-    ):
+        self,
+        path: WorkspacePath,
+        *,
+        recursive: bool = True,
+        context: Mapping[str, object] | None = None,
+    ) -> list[WorkspaceStatEntry]:
         return []
 
-    async def delete(self, path, *, context=None):
-        return None
+    async def delete(
+        self, path: WorkspacePath, *, context: Mapping[str, object] | None = None
+    ) -> None:
+        pass
 
-    def capabilities(self):
-        return None
+    def capabilities(self) -> WorkspaceCapabilities:
+        return WorkspaceCapabilities()
 
-    def display_root_hint(self):
+    def display_root_hint(self) -> str:
         return ""
 
 
@@ -164,7 +196,7 @@ class TestLocallyMaterializableMethodDirectory:
         """
 
         class _MaterializableStub:
-            def materialize_cwd(self, path):
+            def materialize_cwd(self, path: WorkspacePath) -> str:
                 return ""
 
         assert isinstance(_MaterializableStub(), LocallyMaterializable)

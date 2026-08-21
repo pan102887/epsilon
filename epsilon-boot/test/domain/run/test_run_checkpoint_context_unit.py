@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import FrozenInstanceError
+from typing import cast
 
 import pytest
 
@@ -13,6 +14,7 @@ from domain.run.checkpoint_context import (
     reset_run_checkpoint_context,
     set_run_checkpoint_context,
 )
+from domain.run.ports import RunCheckpointSinkPort
 
 
 class _FakeCheckpointSink:
@@ -31,7 +33,7 @@ def _context(
         owner_id=owner_id,
         segment_index=segment_index,
         recovery_mode=recovery_mode,
-        sink=_FakeCheckpointSink(),
+        sink=cast(RunCheckpointSinkPort, _FakeCheckpointSink()),
     )
 
 

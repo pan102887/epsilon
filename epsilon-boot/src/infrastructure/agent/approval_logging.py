@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
 SENSITIVE_KEYS = frozenset({"api_key", "password", "secret", "token", "authorization"})
 """审批日志中需要脱敏的敏感键名集合。"""
@@ -57,12 +57,13 @@ def approval_log_extra(
 def _redact(value: Any) -> Any:
     """递归脱敏 dict/list/str。"""
     if isinstance(value, dict):
+        mapping = cast(dict[object, object], value)
         return {
             key: "***" if str(key).lower() in SENSITIVE_KEYS else _redact(item)
-            for key, item in value.items()
+            for key, item in mapping.items()
         }
     if isinstance(value, list):
-        return [_redact(item) for item in value]
+        return [_redact(item) for item in cast(list[object], value)]
     if isinstance(value, tuple):
-        return [_redact(item) for item in value]
+        return [_redact(item) for item in cast(tuple[object, ...], value)]
     return value

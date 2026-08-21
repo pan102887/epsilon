@@ -71,8 +71,10 @@ def test_streaming_chunk_with_tool_calls_field() -> None:
     chunk = StreamingChunk(delta_content="", finished=False, tool_calls=deltas)
 
     assert chunk.tool_calls is deltas
-    assert chunk.tool_calls[0].id == "call_1"
-    assert chunk.tool_calls[1].arguments_delta == '{"x":1}'
+    tool_calls = chunk.tool_calls
+    assert tool_calls is not None
+    assert tool_calls[0].id == "call_1"
+    assert tool_calls[1].arguments_delta == '{"x":1}'
 
 
 def test_streaming_chunk_is_frozen_with_tool_calls() -> None:

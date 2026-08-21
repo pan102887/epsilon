@@ -9,6 +9,8 @@ Agent Loop 逻辑已从 ChatServiceAdapter 迁移到 ReActAgentAdapter，
 对应需求：7.1, 7.2, 7.4
 """
 
+from collections.abc import AsyncIterator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -23,7 +25,12 @@ from domain.chat.context import (
     UserMessage,
 )
 from domain.chat.value_objects import ContextBuilderResult
-from domain.model_access.value_objects import LLMResponse, StreamingChunk, ToolCallRequest
+from domain.model_access.value_objects import (
+    ChatRequest,
+    LLMResponse,
+    StreamingChunk,
+    ToolCallRequest,
+)
 from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 from infrastructure.chat.environment_context_provider import EnvironmentContextBuildError
 from test.infrastructure.agent._v3_stream_helpers import install_stream_mock
@@ -83,7 +90,7 @@ def _make_react_adapter(
 
 
 def _make_config(
-    tool_schemas: list | None = None,
+    tool_schemas: list[dict[str, Any]] | None = None,
     max_rounds: int = 10,
 ) -> AgentConfig:
     """创建测试用 AgentConfig。
@@ -285,8 +292,9 @@ async def test_streaming_agent_loop_max_rounds_streams() -> None:
     model_access = AsyncMock()
 
     # 流式产出分片
-    async def mock_stream(*args, **kwargs):
+    async def mock_stream(request: ChatRequest) -> AsyncIterator[StreamingChunk]:
         """模拟流式响应的异步生成器。"""
+        del request
         yield StreamingChunk(delta_content="直接", finished=False)
         yield StreamingChunk(delta_content="流式", finished=False)
         yield StreamingChunk(
@@ -332,8 +340,9 @@ async def test_streaming_agent_loop_builder_failure_skips_model_calls() -> None:
     )
     model_access = AsyncMock()
 
-    async def fail_stream(*args, **kwargs):
+    async def fail_stream(request: ChatRequest) -> AsyncIterator[StreamingChunk]:
         """若被调用则说明 fail-fast 行为失效。"""
+        del request
         raise AssertionError("stream should not be called")
         yield  # pragma: no cover
 

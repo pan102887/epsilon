@@ -10,11 +10,11 @@ from infrastructure.chat.sliding_window_compaction_adapter import (
 )
 
 
-def _tool_pair_group_strategy():
+def _tool_pair_group_strategy() -> st.SearchStrategy[list[BaseMessage]]:
     """生成 Tool_Pair_Group：一条 assistant(tool_calls) + 对应 ToolMessages。"""
 
     @st.composite
-    def strategy(draw):
+    def strategy(draw: st.DrawFn) -> list[BaseMessage]:
         n_tools = draw(st.integers(min_value=1, max_value=4))
         tool_call_ids = [f"tc-{draw(st.uuids())}" for _ in range(n_tools)]
         tool_calls = [
@@ -32,7 +32,7 @@ def _tool_pair_group_strategy():
 
 
 @st.composite
-def messages_with_tool_groups(draw):
+def messages_with_tool_groups(draw: st.DrawFn) -> list[BaseMessage]:
     """生成包含若干 tool_pair_group 和 plain 消息的混合序列。"""
     n_groups = draw(st.integers(min_value=0, max_value=4))
     n_plain = draw(st.integers(min_value=0, max_value=5))
@@ -58,7 +58,9 @@ def messages_with_tool_groups(draw):
     max_messages=st.integers(min_value=1, max_value=30),
 )
 @settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow])
-def test_property_each_tool_message_has_assistant(messages, max_messages):
+def test_property_each_tool_message_has_assistant(
+    messages: list[BaseMessage], max_messages: int
+) -> None:
     """Property 8: 输出中每条 ToolMessage 都有对应的 assistant。"""
     adapter = SlidingWindowCompactionAdapter(max_messages=max_messages)
     result = adapter.compact_messages(messages)
@@ -81,7 +83,9 @@ def test_property_each_tool_message_has_assistant(messages, max_messages):
     max_messages=st.integers(min_value=1, max_value=30),
 )
 @settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow])
-def test_property_each_assistant_tool_calls_fully_covered(messages, max_messages):
+def test_property_each_assistant_tool_calls_fully_covered(
+    messages: list[BaseMessage], max_messages: int
+) -> None:
     """Property 9: 输出中每条 assistant 的 tool_calls 全集都能找到 ToolMessage。"""
     adapter = SlidingWindowCompactionAdapter(max_messages=max_messages)
     result = adapter.compact_messages(messages)
@@ -104,12 +108,14 @@ def test_property_each_assistant_tool_calls_fully_covered(messages, max_messages
     max_messages=st.integers(min_value=1, max_value=30),
 )
 @settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow])
-def test_property_system_messages_fully_preserved(messages, max_messages):
+def test_property_system_messages_fully_preserved(
+    messages: list[BaseMessage], max_messages: int
+) -> None:
     """Property 10: system 消息全保留。"""
     from domain.chat.context import SystemMessage
 
     sys_msg = SystemMessage(content="system-prompt")
-    all_messages = [sys_msg, *messages]
+    all_messages: list[BaseMessage] = [sys_msg, *messages]
 
     adapter = SlidingWindowCompactionAdapter(max_messages=max_messages)
     result = adapter.compact_messages(all_messages)

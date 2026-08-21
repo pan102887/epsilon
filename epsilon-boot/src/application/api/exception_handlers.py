@@ -63,6 +63,15 @@ def register_exception_handlers(app: FastAPI) -> None:
             content={"code": 500, "message": "服务器内部错误"},
         )
 
+    # The decorators register these local callables; retain explicit references so
+    # static analysis can see that the definitions are intentionally consumed.
+    _ = (
+        biz_exception_handler,
+        validation_exception_handler,
+        http_exception_handler,
+        global_exception_handler,
+    )
+
 
 def _biz_exception_status_code(exc: BizException) -> int:
     """Return HTTP status for BizException classes that need non-200 transport."""

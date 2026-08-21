@@ -56,7 +56,7 @@ def test_recovered_ids_are_non_empty_unique_and_ascii(
     }
     adapter = _make_adapter("recover")
 
-    result, recovery = adapter._materialize_full_tool_calls(
+    result, recovery = adapter.materialize_full_tool_calls(
         acc,
         {"model": "m"},
         request_nonce="abc123",
@@ -102,7 +102,7 @@ def test_existing_provider_ids_are_not_overwritten(
     }
     adapter = _make_adapter("recover")
 
-    result, recovery = adapter._materialize_full_tool_calls(
+    result, recovery = adapter.materialize_full_tool_calls(
         acc,
         {"model": "m"},
         request_nonce="abc123",

@@ -112,21 +112,21 @@ class TestBuildParamsTools:
         """tools=None 时返回的 dict 无 "tools" 键。"""
         adapter = _make_adapter()
         request = ChatRequest(messages=_make_messages(), tools=None)
-        params = adapter._build_params(request, stream=False)
+        params = adapter.build_params(request, stream=False)
         assert "tools" not in params
 
     def test_tools_empty_list_not_in_params(self) -> None:
         """tools=[] 时返回的 dict 无 "tools" 键。"""
         adapter = _make_adapter()
         request = ChatRequest(messages=_make_messages(), tools=[])
-        params = adapter._build_params(request, stream=False)
+        params = adapter.build_params(request, stream=False)
         assert "tools" not in params
 
     def test_tools_non_empty_in_params(self) -> None:
         """tools 非空时返回的 dict 含 "tools" 键且值正确。"""
         adapter = _make_adapter()
         request = ChatRequest(messages=_make_messages(), tools=_SAMPLE_TOOLS)
-        params = adapter._build_params(request, stream=False)
+        params = adapter.build_params(request, stream=False)
         assert "tools" in params
         assert params["tools"] == _SAMPLE_TOOLS
 
@@ -139,7 +139,7 @@ class TestBuildParamsOpenAIStandards:
         adapter = _make_official_openai_adapter()
         request = ChatRequest(messages=_make_messages())
 
-        params = adapter._build_params(request, stream=False)
+        params = adapter.build_params(request, stream=False)
 
         assert params["max_completion_tokens"] == 2048
         assert "max_tokens" not in params
@@ -149,7 +149,7 @@ class TestBuildParamsOpenAIStandards:
         adapter = _make_adapter()
         request = ChatRequest(messages=_make_messages())
 
-        params = adapter._build_params(request, stream=False)
+        params = adapter.build_params(request, stream=False)
 
         assert params["max_tokens"] == 4096
         assert "max_completion_tokens" not in params
@@ -162,7 +162,7 @@ class TestBuildParamsOpenAIStandards:
             extra_params={"max_tokens": 128, "top_p": 0.9},
         )
 
-        params = adapter._build_params(request, stream=False)
+        params = adapter.build_params(request, stream=False)
 
         assert params["max_completion_tokens"] == 128
         assert params["top_p"] == 0.9
@@ -175,7 +175,7 @@ class TestBuildParamsOpenAIStandards:
             messages=[SystemMessage(content="follow policy"), UserMessage(content="hi")]
         )
 
-        params = adapter._build_params(request, stream=False)
+        params = adapter.build_params(request, stream=False)
 
         assert params["messages"][0] == {
             "role": "developer",
@@ -190,7 +190,7 @@ class TestBuildParamsOpenAIStandards:
             messages=[SystemMessage(content="follow policy"), UserMessage(content="hi")]
         )
 
-        params = adapter._build_params(request, stream=False)
+        params = adapter.build_params(request, stream=False)
 
         assert params["messages"][0] == {
             "role": "system",

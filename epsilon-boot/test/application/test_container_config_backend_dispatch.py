@@ -7,41 +7,40 @@ Adapter 类型与 ``ReadinessAggregator.checks`` 类型集合必须精确对齐�
 
 import importlib.util
 import pathlib
+from types import ModuleType
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
 
 from common.container_models import make_registry_key
+from domain.health.aggregator import ReadinessAggregator
 
 
-def _load_container_config_module():
+def _load_container_config_module() -> ModuleType:
     """直接加载 ``container_config``，绕过 ``application`` 包的 ``__init__``。"""
     config_path = (
         pathlib.Path(__file__).resolve().parents[2] / "src" / "application" / "container_config.py"
     )
     spec = importlib.util.spec_from_file_location("test_backend_dispatch_module", str(config_path))
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-_config_module = _load_container_config_module()
+_config_module: Any = _load_container_config_module()
 
 
 @pytest.fixture(autouse=True)
-def _isolate_container():
+def isolate_container():
     """每个测试用独立的全局容器状态，避免污染。"""
     from common.container import container
 
-    original_registry = container._registry.copy()
-    original_singletons = container._singletons.copy()
-    original_resources = container._async_resources[:]
-    original_initialized = container._initialized_resources[:]
+    original_state = container.capture_state()
     yield
-    container._registry = original_registry
-    container._singletons = original_singletons
-    container._async_resources = original_resources
-    container._initialized_resources = original_initialized
+    container.restore_state(original_state)
 
 
 def _set_backend(monkeypatch: pytest.MonkeyPatch, backend_value: str) -> None:
@@ -91,8 +90,8 @@ def test_redis_backend_readiness_contains_only_redis_check(
 
     _config_module.configure_container()
 
-    aggregator = _config_module._create_readiness_aggregator()
-    check_types = {type(c) for c in aggregator._checks}
+    aggregator = cast(ReadinessAggregator, _config_module._create_readiness_aggregator())
+    check_types: set[type[object]] = {type(c) for c in aggregator.checks}
     assert check_types == {RedisHealthCheckAdapter}
 
 
@@ -134,8 +133,8 @@ def test_file_backend_readiness_contains_only_local_persistence_check(
 
     _config_module.configure_container()
 
-    aggregator = _config_module._create_readiness_aggregator()
-    check_types = {type(c) for c in aggregator._checks}
+    aggregator = cast(ReadinessAggregator, _config_module._create_readiness_aggregator())
+    check_types: set[type[object]] = {type(c) for c in aggregator.checks}
     assert check_types == {LocalPersistenceHealthCheckAdapter}
 
 
@@ -149,20 +148,20 @@ def test_session_store_port_registered_as_singleton_under_both_backends(
 
     for backend in ("redis", "file"):
         # 重新隔离：清空容器状态
-        container._registry = {}
-        container._singletons = {}
-        container._async_resources = []
-        container._initialized_resources = []
+        from common.container import Container
+
+        container.restore_state(Container().capture_state())
         _set_backend(monkeypatch, backend)
         if backend == "file":
             monkeypatch.setattr(_config_module, "_local_persistence_root", tmp_path)
         _config_module.configure_container()
         session_store_key = make_registry_key(SessionContextStorePort)
         session_index_key = make_registry_key(SessionIndexPort)
-        assert session_store_key in container._registry
-        assert container._registry[session_store_key].scope == Scope.SINGLETON
-        assert session_index_key in container._registry
-        assert container._registry[session_index_key].scope == Scope.SINGLETON
+        registry = container.capture_state().registry
+        assert session_store_key in registry
+        assert registry[session_store_key].scope == Scope.SINGLETON
+        assert session_index_key in registry
+        assert registry[session_index_key].scope == Scope.SINGLETON
 
 
 def test_file_backend_creates_local_session_index_adapter(
@@ -218,5 +217,5 @@ def test_redis_backend_session_context_and_index_share_ttl(
 
     assert isinstance(context_adapter, RedisSessionContextAdapter)
     assert isinstance(index_adapter, RedisSessionIndexAdapter)
-    assert context_adapter._ttl_seconds == 123
-    assert index_adapter._ttl_seconds == 123
+    assert context_adapter.ttl_seconds == 123
+    assert index_adapter.ttl_seconds == 123

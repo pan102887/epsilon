@@ -41,7 +41,7 @@ from infrastructure.agent.workflow_collaboration_recorder import (
 
 if TYPE_CHECKING:
     from domain.agent.ports import AgentRegistryPort, DelegationPort
-    from domain.run.ports import RunEventStorePort
+from domain.run.ports import RunEventAppenderPort
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ class HandoffToAgentTool(Tool):
         delegation: DelegationPort,
         current_delegation_depth: int = 0,
         max_delegation_depth: int = 3,
-        event_store: RunEventStorePort | None = None,
+        event_store: RunEventAppenderPort | None = None,
         recent_collaboration_summary_limit: int = 5,
     ) -> None:
         """初始化 Handoff 工具。
@@ -84,6 +84,10 @@ class HandoffToAgentTool(Tool):
         self._event_store = event_store
         self._recent_collaboration_summary_limit = recent_collaboration_summary_limit
         self._collaboration_summary: dict[str, Any] = {}
+
+    @property
+    def max_delegation_depth(self) -> int:
+        return self._max_delegation_depth
 
     @property
     def name(self) -> str:
@@ -247,13 +251,15 @@ class HandoffToAgentTool(Tool):
             collaboration_summary=self._collaboration_summary,
             recent_limit=self._recent_collaboration_summary_limit,
         )
-        _workflow_state, self._collaboration_summary = await record_workflow_handoff(
+        _workflow_state, collaboration_summary = await record_workflow_handoff(
             event_store=self._event_store,
             target_agent=handoff_result.target_agent,
             reason="handoff_to_agent",
             collaboration_summary=self._collaboration_summary,
             recent_limit=self._recent_collaboration_summary_limit,
         )
+        if collaboration_summary is not None:
+            self._collaboration_summary = collaboration_summary
         raise HandoffPerformed(
             target_agent=handoff_result.target_agent,
             content=handoff_result.content,

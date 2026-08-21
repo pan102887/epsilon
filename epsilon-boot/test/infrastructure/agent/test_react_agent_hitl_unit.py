@@ -10,6 +10,7 @@ from domain.agent.value_objects import (
     AgentConfig,
     ApprovalDecision,
     ApprovalInterrupt,
+    ApprovalInterruptSummary,
     ApprovalPolicy,
     PendingActionRequest,
 )
@@ -30,7 +31,7 @@ class FakeContextBuilder:
     async def build(
         self,
         messages: list[BaseMessage],
-        **kwargs,
+        **kwargs: object,
     ) -> ContextBuilderResult:
         """原样透传领域消息列表。"""
         return ContextBuilderResult(
@@ -75,7 +76,9 @@ class MemoryApprovalStore(ApprovalStateStorePort):
     async def delete_session(self, session_id: str) -> None:
         self.saved = None
 
-    async def list_pending_by_session(self, session_id: str) -> list:
+    async def list_pending_by_session(
+        self, session_id: str
+    ) -> list[ApprovalInterruptSummary]:
         return []
 
 
@@ -124,6 +127,9 @@ class FakeModel:
                 yield chunk
             return
         yield StreamingChunk(delta_content="done", finished=True)
+
+    def count_tokens(self, messages: list[BaseMessage]) -> int:
+        return sum(len(message.content) for message in messages)
 
 
 def _config() -> AgentConfig:
@@ -197,7 +203,7 @@ async def test_hitl_resume_approve_executes_tool_and_continues() -> None:
     context = ConversationContext()
     context.add_system_message("system")
     context.add_user_message("write")
-    context._messages.append(
+    context.append_message(
         AssistantMessage(
             content="",
             tool_calls=[ToolCallRequest("call-1", "write_file", '{"path":"a.txt"}')],
@@ -246,7 +252,7 @@ async def test_hitl_resume_reject_adds_tool_message_without_execution() -> None:
     context = ConversationContext()
     context.add_system_message("system")
     context.add_user_message("write")
-    context._messages.append(
+    context.append_message(
         AssistantMessage(
             content="",
             tool_calls=[ToolCallRequest("call-1", "write_file", '{"path":"a.txt"}')],
@@ -337,7 +343,7 @@ async def test_hitl_respond_decision_is_rejected_after_branch_removal() -> None:
     adapter = _adapter(store, tool)
     context = ConversationContext()
     context.add_user_message("write")
-    context._messages.append(
+    context.append_message(
         AssistantMessage(
             content="",
             tool_calls=[ToolCallRequest("call-1", "write_file", '{"path":"a.txt"}')],
@@ -506,3 +512,8 @@ def test_approval_payload_metadata_redacts_arguments_but_storage_keeps_full_acti
             "reason": "reason-x",
         }
     ]
+
+
+# Public test builders reused by workflow regression coverage.
+hitl_adapter = _adapter
+hitl_config = _config

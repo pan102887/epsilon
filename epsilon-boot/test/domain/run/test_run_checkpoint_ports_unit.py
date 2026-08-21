@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 
 from domain.run.ports import RunCheckpointSinkPort, RunCheckpointStorePort
 
 
-def _parameter_names(method) -> list[str]:
+def _parameter_names(method: Callable[..., object]) -> list[str]:
     """返回方法签名中的参数名列表。"""
     return list(inspect.signature(method).parameters)
 
 
-def _return_annotation(method):
+def _return_annotation(method: Callable[..., object]) -> object:
     """返回方法签名中的返回类型标注。"""
     return inspect.signature(method).return_annotation
 

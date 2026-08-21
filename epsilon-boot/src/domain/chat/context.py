@@ -16,13 +16,13 @@ ConversationContext 负责管理对话消息列表，作为纯粹的消息容器
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from domain.model_access.exceptions import InvalidToolCallIdError
 from domain.model_access.value_objects import ToolCallRequest
 
 _VALID_HISTORY_RESTORE_STRATEGIES = {"filter", "raise"}
-_HISTORY_RESTORE_STRATEGY = "filter"
+history_restore_strategy = "filter"
 """历史会话恢复策略。
 
 领域层保持纯内存默认值，不直接读取运行时配置文件或 pydantic settings。
@@ -49,8 +49,8 @@ def configure_history_restore_strategy(raw: str | None) -> None:
     ``common.configuration`` 或任何 settings 框架。
     """
 
-    global _HISTORY_RESTORE_STRATEGY
-    _HISTORY_RESTORE_STRATEGY = normalize_history_restore_strategy(raw)
+    global history_restore_strategy
+    history_restore_strategy = normalize_history_restore_strategy(raw)
 
 
 @dataclass(kw_only=True)
@@ -72,7 +72,7 @@ class BaseMessage(ABC):
     """
 
     content: str
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
 
     @property
     @abstractmethod
@@ -122,6 +122,7 @@ class BaseMessage(ABC):
         role = data["role"]
         content = data["content"]
         metadata = data.get("metadata", {})
+        metadata = cast(dict[str, Any], metadata)
 
         if role == "system":
             return SystemMessage(content=content, metadata=metadata)
@@ -132,9 +133,10 @@ class BaseMessage(ABC):
             tool_calls: list[ToolCallRequest] = []
             skipped: list[dict[str, Any]] = []
             for index, tc in enumerate(raw_tool_calls):
-                tc_id = tc.get("id") if isinstance(tc, dict) else None
-                tc_name = tc.get("name") if isinstance(tc, dict) else None
-                tc_args = tc.get("arguments") if isinstance(tc, dict) else None
+                tool_call = cast(dict[str, Any], tc) if isinstance(tc, dict) else None
+                tc_id = tool_call.get("id") if tool_call is not None else None
+                tc_name = tool_call.get("name") if tool_call is not None else None
+                tc_args = tool_call.get("arguments") if tool_call is not None else None
                 if not isinstance(tc_id, str) or not tc_id:
                     skipped.append(
                         {
@@ -164,11 +166,9 @@ class BaseMessage(ABC):
                     "tool_call_index": first.get("index"),
                     "raw_id_value": first.get("raw_id_value"),
                     "skipped_count": len(skipped),
-                    "session_id": metadata.get("session_id")
-                    if isinstance(metadata, dict)
-                    else None,
+                    "session_id": metadata.get("session_id"),
                 }
-                if _HISTORY_RESTORE_STRATEGY == "raise":
+                if history_restore_strategy == "raise":
                     raise InvalidToolCallIdError(
                         source="history_restore",
                         raw_id_value=first.get("raw_id_value"),
@@ -240,7 +240,7 @@ class AssistantMessage(BaseMessage):
         tool_calls: LLM 返回的工具调用请求列表，默认为空列表
     """
 
-    tool_calls: list[ToolCallRequest] = field(default_factory=list)
+    tool_calls: list[ToolCallRequest] = field(default_factory=list[ToolCallRequest])
 
     @property
     def role(self) -> str:
@@ -437,6 +437,10 @@ class ConversationContext:
         """
         return list(self._messages)
 
+    def replace_messages(self, messages: list[BaseMessage]) -> None:
+        """Replace the conversation message sequence with a defensive copy."""
+        self._messages = list(messages)
+
     def append_message(self, message: BaseMessage) -> int:
         """通用消息追加方法。
 
@@ -530,6 +534,7 @@ class ConversationContext:
         ctx._messages = [BaseMessage.from_dict(m) for m in data.get("messages", [])]
         raw_ts = data.get("event_timestamps")
         if isinstance(raw_ts, dict):
+            raw_ts = cast(dict[Any, Any], raw_ts)
             ctx.event_timestamps = {int(k): int(v) for k, v in raw_ts.items()}
         ctx.session_id = data.get("session_id")
         return ctx

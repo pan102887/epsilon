@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar
+from functools import wraps
+from typing import ParamSpec, Protocol, TypeVar
 
 from tenacity import (
     AsyncRetrying,
@@ -50,11 +51,19 @@ _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
     ModelConnectionError,
 )
 
+P = ParamSpec("P")
 T = TypeVar("T")
-_AsyncFn = Callable[..., Awaitable[T]]
 
 
-def build_retry(attempts: int) -> Callable[[_AsyncFn], _AsyncFn]:
+class _AsyncRetryDecorator(Protocol):
+    """保留异步函数参数与返回类型的重试装饰器协议。"""
+
+    def __call__(self, fn: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
+        """装饰异步函数且保持原始可调用签名。"""
+        ...
+
+
+def build_retry(attempts: int) -> _AsyncRetryDecorator:
     """构造重试装饰器。
 
     Args:
@@ -69,8 +78,9 @@ def build_retry(attempts: int) -> Callable[[_AsyncFn], _AsyncFn]:
         # passthrough：无延迟、无包装，向下兼容。
         return lambda fn: fn
 
-    def decorator(fn: _AsyncFn) -> _AsyncFn:
-        async def wrapped(*args: Any, **kwargs: Any) -> Any:
+    def decorator(fn: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
+        @wraps(fn)
+        async def wrapped(*args: P.args, **kwargs: P.kwargs) -> T:
             retry_state = AsyncRetrying(
                 stop=stop_after_attempt(attempts),
                 wait=wait_random_exponential(min=1, max=30),
@@ -84,10 +94,7 @@ def build_retry(attempts: int) -> Callable[[_AsyncFn], _AsyncFn]:
             # 实际不可达：reraise=True 时上面会抛出最后一次异常
             raise RuntimeError("AsyncRetrying exited without value or raise")
 
-        wrapped.__wrapped__ = fn  # 便于测试访问原函数
-        wrapped.__name__ = getattr(fn, "__name__", "wrapped")
-        wrapped.__doc__ = fn.__doc__
-        return wrapped  # type: ignore[return-value]
+        return wrapped
 
     return decorator
 

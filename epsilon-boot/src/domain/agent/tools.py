@@ -29,6 +29,10 @@ from domain.model_access.value_objects import ToolCallRequest
 from domain.run.value_objects import ToolReplayPolicy, ToolSideEffectLevel
 
 
+def _metadata_dict() -> dict[str, Any]:
+    return {}
+
+
 @dataclass(frozen=True)
 class ToolExecutionResult:
     """工具执行结果值对象。
@@ -51,7 +55,7 @@ class ToolExecutionResult:
     """
 
     content: str
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=_metadata_dict)
 
 
 class Tool(ABC):

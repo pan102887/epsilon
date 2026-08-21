@@ -47,7 +47,7 @@ from domain.run.value_objects import (
     RunSnapshot,
     RunStatus,
 )
-from domain.run.workflow import WorkflowPhase, WorkflowRunState
+from domain.run.workflow import WorkflowRunState
 
 RunWorkerWakeup = Callable[[], None]
 """唤醒后台 worker 的轻量回调类型。"""
@@ -813,9 +813,7 @@ def _workflow_selection_event_payload(
     }
     if workflow is not None and workflow.phases:
         first_phase = workflow.phases[0].phase
-        payload["first_phase"] = (
-            first_phase.value if isinstance(first_phase, WorkflowPhase) else str(first_phase)
-        )
+        payload["first_phase"] = first_phase.value
     return payload
 
 

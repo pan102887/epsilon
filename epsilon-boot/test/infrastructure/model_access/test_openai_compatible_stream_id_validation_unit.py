@@ -17,7 +17,7 @@ import pytest
 
 from domain.chat.context import UserMessage
 from domain.model_access.exceptions import InvalidToolCallIdError
-from domain.model_access.value_objects import ChatRequest
+from domain.model_access.value_objects import ChatRequest, StreamingChunk
 from infrastructure.model_access.openai_compatible_adapter import OpenAICompatibleAdapter
 
 
@@ -122,7 +122,7 @@ class _StreamWithValidId:
 async def test_stream_finished_empty_id_recovers_by_default() -> None:
     """finished 分支中 tool_call.id 为空时默认生成合成 id。"""
     adapter = _make_adapter("recover")
-    adapter._client.chat.completions.create = AsyncMock(return_value=_StreamWithEmptyIdFinished())
+    adapter.client.chat.completions.create = AsyncMock(return_value=_StreamWithEmptyIdFinished())
 
     request = ChatRequest(messages=[UserMessage(content="x")])
     chunks = [chunk async for chunk in adapter.stream(request)]
@@ -130,8 +130,9 @@ async def test_stream_finished_empty_id_recovers_by_default() -> None:
     finished_chunk = chunks[-1]
     assert finished_chunk.finished is True
     assert finished_chunk.tool_calls is not None
-    assert finished_chunk.tool_calls[0].id is not None
-    assert finished_chunk.tool_calls[0].id.startswith("call_synthetic_")
+    recovered_id = finished_chunk.tool_calls[0].id
+    assert recovered_id is not None
+    assert recovered_id.startswith("call_synthetic_")
     assert finished_chunk.metadata["tool_call_id_recovered"] is True
 
 
@@ -144,7 +145,7 @@ async def test_stream_finished_empty_id_recovers_by_default() -> None:
 async def test_stream_empty_id_raises_invalid_tool_call_id_when_strategy_raise() -> None:
     """strict raise 策略下 tool_call.id 为空时抛出 InvalidToolCallIdError。"""
     adapter = _make_adapter("raise")
-    adapter._client.chat.completions.create = AsyncMock(return_value=_StreamWithEmptyIdFinished())
+    adapter.client.chat.completions.create = AsyncMock(return_value=_StreamWithEmptyIdFinished())
 
     request = ChatRequest(messages=[UserMessage(content="x")])
     with pytest.raises(InvalidToolCallIdError) as exc_info:
@@ -164,7 +165,7 @@ async def test_stream_empty_id_raises_invalid_tool_call_id_when_strategy_raise()
 async def test_stream_usage_only_empty_id_reuses_recovered_id() -> None:
     """usage-only 末尾分片使用同一套恢复结果，不生成第二个不同 id。"""
     adapter = _make_adapter("recover")
-    adapter._client.chat.completions.create = AsyncMock(return_value=_StreamWithEmptyIdUsageOnly())
+    adapter.client.chat.completions.create = AsyncMock(return_value=_StreamWithEmptyIdUsageOnly())
 
     request = ChatRequest(messages=[UserMessage(content="x")])
     chunks = [chunk async for chunk in adapter.stream(request)]
@@ -174,7 +175,9 @@ async def test_stream_usage_only_empty_id_reuses_recovered_id() -> None:
     assert finished_chunk.tool_calls is not None
     assert usage_chunk.tool_calls is not None
     assert finished_chunk.tool_calls[0].id == usage_chunk.tool_calls[0].id
-    assert finished_chunk.tool_calls[0].id.startswith("call_synthetic_")
+    recovered_id = finished_chunk.tool_calls[0].id
+    assert recovered_id is not None
+    assert recovered_id.startswith("call_synthetic_")
 
 
 # ---------------------------------------------------------------------------
@@ -186,10 +189,10 @@ async def test_stream_usage_only_empty_id_reuses_recovered_id() -> None:
 async def test_stream_valid_id_does_not_raise() -> None:
     """合法 id 时正常 yield chunks，不抛异常。"""
     adapter = _make_adapter("recover")
-    adapter._client.chat.completions.create = AsyncMock(return_value=_StreamWithValidId())
+    adapter.client.chat.completions.create = AsyncMock(return_value=_StreamWithValidId())
 
     request = ChatRequest(messages=[UserMessage(content="x")])
-    chunks = []
+    chunks: list[StreamingChunk] = []
     async for chunk in adapter.stream(request):
         chunks.append(chunk)
 

@@ -13,6 +13,8 @@
 """
 
 import inspect
+from collections.abc import AsyncIterator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -21,19 +23,26 @@ from domain.agent.tools import ToolExecutionResult
 from domain.agent.value_objects import AgentConfig, AgentResult
 from domain.chat.context import (
     AssistantMessage,
+    BaseMessage,
     ConversationContext,
     ToolMessage,
     UserMessage,
 )
 from domain.chat.value_objects import ContextBuilderResult
-from domain.model_access.value_objects import LLMResponse, ToolCallRequest
+from domain.model_access.ports import ModelAccessPort
+from domain.model_access.value_objects import (
+    ChatRequest,
+    LLMResponse,
+    StreamingChunk,
+    ToolCallRequest,
+)
 from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 from test.infrastructure.agent._v3_stream_helpers import install_stream_mock
 
 
 def _make_config(
     max_rounds: int = 10,
-    tool_schemas: list[dict] | None = None,
+    tool_schemas: list[dict[str, Any]] | None = None,
 ) -> AgentConfig:
     """构造测试用 AgentConfig。
 
@@ -62,11 +71,18 @@ def _make_adapter(
         tool_registry.execute = AsyncMock(return_value=ToolExecutionResult(content="tool result"))
     if context_builder is None:
         context_builder = MagicMock()
+
+        async def build(
+            messages: list[BaseMessage],
+            *,
+            model_access: ModelAccessPort | None = None,
+            model: str | None = None,
+        ) -> ContextBuilderResult:
+            del model_access, model
+            return ContextBuilderResult(messages=messages, usage={})
+
         context_builder.build = AsyncMock(
-            side_effect=lambda msgs, **kwargs: ContextBuilderResult(
-                messages=msgs,
-                usage={},
-            )
+            side_effect=build
         )
     return ReActAgentAdapter(
         tool_registry=tool_registry,
@@ -513,8 +529,6 @@ class TestCompactionUsageAccumulation:
     @pytest.mark.asyncio
     async def test_run_streaming_merges_summary_usage_on_final_chunk(self) -> None:
         """run_streaming 在最终 chunk 合并摘要 usage。"""
-        from domain.model_access.value_objects import StreamingChunk
-
         context_builder = MagicMock()
         context_builder.build = AsyncMock(
             return_value=ContextBuilderResult(
@@ -524,7 +538,7 @@ class TestCompactionUsageAccumulation:
         )
         model_access = MagicMock()
 
-        async def stream(_request):
+        async def stream(_request: ChatRequest) -> AsyncIterator[StreamingChunk]:
             yield StreamingChunk(
                 delta_content="final",
                 finished=True,
@@ -547,8 +561,6 @@ class TestCompactionUsageAccumulation:
     @pytest.mark.asyncio
     async def test_run_events_merges_summary_usage_on_done(self) -> None:
         """run_events 在 assistant_done 合并摘要 usage。"""
-        from domain.model_access.value_objects import StreamingChunk
-
         context_builder = MagicMock()
         context_builder.build = AsyncMock(
             return_value=ContextBuilderResult(
@@ -558,7 +570,7 @@ class TestCompactionUsageAccumulation:
         )
         model_access = MagicMock()
 
-        async def stream(_request):
+        async def stream(_request: ChatRequest) -> AsyncIterator[StreamingChunk]:
             yield StreamingChunk(delta_content="final", finished=False)
             yield StreamingChunk(
                 delta_content="",

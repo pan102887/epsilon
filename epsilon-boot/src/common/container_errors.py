@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from common.container_models import RegistryKey
@@ -85,7 +85,9 @@ class CircularDependencyError(ContainerError):
 class ProviderError(ContainerError):
     """Provider 执行失败时抛出。包装原始异常并附加上下文。"""
 
-    def __init__(self, abstract_type: type, provider: Callable, cause: Exception):
+    def __init__(
+        self, abstract_type: type, provider: Callable[..., Any], cause: Exception
+    ) -> None:
         self.abstract_type = abstract_type
         self.provider = provider
         self.cause = cause

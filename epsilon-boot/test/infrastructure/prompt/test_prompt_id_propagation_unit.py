@@ -19,6 +19,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -29,9 +31,11 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
 
+from domain.agent.ports import AgentPort
 from domain.agent.value_objects import AgentResult
 from domain.chat.context import ConversationContext, UserMessage
 from domain.chat.value_objects import ChatRequestVO, ContextBuilderResult
+from domain.prompt.ports import PromptRegistryPort
 from domain.prompt.value_objects import LoadedPrompt
 from domain.task.value_objects import Task
 from infrastructure.chat.chat_service_adapter import ChatServiceAdapter
@@ -53,7 +57,7 @@ _TASK_PROMPT = LoadedPrompt(
 
 
 @pytest.fixture
-def in_memory_span_exporter() -> InMemorySpanExporter:
+def in_memory_span_exporter() -> Iterator[InMemorySpanExporter]:
     """安装 InMemorySpanExporter 到全局 TracerProvider，返回 exporter 实例。
 
     OTel 全局 TracerProvider 一旦被设置就不允许再覆盖（首次设置后再
@@ -92,7 +96,11 @@ def _assert_prompt_id_in_logs_and_spans(
 
     spans = exporter.get_finished_spans()
     assert spans, "应至少捕获一条 span"
-    assert any(span.attributes.get("prompt.id") == expected_prompt_id for span in spans), (
+    assert any(
+        span.attributes is not None
+        and span.attributes.get("prompt.id") == expected_prompt_id
+        for span in spans
+    ), (
         "至少一条 span 的 prompt.id 属性应等于期望值"
     )
 
@@ -101,6 +109,7 @@ def _assert_prompt_id_in_logs_and_spans(
         "日志正文不得泄露 LoadedPrompt.content 的内容前缀"
     )
     for span in spans:
+        assert span.attributes is not None
         for attr_value in span.attributes.values():
             assert forbidden_content_prefix not in str(attr_value), (
                 "span 属性值不得泄露 LoadedPrompt.content 的内容前缀"
@@ -144,7 +153,9 @@ async def test_chat_service_adapter_propagates_prompt_id_to_logs_and_span(
         )
     )
 
-    tool_schemas = [{"type": "function", "function": {"name": "noop", "parameters": {}}}]
+    tool_schemas: list[dict[str, Any]] = [
+        {"type": "function", "function": {"name": "noop", "parameters": {}}}
+    ]
     adapter = ChatServiceAdapter(
         session_store=session_store,
         model_registry=model_registry,
@@ -177,14 +188,15 @@ async def test_chat_service_adapter_propagates_prompt_id_to_logs_and_span(
 
 
 def _build_task_adapter(
-    prompt_registry,
-    agent,
+    prompt_registry: PromptRegistryPort,
+    agent: AgentPort,
 ) -> TaskAgentAdapter:
     """构造仅供本测试模块使用的 TaskAgentAdapter 测试 dummy。"""
     tool_registry = MagicMock()
-    tool_registry.get_schemas = MagicMock(
-        return_value=[{"type": "function", "function": {"name": "noop", "parameters": {}}}]
-    )
+    tool_schemas: list[dict[str, Any]] = [
+        {"type": "function", "function": {"name": "noop", "parameters": {}}}
+    ]
+    tool_registry.get_schemas = MagicMock(return_value=tool_schemas)
 
     model_registry = MagicMock()
     model_registry.get_default_model.return_value = "test-model"

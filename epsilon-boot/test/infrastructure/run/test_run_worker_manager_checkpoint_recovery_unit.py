@@ -40,7 +40,7 @@ class _FakeWorker:
 
 
 @pytest.fixture(autouse=True)
-def _patch_run_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+def patch_run_worker(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeWorker.instances.clear()
     monkeypatch.setattr(run_worker_manager_module, "RunWorker", _FakeWorker)
 

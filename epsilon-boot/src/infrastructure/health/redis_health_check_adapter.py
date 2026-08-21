@@ -7,6 +7,7 @@
 
 import asyncio
 import logging
+from typing import Protocol, cast
 
 import redis.asyncio as aioredis
 
@@ -15,6 +16,10 @@ from domain.health.value_objects import HealthCheckResult, HealthStatus
 from infrastructure.redis.redis_config import redis_config
 
 logger = logging.getLogger(__name__)
+
+
+class _RedisPingClient(Protocol):
+    async def ping(self) -> bool: ...
 
 
 class RedisHealthCheckAdapter(HealthCheckPort):
@@ -31,7 +36,7 @@ class RedisHealthCheckAdapter(HealthCheckPort):
         Args:
             redis_client: 已初始化的 Redis 异步客户端
         """
-        self._redis = redis_client
+        self._redis = cast(_RedisPingClient, redis_client)
 
     async def check(self) -> HealthCheckResult:
         """执行 Redis PING 检查。

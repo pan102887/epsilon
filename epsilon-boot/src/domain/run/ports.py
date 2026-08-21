@@ -382,7 +382,17 @@ class RunCheckpointSinkPort(Protocol):
         ...
 
 
-class RunEventStorePort(Protocol):
+class RunEventAppenderPort(Protocol):
+    """仅需要追加 Run 事件的最小端口。"""
+
+    async def append_event(
+        self, run_id: str, event_type: RunEventType, payload: dict[str, Any]
+    ) -> RunEvent:
+        """追加单条 Run 事件并返回持久化结果。"""
+        ...
+
+
+class RunEventStorePort(RunEventAppenderPort, Protocol):
     """后台 Run 事件追加与 replay 查询端口。"""
 
     async def append_event(

@@ -72,8 +72,13 @@ def _summarize_url(url: str, *, max_len: int = _URL_SUMMARY_MAX_LEN) -> str:
     return urlunparse(parsed)[:max_len]
 
 
+def summarize_url(url: str, *, max_len: int = _URL_SUMMARY_MAX_LEN) -> str:
+    """返回可安全写入日志与 trace 的 URL 摘要。"""
+    return _summarize_url(url, max_len=max_len)
+
+
 # 兼容既有测试导入；实际阻断逻辑以 _ip_block_reason 为准。
-_PRIVATE_NETWORKS = [
+PRIVATE_NETWORKS = [
     ipaddress.ip_network("127.0.0.0/8"),
     ipaddress.ip_network("10.0.0.0/8"),
     ipaddress.ip_network("172.16.0.0/12"),
@@ -95,30 +100,30 @@ _METADATA_HOSTS: frozenset[str] = frozenset({"169.254.169.254"})
 _LOCALHOST_HOSTS: frozenset[str] = frozenset({"localhost", "localhost.localdomain"})
 
 
-def _normalise_header_name(name: object) -> str:
+def normalise_header_name(name: object) -> str:
     """规范化模型传入的 Header 名称，用于敏感 Header 判断。"""
     return str(name).strip().casefold()
 
 
-def _sensitive_header_reason(headers: Mapping[str, Any] | None) -> str | None:
+def sensitive_header_reason(headers: Mapping[str, Any] | None) -> str | None:
     """返回模型可控敏感 Header 阻断原因，未命中时返回 None。"""
     if headers is None:
         return None
 
     for header_name in headers:
-        normalised_name = _normalise_header_name(header_name)
+        normalised_name = normalise_header_name(header_name)
         if normalised_name in _SENSITIVE_HEADER_NAMES:
             return f"sensitive-header: {normalised_name}"
     return None
 
 
-def _reject_sensitive_headers(
+def reject_sensitive_headers(
     headers: Mapping[str, Any] | None,
     *,
     tool_name: str,
 ) -> None:
     """拒绝模型参数中的 Authorization/Cookie/API key 等敏感 Header。"""
-    reason = _sensitive_header_reason(headers)
+    reason = sensitive_header_reason(headers)
     if reason is not None:
         raise ToolExecutionError(
             message=f"HTTP 请求安全护栏: 模型参数不允许设置敏感 Header {reason}",
@@ -145,7 +150,7 @@ def _ip_block_reason(ip_addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> 
     return None
 
 
-def _host_block_reason(hostname: str) -> str | None:
+def host_block_reason(hostname: str) -> str | None:
     """返回 URL host 语义层面的 SSRF 阻断原因，公网候选返回 None。"""
     normalised_host = hostname.strip().rstrip(".").casefold()
     if normalised_host in _METADATA_HOSTS:
@@ -158,6 +163,11 @@ def _host_block_reason(hostname: str) -> str | None:
     except ValueError:
         return None
     return _ip_block_reason(ip_addr)
+
+
+# 保留既有安全策略标记和内部导入兼容性；公开名称供严格类型调用方使用。
+_reject_sensitive_headers = reject_sensitive_headers
+_host_block_reason = host_block_reason
 
 
 def _reject_unsafe_ip(
@@ -213,7 +223,7 @@ def validate_url_safety(url: str, *, tool_name: str = "http_request") -> None:
             tool_name=tool_name,
         )
 
-    host_reason = _host_block_reason(hostname)
+    host_reason = host_block_reason(hostname)
     if host_reason is not None:
         raise ToolExecutionError(
             message=f"SSRF 防护: 目标主机 {hostname} ({host_reason}) 不允许访问",
@@ -334,6 +344,11 @@ class HttpRequestTool(Tool):
         self._client = httpx.AsyncClient(follow_redirects=False)
 
     @property
+    def client(self) -> httpx.AsyncClient:
+        """返回工具持有的异步 HTTP 客户端。"""
+        return self._client
+
+    @property
     def name(self) -> str:
         """返回工具唯一名称。"""
         return "http_request"
@@ -429,7 +444,7 @@ class HttpRequestTool(Tool):
         timeout: int = kwargs.get("timeout", self._timeout)
 
         try:
-            _reject_sensitive_headers(headers, tool_name=self.name)
+            reject_sensitive_headers(headers, tool_name=self.name)
 
             # SSRF 安全校验
             validate_url_safety(url, tool_name=self.name)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -9,9 +10,10 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from domain.agent.segmented_execution import SegmentExecutionPolicy
-from domain.agent.value_objects import AgentResult
+from domain.agent.value_objects import AgentConfig, AgentResult
 from domain.chat.context import ConversationContext, UserMessage
 from domain.chat.value_objects import ChatRequestVO
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import ToolCallRequest
 from domain.prompt.value_objects import LoadedPrompt
 from infrastructure.chat.chat_service_adapter import ChatServiceAdapter
@@ -32,7 +34,9 @@ def _adapter(agent: MagicMock, context: ConversationContext) -> ChatServiceAdapt
         version="v1",
         content="system",
     )
-    tool_schemas = [{"type": "function", "function": {"name": "search"}}]
+    tool_schemas: list[dict[str, Any]] = [
+        {"type": "function", "function": {"name": "search"}}
+    ]
     policy = SegmentExecutionPolicy(
         auto_continue_enabled=True,
         max_continuations=5,
@@ -85,7 +89,11 @@ async def test_auto_segments_preserve_user_count_and_single_segment_round_limit(
     user_counts: list[int] = []
     max_rounds: list[int] = []
 
-    async def run(ctx, config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         segment_number = len(user_counts) + 1
         user_counts.append(sum(isinstance(message, UserMessage) for message in ctx.get_messages()))
         max_rounds.append(config.max_rounds)

@@ -52,7 +52,9 @@ def test_agent_result_can_carry_approval_required_payload() -> None:
 
     assert result.status == "approval_required"
     assert result.approval == payload
-    assert result.approval.actions == (action,)
+    result_approval = result.approval
+    assert result_approval is not None
+    assert result_approval.actions == (action,)
 
 
 def test_approval_interrupt_is_expired_boundary() -> None:

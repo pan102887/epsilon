@@ -111,7 +111,7 @@ def test_property1_specified_model_dynamic_routing(model_name: str) -> None:
     adapter = _make_adapter_with_registry(model_registry)
 
     # 执行
-    result_adapter, result_model = adapter._resolve_model_access(model_name)
+    result_adapter, result_model = adapter.resolve_model_access(model_name)
 
     # 验证
     # 1. get_adapter_for_model 被调用且传入完全相同的模型名称
@@ -157,7 +157,7 @@ def test_property2_fallback_to_default_model_when_none(default_model_name: str) 
     adapter = _make_adapter_with_registry(model_registry)
 
     # 执行
-    result_adapter, result_model = adapter._resolve_model_access(None)
+    result_adapter, result_model = adapter.resolve_model_access(None)
 
     # 验证
     # 1. get_default_model() 被调用
@@ -205,7 +205,7 @@ def test_property3_unregistered_model_error_propagation(model_name: str) -> None
     # 执行并验证异常传播
     raised = False
     try:
-        adapter._resolve_model_access(model_name)
+        adapter.resolve_model_access(model_name)
     except ModelAccessError as e:
         raised = True
         # 验证传播的是同一个异常实例（未被包装）

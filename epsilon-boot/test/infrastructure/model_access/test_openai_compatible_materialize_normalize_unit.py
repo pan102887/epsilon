@@ -30,7 +30,7 @@ def test_empty_id_recovered_when_slot_complete() -> None:
     acc = {
         0: {"id": "", "name": "web_search", "arguments": '{"q":"hi"}'},
     }
-    result, recovery = adapter._materialize_full_tool_calls(
+    result, recovery = adapter.materialize_full_tool_calls(
         acc,
         {"model": "m"},
         request_nonce="abc123",
@@ -52,7 +52,7 @@ def test_empty_arguments_normalized_to_none() -> None:
     acc = {
         0: {"id": "", "name": "web_search", "arguments": ""},
     }
-    result, recovery = adapter._materialize_full_tool_calls(
+    result, recovery = adapter.materialize_full_tool_calls(
         acc,
         {"model": "m"},
         request_nonce="abc123",
@@ -69,7 +69,7 @@ def test_empty_name_normalized_to_none() -> None:
     acc = {
         0: {"id": "", "name": "", "arguments": '{"q":"hi"}'},
     }
-    result, recovery = adapter._materialize_full_tool_calls(
+    result, recovery = adapter.materialize_full_tool_calls(
         acc,
         {"model": "m"},
         request_nonce="abc123",
@@ -86,7 +86,7 @@ def test_legal_slot_passes_through() -> None:
     acc = {
         0: {"id": "call_x", "name": "web_search", "arguments": '{"q":"hi"}'},
     }
-    result, recovery = adapter._materialize_full_tool_calls(
+    result, recovery = adapter.materialize_full_tool_calls(
         acc,
         {"model": "m"},
         request_nonce="abc123",
@@ -102,7 +102,7 @@ def test_legal_slot_passes_through() -> None:
 def test_empty_acc_returns_none() -> None:
     """空 acc → (None, empty recovery)。"""
     adapter = _make_adapter("recover")
-    result, recovery = adapter._materialize_full_tool_calls(
+    result, recovery = adapter.materialize_full_tool_calls(
         {},
         {"model": "m"},
         request_nonce="abc123",

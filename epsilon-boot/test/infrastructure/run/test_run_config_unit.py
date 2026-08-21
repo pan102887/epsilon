@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any, cast
+
 import pytest
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 from common.configuration import ConfigurationError, PropertiesFileSettingsSource
 from infrastructure.run.run_config import RunRuntimeConfig
@@ -35,7 +39,7 @@ class TestRunRuntimeConfig:
         assert retention_policy.max_event_count == 1000
         assert retention_policy.ttl_seconds == 86400
 
-    def test_loads_values_from_config_properties(self, tmp_path) -> None:
+    def test_loads_values_from_config_properties(self, tmp_path: Path) -> None:
         """临时 ``config.properties`` 中的 ``RUN_*`` 键应覆盖默认值。"""
         props_file = tmp_path / "config.properties"
         props_file.write_text(
@@ -62,13 +66,13 @@ class TestRunRuntimeConfig:
 
             @classmethod
             def settings_customise_sources(
-                cls,
-                settings_cls,
-                init_settings,
-                env_settings,
-                dotenv_settings,
-                file_secret_settings,
-            ):
+                cls: type[BaseSettings],
+                settings_cls: type[BaseSettings],
+                init_settings: PydanticBaseSettingsSource,
+                env_settings: PydanticBaseSettingsSource,
+                dotenv_settings: PydanticBaseSettingsSource,
+                file_secret_settings: PydanticBaseSettingsSource,
+            ) -> tuple[PydanticBaseSettingsSource, ...]:
                 """仅从测试提供的 ``config.properties`` 加载配置。"""
                 return (
                     PropertiesFileSettingsSource(
@@ -91,7 +95,9 @@ class TestRunRuntimeConfig:
         assert config.lost_sweep_interval_seconds == 45
         assert config.guardrail_runtime_convergence_enabled is False
 
-    def test_environment_variables_override_config_properties(self, tmp_path, monkeypatch) -> None:
+    def test_environment_variables_override_config_properties(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """环境变量应仅作为 config.properties 的覆盖来源。"""
         props_file = tmp_path / "config.properties"
         props_file.write_text(
@@ -104,13 +110,13 @@ class TestRunRuntimeConfig:
 
             @classmethod
             def settings_customise_sources(
-                cls,
-                settings_cls,
-                init_settings,
-                env_settings,
-                dotenv_settings,
-                file_secret_settings,
-            ):
+                cls: type[BaseSettings],
+                settings_cls: type[BaseSettings],
+                init_settings: PydanticBaseSettingsSource,
+                env_settings: PydanticBaseSettingsSource,
+                dotenv_settings: PydanticBaseSettingsSource,
+                file_secret_settings: PydanticBaseSettingsSource,
+            ) -> tuple[PydanticBaseSettingsSource, ...]:
                 """保持环境变量覆盖 properties 的项目默认优先级。"""
                 return (
                     init_settings,
@@ -159,8 +165,9 @@ class TestRunRuntimeConfig:
         config_key: str,
     ) -> None:
         """所有数值配置必须为正数。"""
+        invalid_values = cast(dict[str, Any], {field_name: value})
         with pytest.raises(ConfigurationError, match=config_key):
-            RunRuntimeConfig(**{field_name: value})
+            RunRuntimeConfig(**invalid_values)
 
     @pytest.mark.parametrize(
         ("heartbeat_interval_seconds", "lease_seconds"),

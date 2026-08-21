@@ -18,7 +18,7 @@
 
 from __future__ import annotations
 
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -54,7 +54,11 @@ def _fake_workspace(
         supports_large_files=True,
         local_materialization=local_materialization,
     )
-    ws.resolve_path.side_effect = lambda s: _ws_path(s if s.startswith("/") else f"/{s}")
+
+    def resolve_path(value: str) -> WorkspacePath:
+        return _ws_path(value if value.startswith("/") else f"/{value}")
+
+    ws.resolve_path.side_effect = resolve_path
     ws.materialize_cwd = MagicMock(return_value=materialize_return)
     return ws
 
@@ -94,7 +98,7 @@ async def test_rejects_when_local_materialization_false() -> None:
 
 
 @pytest.mark.asyncio
-async def test_subprocess_cwd_equals_materialize_cwd_of_root(tmp_path) -> None:
+async def test_subprocess_cwd_equals_materialize_cwd_of_root(tmp_path: Path) -> None:
     """子进程 ``cwd`` 严格等于 ``workspace.materialize_cwd(resolve_path("/"))``。"""
     ws = _fake_workspace(materialize_return=str(tmp_path))
     tool = PythonExecTool(workspace=ws)
@@ -119,7 +123,7 @@ async def test_subprocess_cwd_equals_materialize_cwd_of_root(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_returns_execution_result_with_metadata(tmp_path) -> None:
+async def test_execute_returns_execution_result_with_metadata(tmp_path: Path) -> None:
     """execute() 返回 ToolExecutionResult，metadata 字段名与类型对齐 design §3.3。"""
     ws = _fake_workspace(materialize_return=str(tmp_path))
     tool = PythonExecTool(workspace=ws)
@@ -165,7 +169,9 @@ async def test_execute_returns_execution_result_with_metadata(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_metadata_truncated_true_when_output_exceeds_limit(tmp_path) -> None:
+async def test_execute_metadata_truncated_true_when_output_exceeds_limit(
+    tmp_path: Path,
+) -> None:
     """输出超过 max_output_size 时 metadata.truncated 为 True。"""
     ws = _fake_workspace(materialize_return=str(tmp_path))
     tool = PythonExecTool(workspace=ws, max_output_size=8)

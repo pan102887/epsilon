@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from application.run.serialization_ports import GuardrailSerializerPort
 from domain.agent.guardrails import mark_guardrail_summary_stale
@@ -11,6 +11,7 @@ from domain.chat.context import ConversationContext
 from domain.run.ports import RunCheckpointStorePort, RunEventStorePort, RunStorePort
 from domain.run.value_objects import (
     CheckpointRetentionPolicy,
+    DurableCheckpoint,
     RecoveryDecision,
     RunEventType,
     RunSnapshot,
@@ -162,7 +163,7 @@ class RunRecoveryService:
 
 def _recovery_guardrail_summary(
     snapshot: RunSnapshot,
-    checkpoint: Any,
+    checkpoint: DurableCheckpoint | None,
     guardrail_serializer: GuardrailSerializerPort,
 ) -> dict[str, Any] | None:
     """返回恢复入队时应保留或保守标记的 guardrail 摘要。
@@ -204,46 +205,48 @@ def _recovery_guardrail_summary(
     )
 
 
-def _checkpoint_guardrail_summary(checkpoint: Any) -> dict[str, Any] | None:
+def _checkpoint_guardrail_summary(
+    checkpoint: DurableCheckpoint | None,
+) -> dict[str, Any] | None:
     """从 checkpoint segment metadata 读取已持久化 guardrail 摘要。"""
 
     metadata = checkpoint.segment_metadata if checkpoint is not None else {}
-    metadata = metadata if isinstance(metadata, dict) else {}
     candidate = metadata.get("guardrail_summary")
-    return candidate if isinstance(candidate, dict) else None
+    return cast(dict[str, Any], candidate) if isinstance(candidate, dict) else None
 
 
 def _recovery_workflow_fields(
     snapshot: RunSnapshot,
-    checkpoint: Any,
+    checkpoint: DurableCheckpoint | None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """返回恢复入队时应持久化的 workflow/collaboration 字段。"""
 
     metadata = checkpoint.segment_metadata if checkpoint is not None else {}
-    metadata = metadata if isinstance(metadata, dict) else {}
     workflow_run_state = snapshot.workflow_run_state
     if workflow_run_state is None:
         candidate = metadata.get("workflow_run_state")
-        workflow_run_state = candidate if isinstance(candidate, dict) else None
+        workflow_run_state = (
+            cast(dict[str, Any], candidate) if isinstance(candidate, dict) else None
+        )
 
     collaboration_summary = snapshot.collaboration_summary
     if collaboration_summary is None:
         candidate = metadata.get("collaboration_summary")
-        collaboration_summary = candidate if isinstance(candidate, dict) else None
+        collaboration_summary = (
+            cast(dict[str, Any], candidate) if isinstance(candidate, dict) else None
+        )
     return workflow_run_state, collaboration_summary
 
 
 def _workflow_state_error(
     snapshot: RunSnapshot,
-    checkpoint: Any,
+    checkpoint: DurableCheckpoint | None,
 ) -> str | None:
     """校验可恢复 workflow state；无 workflow state 时不阻断恢复。"""
 
     workflow_run_state, _ = _recovery_workflow_fields(snapshot, checkpoint)
     if workflow_run_state is None:
         return None
-    if not isinstance(workflow_run_state, dict):
-        return "workflow_run_state_not_object"
     raw_phase = workflow_run_state.get("current_phase")
     if raw_phase is None:
         return None
@@ -253,6 +256,7 @@ def _workflow_state_error(
         return "workflow_phase_invalid"
     child_state = workflow_run_state.get("child_run_state")
     if isinstance(child_state, dict):
+        child_state = cast(dict[str, Any], child_state)
         ownership = child_state.get("ownership_status")
         reconciliation = child_state.get("reconciliation_status")
         if ownership == "parent_waiting_child" and reconciliation != "reconciled":

@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -25,9 +25,15 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from domain.agent.tools import ToolExecutionResult
 from domain.agent.value_objects import AgentConfig
-from domain.chat.context import ConversationContext
+from domain.chat.context import BaseMessage, ConversationContext
 from domain.chat.value_objects import ContextBuilderResult
-from domain.model_access.value_objects import LLMResponse, ToolCallRequest
+from domain.model_access.ports import ModelAccessPort
+from domain.model_access.value_objects import (
+    ChatRequest,
+    LLMResponse,
+    StreamingChunk,
+    ToolCallRequest,
+)
 from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 from test.infrastructure.agent._v3_stream_helpers import install_stream_mock
 
@@ -72,21 +78,28 @@ def _make_config(max_rounds: int = 3) -> AgentConfig:
     )
 
 
+class _FakeContextBuilder:
+    """原样返回消息的测试上下文构建器。"""
+
+    async def build(
+        self,
+        messages: list[BaseMessage],
+        *,
+        model_access: ModelAccessPort | None = None,
+        model: str | None = None,
+    ) -> ContextBuilderResult:
+        del model_access, model
+        return ContextBuilderResult(messages=messages, usage={})
+
+
 def _make_adapter(tool_result: str = "tool ok") -> ReActAgentAdapter:
     tool_registry = MagicMock()
     tool_registry.execute = AsyncMock(return_value=ToolExecutionResult(content=tool_result))
     tool_registry.get = MagicMock(return_value=None)
 
-    context_builder = MagicMock()
-    context_builder.build = AsyncMock(
-        side_effect=lambda msgs, **kwargs: ContextBuilderResult(
-            messages=msgs,
-            usage={},
-        )
-    )
     return ReActAgentAdapter(
         tool_registry=tool_registry,
-        context_builder=context_builder,
+        context_builder=_FakeContextBuilder(),
     )
 
 
@@ -100,7 +113,9 @@ def _spans_by_name(exporter: InMemorySpanExporter, name: str) -> list[ReadableSp
 
 
 @pytest.mark.asyncio
-async def test_each_round_produces_react_agent_round_span(in_memory_exporter) -> None:
+async def test_each_round_produces_react_agent_round_span(
+    in_memory_exporter: InMemorySpanExporter,
+) -> None:
     """单轮 text 路径 → 1 个 react_agent.round span，attributes 完整（R2.2/R2.3）。"""
     adapter = _make_adapter()
     config = _make_config()
@@ -136,7 +151,9 @@ async def test_each_round_produces_react_agent_round_span(in_memory_exporter) ->
 
 
 @pytest.mark.asyncio
-async def test_two_rounds_produce_two_round_spans(in_memory_exporter) -> None:
+async def test_two_rounds_produce_two_round_spans(
+    in_memory_exporter: InMemorySpanExporter,
+) -> None:
     """两轮（tool_calls + text）→ 2 个 react_agent.round span。"""
     adapter = _make_adapter()
     config = _make_config(max_rounds=3)
@@ -179,7 +196,9 @@ async def test_two_rounds_produce_two_round_spans(in_memory_exporter) -> None:
 
 
 @pytest.mark.asyncio
-async def test_max_rounds_terminated_emits_terminated_span(in_memory_exporter) -> None:
+async def test_max_rounds_terminated_emits_terminated_span(
+    in_memory_exporter: InMemorySpanExporter,
+) -> None:
     """``max_rounds`` 命中 → ``react_agent.terminated`` span 含 terminated_reason=max_rounds。"""
     adapter = _make_adapter()
     config = _make_config(max_rounds=2)
@@ -215,7 +234,9 @@ async def test_max_rounds_terminated_emits_terminated_span(in_memory_exporter) -
 
 
 @pytest.mark.asyncio
-async def test_model_exception_marks_span_error(in_memory_exporter) -> None:
+async def test_model_exception_marks_span_error(
+    in_memory_exporter: InMemorySpanExporter,
+) -> None:
     """模型 stream 抛异常 → round span 状态 ERROR + record_exception（R2.4）。"""
     adapter = _make_adapter()
     config = _make_config()
@@ -224,9 +245,10 @@ async def test_model_exception_marks_span_error(in_memory_exporter) -> None:
 
     model_access = MagicMock()
 
-    async def _broken_stream(req):
+    async def _broken_stream(req: ChatRequest) -> AsyncIterator[StreamingChunk]:
+        del req
         if False:
-            yield None  # 让函数成为 async generator
+            yield StreamingChunk()  # 让函数成为 async generator
         raise RuntimeError("api failure")
 
     model_access.stream = _broken_stream
@@ -244,11 +266,15 @@ async def test_model_exception_marks_span_error(in_memory_exporter) -> None:
     # 至少一个 exception event 被记录
     exception_events = [e for e in span.events if e.name == "exception"]
     assert exception_events
-    assert "api failure" in str(exception_events[0].attributes.get("exception.message", ""))
+    exception_attributes = exception_events[0].attributes
+    assert exception_attributes is not None
+    assert "api failure" in str(exception_attributes.get("exception.message", ""))
 
 
 @pytest.mark.asyncio
-async def test_round_span_nests_under_parent_span(in_memory_exporter) -> None:
+async def test_round_span_nests_under_parent_span(
+    in_memory_exporter: InMemorySpanExporter,
+) -> None:
     """caller 自创父 span 后，``react_agent.round`` 作为 child span 嵌套。"""
     import infrastructure.agent.react_agent_adapter as react_mod
 
@@ -287,7 +313,9 @@ async def test_round_span_nests_under_parent_span(in_memory_exporter) -> None:
 
 
 @pytest.mark.asyncio
-async def test_otel_disabled_does_not_break_run(in_memory_exporter) -> None:
+async def test_otel_disabled_does_not_break_run(
+    in_memory_exporter: InMemorySpanExporter,
+) -> None:
     """R2.5：即使采集器为 NoOp（exporter 拿不到 span），``run`` 仍正常返回。
 
     具体形态：本测试让 react_mod.tracer 临时降级为 NoOpTracer，验证 run 路径

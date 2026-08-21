@@ -32,7 +32,7 @@ from domain.agent.value_objects import (
     HandoffResult,
 )
 from domain.chat.context import BaseMessage, ConversationContext
-from domain.run.ports import RunEventStorePort
+from domain.run.ports import RunEventAppenderPort
 from domain.run.workflow import WorkflowCapabilityAction
 from domain.task.policy import DelegationDepthPolicy
 from domain.task.value_objects import Task, TaskStatus
@@ -82,7 +82,7 @@ class DelegationAdapter:
         agent_provider: Callable[[], Awaitable[AgentPort]] | None = None,
         tool_registry_provider: Callable[[], Awaitable[ToolRegistry]] | None = None,
         handoff_max_rounds: int = _DEFAULT_HANDOFF_MAX_ROUNDS,
-        event_store: RunEventStorePort | None = None,
+        event_store: RunEventAppenderPort | None = None,
     ) -> None:
         """初始化委派适配器。
 

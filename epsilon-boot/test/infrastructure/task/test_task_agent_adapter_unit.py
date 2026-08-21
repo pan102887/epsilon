@@ -10,20 +10,25 @@
 - build_system_prompt 全字段场景
 """
 
+import inspect
 import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from domain.agent.value_objects import AgentResult
-from domain.chat.context import AssistantMessage, ConversationContext, ToolMessage
+from domain.agent.value_objects import AgentConfig, AgentResult
+from domain.chat.context import AssistantMessage, BaseMessage, ConversationContext, ToolMessage
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import ToolCallRequest
 from domain.prompt.value_objects import LoadedPrompt
 from domain.task.value_objects import Task, TaskStatus
 from infrastructure.task.task_agent_adapter import TaskAgentAdapter
 
 
-def _create_adapter(agent_result=None, agent_exception=None):
+def _create_adapter(
+    agent_result: AgentResult | None = None,
+    agent_exception: Exception | None = None,
+) -> tuple[TaskAgentAdapter, AsyncMock, AsyncMock]:
     """创建带有 mock 依赖的 TaskAgentAdapter 实例。
 
     Args:
@@ -86,9 +91,7 @@ class TestTaskAgentAdapter:
         assert hasattr(adapter, "execute"), "TaskAgentAdapter 应具有 execute 方法"
         assert callable(adapter.execute), "execute 应为可调用对象"
         # 验证 execute 是协程函数（async def）
-        import asyncio
-
-        assert asyncio.iscoroutinefunction(adapter.execute), "execute 应为异步方法"
+        assert inspect.iscoroutinefunction(adapter.execute), "execute 应为异步方法"
 
     @pytest.mark.asyncio
     async def test_execute_without_session_id_success(self) -> None:
@@ -144,7 +147,7 @@ class TestTaskAgentAdapter:
         验证提取的 TraceEntry 列表中 action 类型和 step 编号正确。
         """
         adapter, _, _ = _create_adapter()
-        messages = [
+        messages: list[BaseMessage] = [
             AssistantMessage(
                 content="",
                 tool_calls=[
@@ -154,7 +157,7 @@ class TestTaskAgentAdapter:
             ToolMessage(content="文件内容", tool_name="read_file", tool_call_id="call_1"),
         ]
 
-        trace = adapter._extract_trace(messages, start_index=0)
+        trace = adapter.extract_trace(messages, start_index=0)
 
         assert len(trace) == 2
         assert trace[0].step == 1
@@ -198,7 +201,9 @@ class TestTaskAgentAdapter:
         assert system_msgs[0].content == "分析数据"
 
     @pytest.mark.asyncio
-    async def test_system_message_mismatch_logs_info_no_append(self, caplog) -> None:
+    async def test_system_message_mismatch_logs_info_no_append(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """验证既有 SystemMessage 与本次内容不一致时仅产生 info 日志、不追加。"""
         import logging
 
@@ -240,7 +245,7 @@ class TestTaskAgentAdapter:
         一致，不取 ``time.time()`` 的提取时刻。
         """
         adapter, _, _ = _create_adapter()
-        messages = [
+        messages: list[BaseMessage] = [
             AssistantMessage(
                 content="",
                 tool_calls=[
@@ -251,7 +256,7 @@ class TestTaskAgentAdapter:
         ]
         event_timestamps = {0: 1_000_000, 1: 1_000_500}
 
-        trace = adapter._extract_trace(
+        trace = adapter.extract_trace(
             messages,
             start_index=0,
             event_timestamps=event_timestamps,
@@ -269,18 +274,18 @@ class TestTaskAgentAdapter:
         非零整数。
         """
         adapter, _, _ = _create_adapter()
-        messages = [
+        messages: list[BaseMessage] = [
             ToolMessage(content="结果", tool_name="t", tool_call_id="id"),
         ]
 
-        trace = adapter._extract_trace(messages, start_index=0, event_timestamps={})
+        trace = adapter.extract_trace(messages, start_index=0, event_timestamps={})
 
         assert len(trace) == 1
         assert isinstance(trace[0].timestamp_ms, int)
         assert trace[0].timestamp_ms > 0
 
     @pytest.mark.asyncio
-    async def test_execute_reads_event_timestamps_via_promoted_field(self, monkeypatch) -> None:
+    async def test_execute_reads_event_timestamps_via_promoted_field(self) -> None:
         """验证 execute() 通过 ``context.event_timestamps`` 正式字段读取事件时刻。
 
         v2 把 ``event_timestamps`` 升级为 ConversationContext 的正式字段后,
@@ -299,7 +304,12 @@ class TestTaskAgentAdapter:
         # 注入一个 context, 在 agent.run() 内追加一条 ToolMessage 并直接写入正式字段
         injected_ctx = ConversationContext()
 
-        async def _fake_run(context, _config, _model_access):
+        async def _fake_run(
+            context: ConversationContext,
+            config: AgentConfig,
+            model_access: ModelAccessPort,
+        ) -> AgentResult:
+            del config, model_access
             context.add_assistant_message_with_tool_calls(
                 content="",
                 tool_calls=[

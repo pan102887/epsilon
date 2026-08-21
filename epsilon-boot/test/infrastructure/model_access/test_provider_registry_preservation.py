@@ -11,7 +11,7 @@
 **Validates: Requirements 3.1, 3.2, 3.3, 3.4, 3.5, 3.6**
 """
 
-import itertools
+from typing import cast
 from unittest.mock import Mock
 
 import pytest
@@ -19,7 +19,8 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from domain.model_access.exceptions import ModelAccessError, NoAvailableModelError
-from infrastructure.model_access.provider_registry import ProviderRegistry, _ProviderRecord
+from domain.model_access.ports import ModelAccessPort
+from infrastructure.model_access.provider_registry import ProviderRegistry
 
 # ---------------------------------------------------------------------------
 # Hypothesis 策略
@@ -77,26 +78,15 @@ def _populate_registry(
     Returns:
         已填充状态的 ProviderRegistry 实例。
     """
-    registry = ProviderRegistry(default_model=default_model)
+    all_models = sorted(
+        {model_name for _, model_names in registrations for model_name in model_names}
+    )
+    effective_default = default_model or (all_models[0] if all_models else "")
+    registry = ProviderRegistry(default_model=effective_default)
 
     for provider_name, model_names in registrations:
-        adapter = Mock()
-        record = _ProviderRecord(name=provider_name, adapter=adapter, models=set(model_names))
-        registry._providers[provider_name] = record
-
-        for model_name in model_names:
-            if model_name not in registry._model_providers:
-                registry._model_providers[model_name] = set()
-            registry._model_providers[model_name].add(provider_name)
-
-    # 为所有模型构建 Round-Robin 迭代器
-    for model_name in registry._model_providers:
-        providers_sorted = sorted(registry._model_providers[model_name])
-        registry._model_rr[model_name] = itertools.cycle(providers_sorted)
-
-    # 设置默认模型：如果未指定，使用首个注册的模型（按字母序）
-    if not default_model and registry._model_providers:
-        registry._default_model = sorted(registry._model_providers.keys())[0]
+        adapter = cast(ModelAccessPort, Mock(name=provider_name))
+        registry.register_provider(provider_name, adapter, sorted(model_names))
 
     return registry
 
@@ -195,13 +185,16 @@ class TestRoundRobinPreservation:
             n = len(sorted_providers)
 
             # 调用 N 次，收集返回的适配器
-            returned_adapters = []
+            returned_adapters: list[ModelAccessPort] = []
             for _ in range(n):
                 adapter = registry.get_adapter_for_model(model_name)
                 returned_adapters.append(adapter)
 
             # 将返回的适配器映射回提供商名称
-            adapter_to_provider = {registry._providers[p].adapter: p for p in sorted_providers}
+            adapter_to_provider = {
+                registry.get_provider_adapter(provider): provider
+                for provider in sorted_providers
+            }
             returned_provider_names = [adapter_to_provider[a] for a in returned_adapters]
 
             # 验证 Round-Robin：N 次调用应恰好覆盖所有 N 个提供商
@@ -262,9 +255,6 @@ class TestGetDefaultModelPreservation:
     ) -> None:
         """显式配置默认模型时，返回该配置值。"""
         registry = _populate_registry(registrations, default_model=default_model)
-
-        # 强制设置 default_model（覆盖 _populate_registry 的自动选择）
-        registry._default_model = default_model
 
         result = registry.get_default_model()
         assert result == default_model, f"期望默认模型为 {default_model!r}，实际 {result!r}"

@@ -28,7 +28,7 @@ from infrastructure.agent.workflow_collaboration_recorder import (
 
 if TYPE_CHECKING:
     from domain.agent.ports import AgentRegistryPort, DelegationPort
-    from domain.run.ports import RunEventStorePort
+from domain.run.ports import RunEventAppenderPort
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ class DelegateToAgentTool(Tool):
         delegation: DelegationPort,
         current_delegation_depth: int = 0,
         max_delegation_depth: int = 3,
-        event_store: RunEventStorePort | None = None,
+        event_store: RunEventAppenderPort | None = None,
         recent_collaboration_summary_limit: int = 5,
     ) -> None:
         """初始化委派工具。
@@ -71,6 +71,10 @@ class DelegateToAgentTool(Tool):
         self._event_store = event_store
         self._recent_collaboration_summary_limit = recent_collaboration_summary_limit
         self._collaboration_summary: dict[str, Any] = {}
+
+    @property
+    def max_delegation_depth(self) -> int:
+        return self._max_delegation_depth
 
     @property
     def name(self) -> str:

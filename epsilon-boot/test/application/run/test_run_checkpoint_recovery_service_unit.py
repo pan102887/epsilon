@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from application.run.run_checkpoint_recovery_service import RunRecoveryService
 from domain.agent.guardrails import GuardrailAction, GuardrailMode
 from domain.chat.context import ConversationContext
+from domain.run.ports import RunCheckpointStorePort, RunEventStorePort, RunStorePort
 from domain.run.value_objects import (
     CheckpointPhase,
     CheckpointRetentionPolicy,
@@ -60,24 +62,22 @@ class _MemoryRunStore:
             }
         )
         snapshot = self.snapshots[0]
-        return RunSnapshot(
-            **{
-                **snapshot.__dict__,
-                "status": RunStatus.QUEUED,
-                "latest_checkpoint_id": latest_checkpoint_id,
-                "recoverable": True,
-                "recovery_attempt_count": recovery_attempt_count,
-                "guardrail_summary": guardrail_summary
-                if guardrail_summary is not None
-                else snapshot.guardrail_summary,
-                "workflow_run_state": workflow_run_state
-                if workflow_run_state is not None
-                else snapshot.workflow_run_state,
-                "collaboration_summary": collaboration_summary
-                if collaboration_summary is not None
-                else snapshot.collaboration_summary,
-                "updated_at": _NOW,
-            }
+        return replace(
+            snapshot,
+            status=RunStatus.QUEUED,
+            latest_checkpoint_id=latest_checkpoint_id,
+            recoverable=True,
+            recovery_attempt_count=recovery_attempt_count,
+            guardrail_summary=guardrail_summary
+            if guardrail_summary is not None
+            else snapshot.guardrail_summary,
+            workflow_run_state=workflow_run_state
+            if workflow_run_state is not None
+            else snapshot.workflow_run_state,
+            collaboration_summary=collaboration_summary
+            if collaboration_summary is not None
+            else snapshot.collaboration_summary,
+            updated_at=_NOW,
         )
 
     async def mark_lost_expired_run(
@@ -89,14 +89,12 @@ class _MemoryRunStore:
     ) -> RunSnapshot:
         self.lost.append((run_id, reason, recovery_error))
         snapshot = self.snapshots[0]
-        return RunSnapshot(
-            **{
-                **snapshot.__dict__,
-                "status": RunStatus.LOST,
-                "recoverable": False,
-                "last_recovery_error": recovery_error or {"reason": reason},
-                "updated_at": _NOW,
-            }
+        return replace(
+            snapshot,
+            status=RunStatus.LOST,
+            recoverable=False,
+            last_recovery_error=recovery_error or {"reason": reason},
+            updated_at=_NOW,
         )
 
 
@@ -221,9 +219,9 @@ def _service(
     auto_recovery_enabled: bool = True,
 ) -> RunRecoveryService:
     return RunRecoveryService(
-        run_store=run_store,
-        checkpoint_store=checkpoint_store,
-        event_store=event_store,
+        run_store=cast(RunStorePort, run_store),
+        checkpoint_store=cast(RunCheckpointStorePort, checkpoint_store),
+        event_store=cast(RunEventStorePort, event_store),
         retention_policy=_policy(),
         max_recovery_attempts=max_recovery_attempts,
         auto_recovery_enabled=auto_recovery_enabled,
@@ -407,6 +405,7 @@ async def test_recovery_reuses_checkpoint_guardrail_summary_without_recounting_u
 
     assert run_store.enqueued[0]["guardrail_summary"] == checkpoint_summary
     assert snapshots[0].guardrail_summary == checkpoint_summary
+    assert snapshots[0].guardrail_summary is not None
     assert snapshots[0].guardrail_summary["runtime_stats"] == {
         "total_tokens": 30,
         "prompt_tokens": 20,

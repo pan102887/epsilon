@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from application.run.run_execution_coordinator import RunExecutionCoordinator
 from domain.agent.exceptions import HandoffPerformed
+from domain.agent.ports import AgentRegistryPort, DelegationPort
 from domain.agent.value_objects import HandoffResult
-from domain.chat.context import ConversationContext
+from domain.chat.context import BaseMessage, ConversationContext
+from domain.chat.ports import ChatServicePort
 from domain.chat.value_objects import ChatResponseVO
+from domain.run.ports import RunEventStorePort, RunStorePort, WorkflowRegistryPort
 from domain.run.value_objects import (
     RunEvent,
     RunEventType,
@@ -29,6 +33,7 @@ from domain.run.workflow import (
     WorkflowPhase,
     WorkflowPhaseDefinition,
 )
+from domain.task.ports import TaskAgentPort
 from infrastructure.agent.handoff_context import reset_parent_context, set_parent_context
 from infrastructure.agent.handoff_to_agent_tool import HandoffToAgentTool
 from infrastructure.run.run_serialization_adapters import SegmentSerializerAdapter
@@ -103,15 +108,14 @@ class _Delegation:
     async def handoff(
         self,
         agent_name: str,
-        messages: list[Any],
-        *,
-        delegation_depth: int,
-        max_delegation_depth: int,
+        context_messages: list[BaseMessage],
+        delegation_depth: int = 0,
+        max_delegation_depth: int = 3,
     ) -> HandoffResult:
         """记录目标 Agent 并返回成功 handoff 结果。"""
 
         self.handoff_calls.append(agent_name)
-        assert messages
+        assert context_messages
         assert delegation_depth == 1
         assert max_delegation_depth >= 1
         return HandoffResult(
@@ -131,9 +135,9 @@ class _ChatService:
 
         self.delegation = _Delegation()
         self.tool = HandoffToAgentTool(
-            _AgentRegistry(),
-            self.delegation,
-            event_store=event_store,
+            cast(AgentRegistryPort, _AgentRegistry()),
+            cast(DelegationPort, self.delegation),
+            event_store=cast(RunEventStorePort, event_store),
             recent_collaboration_summary_limit=5,
         )
 
@@ -205,6 +209,7 @@ class _RunStore:
         """刷新租约；本测试通常不会触发。"""
 
         assert run_id == self.snapshot.run_id
+        assert self.snapshot.lease is not None
         assert owner_id == self.snapshot.lease.owner_id
         self.snapshot = self._replace_snapshot(
             lease=RunLease(
@@ -228,6 +233,7 @@ class _RunStore:
         """保存成功终态及 workflow/collaboration 摘要。"""
 
         assert run_id == self.snapshot.run_id
+        assert self.snapshot.lease is not None
         assert owner_id == self.snapshot.lease.owner_id
         self.snapshot = self._replace_snapshot(
             status=RunStatus.SUCCEEDED,
@@ -263,9 +269,7 @@ class _RunStore:
     def _replace_snapshot(self, **changes: Any) -> RunSnapshot:
         """使用 dataclass 字段字典构造更新后的快照。"""
 
-        return RunSnapshot(
-            **{**self.snapshot.__dict__, **changes, "version": self.snapshot.version + 1}
-        )
+        return replace(self.snapshot, **changes, version=self.snapshot.version + 1)
 
 
 async def test_successful_handoff_to_agent_persists_workflow_state_and_event() -> None:
@@ -274,16 +278,16 @@ async def test_successful_handoff_to_agent_persists_workflow_state_and_event() -
     events = _EventStore()
     workflow = _workflow()
     coordinator = RunExecutionCoordinator(
-        chat_service=_ChatService(event_store=events),
-        task_agent=_TaskAgent(),
+        chat_service=cast(ChatServicePort, _ChatService(event_store=events)),
+        task_agent=cast(TaskAgentPort, _TaskAgent()),
         segment_serializer=SegmentSerializerAdapter(),
-        event_store=events,
-        workflow_registry=_Registry(workflow),
+        event_store=cast(RunEventStorePort, events),
+        workflow_registry=cast(WorkflowRegistryPort, _Registry(workflow)),
     )
     run_store = _RunStore(_snapshot(workflow_state=_state(active_role="executor")))
     worker = RunWorker(
-        run_store=run_store,
-        event_store=events,
+        run_store=cast(RunStorePort, run_store),
+        event_store=cast(RunEventStorePort, events),
         executor=coordinator,
         lease_seconds=30,
         heartbeat_interval_seconds=60,
@@ -315,6 +319,7 @@ async def test_successful_handoff_to_agent_persists_workflow_state_and_event() -
     assert payload["target_agent"] == "review_agent"
     assert payload["reason"] == "handoff_to_agent"
     assert payload["workflow_run_state"]["handoff_state"] == persisted_state["handoff_state"]
+    assert run_store.persisted.result is not None
     assert run_store.persisted.result["reply"] == "reviewer took control"
 
 
@@ -323,16 +328,16 @@ async def test_successful_handoff_without_workflow_context_does_not_record_workf
 
     events = _EventStore()
     coordinator = RunExecutionCoordinator(
-        chat_service=_ChatService(event_store=events),
-        task_agent=_TaskAgent(),
+        chat_service=cast(ChatServicePort, _ChatService(event_store=events)),
+        task_agent=cast(TaskAgentPort, _TaskAgent()),
         segment_serializer=SegmentSerializerAdapter(),
-        event_store=events,
+        event_store=cast(RunEventStorePort, events),
         workflow_registry=None,
     )
     run_store = _RunStore(_snapshot(workflow_state=None))
     worker = RunWorker(
-        run_store=run_store,
-        event_store=events,
+        run_store=cast(RunStorePort, run_store),
+        event_store=cast(RunEventStorePort, events),
         executor=coordinator,
         lease_seconds=30,
         heartbeat_interval_seconds=60,
@@ -342,6 +347,7 @@ async def test_successful_handoff_without_workflow_context_does_not_record_workf
     await worker.run_once()
 
     assert run_store.persisted is not None
+    assert run_store.persisted.result is not None
     assert run_store.persisted.result["reply"] == "reviewer took control"
     assert run_store.persisted.workflow_run_state is None
     assert [

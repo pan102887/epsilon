@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from domain.agent.exceptions import ToolCircuitOpenError, ToolExecutionError
-from domain.agent.tools import Tool, ToolRegistry
+from domain.agent.tools import Tool, ToolExecutionResult, ToolRegistry
 from domain.model_access.value_objects import ToolCallRequest
 from infrastructure.agent.circuit_breaker import ToolCircuitBreaker
 
@@ -34,10 +34,10 @@ class _FakeTool(Tool):
     def parameters(self) -> dict[str, Any]:
         return {"type": "object", "properties": {}}
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
         if self._fail:
             raise RuntimeError("tool broken")
-        return "ok"
+        return ToolExecutionResult(content="ok")
 
 
 def _make_request(tool_name: str) -> ToolCallRequest:
@@ -75,7 +75,7 @@ class TestRegistryWithBreaker:
         # 多次调用不触发熔断
         for _ in range(10):
             result = await registry.execute(req)
-            assert result == "ok"
+            assert result.content == "ok"
 
 
 class TestRegistryWithoutBreaker:
@@ -89,7 +89,7 @@ class TestRegistryWithoutBreaker:
 
         req = _make_request("simple")
         result = await registry.execute(req)
-        assert result == "ok"
+        assert result.content == "ok"
 
     @pytest.mark.asyncio
     async def test_no_breaker_failure_passes_through(self):

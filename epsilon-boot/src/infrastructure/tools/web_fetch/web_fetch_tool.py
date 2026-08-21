@@ -16,8 +16,8 @@ from domain.agent.exceptions import ToolExecutionError
 from domain.agent.guardrails import ToolRiskLevel
 from domain.agent.tools import Tool, ToolExecutionResult
 from infrastructure.tools.http_request.http_request_tool import (
-    _summarize_url,
     process_response,
+    summarize_url,
     validate_url_safety,
 )
 
@@ -46,6 +46,10 @@ class WebFetchTool(Tool):
         self._timeout = timeout
         self._max_response_size = max_response_size
         self._client = httpx.AsyncClient(follow_redirects=False)
+
+    @property
+    def client(self) -> httpx.AsyncClient:
+        return self._client
 
     @property
     def name(self) -> str:
@@ -127,7 +131,7 @@ class WebFetchTool(Tool):
             return ToolExecutionResult(
                 content=body,
                 metadata={
-                    "url": _summarize_url(url),
+                    "url": summarize_url(url),
                     "response_bytes": len(response.content),
                     "content_type": content_type,
                 },

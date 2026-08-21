@@ -4,8 +4,7 @@
 这是纯技术层面的抽象，不属于领域层。
 """
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager
 from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,8 +23,7 @@ class SessionProviderPort(Protocol):
     - 最终关闭会话释放资源
     """
 
-    @asynccontextmanager
-    async def session(self) -> AsyncIterator[AsyncSession]:
+    def session(self) -> AbstractAsyncContextManager[AsyncSession]:
         """获取数据库会话的异步上下文管理器。
 
         使用示例:

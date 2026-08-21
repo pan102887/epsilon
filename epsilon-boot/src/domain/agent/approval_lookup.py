@@ -10,15 +10,17 @@ ADR-0008 属配置边界技术关注点，保留在
 
 from __future__ import annotations
 
-from domain.agent.value_objects import ApprovalPolicy
+from domain.agent.value_objects import ApprovalDecisionType, ApprovalPolicy
 
-APPROVE_REJECT = frozenset({"approve", "reject"})
+APPROVE_REJECT: frozenset[ApprovalDecisionType] = frozenset({"approve", "reject"})
 """允许 approve / reject 的默认决策集。"""
 
-APPROVE_EDIT_REJECT = frozenset({"approve", "edit", "reject"})
+APPROVE_EDIT_REJECT: frozenset[ApprovalDecisionType] = frozenset(
+    {"approve", "edit", "reject"}
+)
 """允许 approve / edit / reject 的默认决策集。"""
 
-DEFAULT_POLICIES: dict[str, tuple[frozenset[str], str]] = {
+DEFAULT_POLICIES: dict[str, tuple[frozenset[ApprovalDecisionType], str]] = {
     "write_file": (APPROVE_REJECT, "高风险文件写入"),
     "edit_file": (APPROVE_REJECT, "高风险文件编辑"),
     "shell_exec": (APPROVE_REJECT, "高风险命令执行"),
@@ -64,7 +66,7 @@ class ApprovalDefaultLookup:
             return ApprovalPolicy(
                 tool_name=tool_name,
                 interrupt=True,
-                allowed_decisions=frozenset(decisions),  # type: ignore[arg-type]
+                allowed_decisions=frozenset(decisions),
                 risk_label=risk_label,
             )
         return ApprovalPolicy(
@@ -75,7 +77,9 @@ class ApprovalDefaultLookup:
         )
 
     @staticmethod
-    def decisions_for(tool_name: str) -> tuple[frozenset[str], str]:
+    def decisions_for(
+        tool_name: str,
+    ) -> tuple[frozenset[ApprovalDecisionType], str]:
         """返回 ``value is True`` 分支所需的 (决策集, 风险标签) 元组。
 
         与 ``_policy_from_value`` 中

@@ -4,27 +4,34 @@ import importlib.util
 import json
 import pathlib
 from collections.abc import AsyncIterator
+from typing import Any, Protocol, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from domain.agent.value_objects import AgentStreamEvent
 from domain.chat.exceptions import ContinuationUnavailableError
-from domain.chat.value_objects import ChatResponseVO
+from domain.chat.value_objects import ChatContinueRequestVO, ChatResponseVO
 
 
-def _load_chat_module():
+def _load_chat_module() -> Any:
     """直接加载 chat 路由模块。"""
     chat_path = pathlib.Path(__file__).resolve().parents[3] / "src/application/routers/chat.py"
     spec = importlib.util.spec_from_file_location(
         "test_chat_continue_router_module", str(chat_path)
     )
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-async def _read_sse_events(response) -> list[str]:
+class _SseResponse(Protocol):
+    body_iterator: AsyncIterator[dict[str, object] | bytes | str]
+
+
+async def _read_sse_events(response: _SseResponse) -> list[str]:
     """从 EventSourceResponse 提取 data 事件。"""
     events: list[str] = []
     async for item in response.body_iterator:
@@ -80,8 +87,10 @@ async def test_continue_chat_stream_paused_done_payload() -> None:
         def prompt_id(self) -> str:
             return "chat-default@v1"
 
-        def stream_continue_chat_events(self, _request) -> AsyncIterator[AgentStreamEvent]:
-            async def gen():
+        def stream_continue_chat_events(
+            self, _request: ChatContinueRequestVO
+        ) -> AsyncIterator[AgentStreamEvent]:
+            async def gen() -> AsyncIterator[AgentStreamEvent]:
                 yield AgentStreamEvent(
                     kind="assistant_done",
                     metadata={
@@ -100,7 +109,7 @@ async def test_continue_chat_stream_paused_done_payload() -> None:
     )
 
     events = await _read_sse_events(response)
-    payload = json.loads(events[0])
+    payload = cast(dict[str, object], json.loads(events[0]))
     assert payload["finished"] is True
     assert payload["status"] == "paused"
     assert payload["terminated_reason"] == "max_rounds"
@@ -132,8 +141,10 @@ async def test_continue_chat_stream_unavailable_returns_409_before_sse() -> None
     module = _load_chat_module()
     service = MagicMock()
 
-    def stream_continue_chat_events(_request):
-        async def gen():
+    def stream_continue_chat_events(
+        _request: ChatContinueRequestVO,
+    ) -> AsyncIterator[AgentStreamEvent]:
+        async def gen() -> AsyncIterator[AgentStreamEvent]:
             raise ContinuationUnavailableError("s1", "最新消息不是工具结果")
             yield AgentStreamEvent(kind="assistant_done")
 

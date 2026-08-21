@@ -6,6 +6,10 @@ from domain.chat.context import BaseMessage
 from domain.model_access.value_objects import ChatRequest, LLMResponse, StreamingChunk
 
 
+def _default_count(messages: list[BaseMessage]) -> int:
+    return sum(len(message.content or "") for message in messages)
+
+
 class FakeModelAccessAdapter:
     """实现 ModelAccessPort 协议最小子集的测试 fake。
 
@@ -18,7 +22,7 @@ class FakeModelAccessAdapter:
         *,
         count_fn: Callable[[list[BaseMessage]], int] | None = None,
     ) -> None:
-        self._count_fn = count_fn or (lambda msgs: sum(len(m.content or "") for m in msgs))
+        self._count_fn: Callable[[list[BaseMessage]], int] = count_fn or _default_count
 
     def count_tokens(self, messages: list[BaseMessage]) -> int:
         """估算 token 数，默认按字符长度。"""

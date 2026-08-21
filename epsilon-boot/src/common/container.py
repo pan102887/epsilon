@@ -54,8 +54,9 @@ FastAPI 的生命周期。
 
 import inspect
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from fastapi import FastAPI
@@ -76,6 +77,16 @@ from common.container_models import (
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class ContainerState:
+    """容器注册与资源列表的可恢复快照。"""
+
+    registry: dict[RegistryKey, Registration]
+    singletons: dict[RegistryKey, Any]
+    async_resources: list[AsyncResourceEntry]
+    initialized_resources: list[AsyncResourceEntry]
 
 
 class Container:
@@ -105,6 +116,30 @@ class Container:
         self._initialized_resources: list[AsyncResourceEntry] = []
         self._started: bool = False
         self._resolving: set[RegistryKey] = set()
+
+    def capture_state(self) -> ContainerState:
+        """捕获可由测试或临时装配流程恢复的容器状态。"""
+        return ContainerState(
+            registry=self._registry.copy(),
+            singletons=self._singletons.copy(),
+            async_resources=self._async_resources[:],
+            initialized_resources=self._initialized_resources[:],
+        )
+
+    def restore_state(self, state: ContainerState) -> None:
+        """恢复先前由 :meth:`capture_state` 捕获的状态。"""
+        self._registry = state.registry.copy()
+        self._singletons = state.singletons.copy()
+        self._async_resources = state.async_resources[:]
+        self._initialized_resources = state.initialized_resources[:]
+
+    def async_resource_names(self) -> list[str]:
+        """按注册顺序返回异步资源名称。"""
+        return [entry.name for entry in self._async_resources]
+
+    def registered_types(self) -> set[type]:
+        """返回所有无名称与命名注册所涉及的抽象类型。"""
+        return {key if isinstance(key, type) else key[0] for key in self._registry}
 
     # ── 注册 API ──
 
@@ -266,6 +301,13 @@ class Container:
         """
         return any(entry.name == name for entry in self._async_resources)
 
+    def remove_async_resources(self, names: set[str]) -> None:
+        """Remove registered lifecycle resources whose names are in ``names``."""
+
+        self._async_resources = [
+            entry for entry in self._async_resources if entry.name not in names
+        ]
+
     def register_async_resource(
         self,
         name: str,
@@ -377,7 +419,7 @@ class Container:
 
     def get_dependency(
         self, abstract_type: type[T], *, name: str | None = None
-    ) -> Callable[..., Any]:
+    ) -> Callable[[], Awaitable[T]]:
         """返回可用于 FastAPI Depends 的依赖提供函数。
 
         Args:
@@ -394,7 +436,7 @@ class Container:
 
         return _dependency
 
-    def get_all_dependency(self, abstract_type: type[T]) -> Callable[..., Any]:
+    def get_all_dependency(self, abstract_type: type[T]) -> Callable[[], Awaitable[list[T]]]:
         """返回可用于 FastAPI Depends 的集合依赖提供函数。
 
         Args:
@@ -410,7 +452,7 @@ class Container:
         return _dependency
 
     @asynccontextmanager
-    async def lifespan(self, app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(self, app: FastAPI) -> AsyncGenerator[None]:
         """可用作 FastAPI lifespan 的异步上下文管理器。
 
         这是容器与 FastAPI 生命周期集成的入口。通过将此方法传递给
@@ -443,7 +485,9 @@ container = Container()
 """全局容器实例，模块级单例。"""
 
 
-def inject(abstract_type: type[T], *, name: str | None = None) -> Callable[..., Any]:
+def inject(  # noqa: UP047 - Python 3.11 compatibility
+    abstract_type: type[T], *, name: str | None = None
+) -> Callable[[], Awaitable[T]]:
     """FastAPI Depends 快捷方式，支持按名称解析。
 
     Usage::
@@ -472,7 +516,9 @@ def inject(abstract_type: type[T], *, name: str | None = None) -> Callable[..., 
     return container.get_dependency(abstract_type, name=name)
 
 
-def inject_all(abstract_type: type[T]) -> Callable[..., Any]:
+def inject_all(  # noqa: UP047 - Python 3.11 compatibility
+    abstract_type: type[T],
+) -> Callable[[], Awaitable[list[T]]]:
     """FastAPI 多实例集合注入快捷方式。
 
     Usage::

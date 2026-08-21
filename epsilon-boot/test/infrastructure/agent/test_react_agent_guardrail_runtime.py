@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,6 +11,7 @@ import pytest
 from domain.agent.guardrails import (
     GuardrailMode,
     GuardrailModelPricing,
+    GuardrailObservation,
     GuardrailPolicy,
     ToolRiskLevel,
     merge_guardrail_summary,
@@ -32,12 +33,16 @@ from domain.run.checkpoint_context import (
     reset_run_checkpoint_context,
     set_run_checkpoint_context,
 )
+from domain.run.ports import RunCheckpointSinkPort
 from domain.run.runtime_context import (
     RunExecutionContext,
     reset_run_execution_context,
     set_run_execution_context,
 )
 from domain.run.value_objects import (
+    EventRetentionPolicy,
+    RunEvent,
+    RunEventType,
     ToolLedgerStatus,
     ToolReplayPolicy,
     ToolResultLedgerEntry,
@@ -69,14 +74,14 @@ class _HighRiskTool(Tool):
         return "high risk"
 
     @property
-    def parameters(self) -> dict:
+    def parameters(self) -> dict[str, Any]:
         return {"type": "object", "properties": {}}
 
     @property
     def risk_level(self) -> ToolRiskLevel:
         return ToolRiskLevel.HIGH
 
-    async def execute(self, **kwargs) -> ToolExecutionResult:
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
         return ToolExecutionResult(content="should not run")
 
 
@@ -90,14 +95,14 @@ class _CriticalTool(Tool):
         return "critical"
 
     @property
-    def parameters(self) -> dict:
+    def parameters(self) -> dict[str, Any]:
         return {"type": "object", "properties": {}}
 
     @property
     def risk_level(self) -> ToolRiskLevel:
         return ToolRiskLevel.CRITICAL
 
-    async def execute(self, **kwargs) -> ToolExecutionResult:
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
         return ToolExecutionResult(content="should not run")
 
 
@@ -118,7 +123,7 @@ class _FailingEchoTool(Tool):
     def risk_level(self) -> ToolRiskLevel:
         return ToolRiskLevel.LOW
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
         raise RuntimeError("boom")
 
 
@@ -151,23 +156,52 @@ class _EventStore:
     """记录 Run 事件的测试 event store。"""
 
     def __init__(self) -> None:
-        self.events = []
+        self.events: list[RunEvent] = []
 
-    async def append_event(self, run_id, event_type, payload):
+    async def append_event(
+        self,
+        run_id: str,
+        event_type: RunEventType,
+        payload: dict[str, Any],
+    ) -> RunEvent:
         """追加事件并保留原始 payload。"""
 
-        event = MagicMock(run_id=run_id, event_type=event_type, payload=payload)
+        event = RunEvent(
+            run_id=run_id,
+            cursor=len(self.events) + 1,
+            event_type=event_type,
+            payload=payload,
+            created_at=datetime.now(UTC),
+        )
         self.events.append(event)
         return event
+
+    async def list_events(
+        self, run_id: str, after_cursor: int | None, limit: int
+    ) -> list[RunEvent]:
+        return self.events[:limit]
+
+    async def wait_events(
+        self, run_id: str, after_cursor: int | None, timeout_seconds: float
+    ) -> list[RunEvent]:
+        return []
+
+    async def trim_events(self, run_id: str, policy: EventRetentionPolicy) -> None:
+        return None
+
+    async def first_cursor(self, run_id: str) -> int | None:
+        return self.events[0].cursor if self.events else None
 
 
 class _Recorder(RunGuardrailRecorderPort):
     """记录 guardrail observation 的测试 recorder。"""
 
     def __init__(self) -> None:
-        self.calls = []
+        self.calls: list[GuardrailObservation] = []
 
-    async def record_observation(self, *, observation):
+    async def record_observation(
+        self, *, observation: GuardrailObservation
+    ) -> None:
         self.calls.append(observation)
         return None
 
@@ -245,7 +279,7 @@ async def test_require_approval_reuses_interrupt_and_records_guardrail_observati
         RunExecutionContext(run_id="run-1", owner_id="worker-1", segment_index=2)
     )
     try:
-        result = await adapter._prepare_tool_calls_for_execution(
+        result = await adapter.prepare_tool_calls_for_execution(
             context=context,
             config=_config("high_risk_tool"),
             tool_calls=(ToolCallRequest(id="call-1", name="high_risk_tool", arguments="{}"),),
@@ -309,7 +343,7 @@ async def test_workflow_role_capability_denies_real_react_tool_before_execution(
         )
     )
     try:
-        executable, approval = await adapter._prepare_tool_calls_for_execution(
+        executable, approval = await adapter.prepare_tool_calls_for_execution(
             context=context,
             config=_config("echo_tool"),
             tool_calls=(ToolCallRequest(id="call-denied", name="echo_tool", arguments="{}"),),
@@ -348,7 +382,7 @@ async def test_stop_marks_tool_message_with_stable_risk_gate_metadata() -> None:
         RunExecutionContext(run_id="run-1", owner_id="worker-1", segment_index=3)
     )
     try:
-        executable, approval = await adapter._prepare_tool_calls_for_execution(
+        executable, approval = await adapter.prepare_tool_calls_for_execution(
             context=context,
             config=_config("critical_tool"),
             tool_calls=(ToolCallRequest(id="call-2", name="critical_tool", arguments="{}"),),
@@ -390,7 +424,7 @@ async def test_observe_mode_keeps_tool_execution_and_records_before_after_observ
         RunExecutionContext(run_id="run-1", owner_id="worker-1", segment_index=1)
     )
     try:
-        executable, approval = await adapter._prepare_tool_calls_for_execution(
+        executable, approval = await adapter.prepare_tool_calls_for_execution(
             context=context,
             config=_config("critical_tool"),
             tool_calls=(ToolCallRequest(id="call-3", name="critical_tool", arguments="{}"),),
@@ -400,7 +434,7 @@ async def test_observe_mode_keeps_tool_execution_and_records_before_after_observ
         )
         assert approval is None
         assert executable[0].id == "call-3"
-        result, is_error = await adapter._execute_tool_call(
+        result, is_error = await adapter.execute_tool_call_result(
             context,
             executable[0],
             _config("critical_tool"),
@@ -441,7 +475,7 @@ async def test_resume_approve_returns_new_guardrail_approval_instead_of_raising(
     context.session_id = "session-1"
     context.add_system_message("sys")
     context.add_user_message("run risky tool once")
-    context._messages.append(
+    context.append_message(
         AssistantMessage(
             content="",
             tool_calls=[ToolCallRequest("call-1", "high_risk_tool", "{}")],
@@ -498,7 +532,7 @@ async def test_resume_edit_returns_new_guardrail_approval_without_duplicate_user
     context.session_id = "session-1"
     context.add_system_message("sys")
     context.add_user_message("run risky tool once")
-    context._messages.append(
+    context.append_message(
         AssistantMessage(
             content="",
             tool_calls=[ToolCallRequest("call-1", "echo_tool", '{"path":"a.txt"}')],
@@ -676,7 +710,7 @@ async def test_tool_runtime_stats_accumulate_in_model_order_with_failures() -> N
         RunExecutionContext(run_id="run-1", owner_id="worker-1", segment_index=1)
     )
     try:
-        executable, approval = await adapter._prepare_tool_calls_for_execution(
+        executable, approval = await adapter.prepare_tool_calls_for_execution(
             context=context,
             config=_config("echo_tool"),
             tool_calls=tool_calls,
@@ -686,7 +720,7 @@ async def test_tool_runtime_stats_accumulate_in_model_order_with_failures() -> N
         )
         assert approval is None
         assert executable == tool_calls
-        await adapter._dispatch_concurrent_tool_calls(
+        await adapter.dispatch_concurrent_tool_calls(
             context,
             executable,
             _config("echo_tool"),
@@ -709,6 +743,7 @@ async def test_tool_runtime_stats_accumulate_in_model_order_with_failures() -> N
     assert after_calls[1].stats.repeated_tool_call_count == 1
     assert after_calls[1].stats.total_tool_calls == 2
     assert after_calls[1].stats.consecutive_failure_count == 2
+    assert after_calls[1].decision.reason is not None
     assert after_calls[1].decision.reason.value == "repeated_failure"
     assert all(isinstance(message, ToolMessage) for message in context.get_messages())
 
@@ -749,11 +784,11 @@ async def test_checkpoint_completed_replay_skips_guardrail_stats_and_observation
             owner_id="worker-1",
             segment_index=1,
             recovery_mode=True,
-            sink=sink,
+            sink=cast(RunCheckpointSinkPort, sink),
         )
     )
     try:
-        executable, approval = await adapter._prepare_tool_calls_for_execution(
+        executable, approval = await adapter.prepare_tool_calls_for_execution(
             context=context,
             config=_config("echo_tool"),
             tool_calls=(ToolCallRequest("call-1", "echo_tool", '{"path":"old"}'),),
@@ -761,7 +796,7 @@ async def test_checkpoint_completed_replay_skips_guardrail_stats_and_observation
             model="test-model",
             usage_so_far={"total_tokens": 9},
         )
-        stats = adapter._guardrail_runtime_accumulator().snapshot()
+        stats = adapter.guardrail_runtime_stats()
     finally:
         reset_run_checkpoint_context(checkpoint_token)
         reset_run_execution_context(run_token)
@@ -816,7 +851,7 @@ async def test_guardrail_runtime_restores_persisted_stats_without_recounting_his
         )
     )
     try:
-        executable, approval = await adapter._prepare_tool_calls_for_execution(
+        executable, approval = await adapter.prepare_tool_calls_for_execution(
             context=context,
             config=_config("echo_tool"),
             tool_calls=(ToolCallRequest("call-1", "echo_tool", '{"path":"new"}'),),
@@ -825,7 +860,7 @@ async def test_guardrail_runtime_restores_persisted_stats_without_recounting_his
             usage_so_far={"total_tokens": 999},
         )
         assert approval is None
-        await adapter._dispatch_concurrent_tool_calls(
+        await adapter.dispatch_concurrent_tool_calls(
             context,
             executable,
             _config("echo_tool"),
@@ -861,7 +896,7 @@ async def test_approval_resume_tool_stats_continue_from_persisted_summary_once(
     context.session_id = "session-1"
     context.add_system_message("sys")
     context.add_user_message("run approved tool")
-    context._messages.append(
+    context.append_message(
         AssistantMessage(
             content="",
             tool_calls=[ToolCallRequest("call-1", "echo_tool", '{"path":"a.txt"}')],
@@ -944,7 +979,7 @@ async def test_approval_resume_preserves_recovered_tool_stats_for_next_model_cal
     context.session_id = "session-1"
     context.add_system_message("sys")
     context.add_user_message("run approved tool then continue")
-    context._messages.append(
+    context.append_message(
         AssistantMessage(
             content="",
             tool_calls=[ToolCallRequest("call-1", "echo_tool", '{"path":"a.txt"}')],

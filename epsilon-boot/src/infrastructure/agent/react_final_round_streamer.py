@@ -16,7 +16,9 @@ from domain.chat.context import BaseMessage, ConversationContext
 from domain.chat.value_objects import ContextBuilderResult
 from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import ChatRequest, LLMResponse, StreamingChunk
-from infrastructure.agent.round_stream_accumulator import _RoundStreamAccumulator
+from infrastructure.agent.round_stream_accumulator import (
+    RoundStreamAccumulator as _RoundStreamAccumulator,
+)
 
 Usage = dict[str, int]
 UsageMapping = Mapping[str, object] | None
@@ -67,11 +69,7 @@ def _merge_usage(left: Usage | None, right: Usage | None) -> Usage:
     for usage in (left, right):
         if usage is None:
             continue
-        for key, value in usage.items():
-            if not isinstance(value, int):
-                raise ValueError(f"usage[{key!r}] 必须为 int")
-            if value < 0:
-                raise ValueError(f"usage[{key!r}] 必须为非负整数")
+        for key, value in _coerce_usage(usage).items():
             merged[key] = merged.get(key, 0) + value
     return merged
 

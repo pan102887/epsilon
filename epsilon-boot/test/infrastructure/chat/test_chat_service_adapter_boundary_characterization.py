@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -184,7 +185,10 @@ def _adapter(
         max_tool_rounds=3,
         tool_schemas=[],
         session_workflow=workflow,
-        chat_application_service=app_service or _BoundaryApplicationService(),
+        chat_application_service=cast(
+            Any,
+            app_service or _BoundaryApplicationService(),
+        ),
     )
 
 
@@ -213,7 +217,7 @@ async def test_save_context_and_index_delegates_to_session_workflow() -> None:
     workflow = _BoundaryWorkflow(context)
     adapter = _adapter(workflow=workflow)
 
-    await adapter._save_context_and_index("s1", context, model="m1")
+    await adapter.save_context_and_index("s1", context, model="m1")
 
     assert workflow.save_calls == [("s1", context, "m1")]
 

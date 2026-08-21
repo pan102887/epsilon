@@ -11,9 +11,12 @@
 import logging
 import os
 import threading
+from os import PathLike
 from pathlib import Path
+from typing import Any
 
-from pydantic_settings import SettingsConfigDict
+import pytest
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from common.configuration import ConfigProxy, PropertiesBaseSettings
 from common.configuration.configuration_utils import PropertiesFileSettingsSource
@@ -25,11 +28,11 @@ from common.configuration.configuration_utils import PropertiesFileSettingsSourc
 
 def _setup_temp_config(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
     env_prefix: str,
     props_content: str = "",
     env_content: str = "",
-):
+) -> tuple[Path, Path]:
     """在临时目录创建配置文件并 monkeypatch _find_file。
 
     返回 (env_file, props_file, mock_find_file) 三元组。
@@ -65,10 +68,10 @@ def _make_config_cls(
     env_file: Path,
     props_file: Path,
     env_prefix: str,
-    fields: dict,
-    annotations: dict,
+    fields: dict[str, Any],
+    annotations: dict[str, type[Any]],
     hot_reload: bool = True,
-):
+) -> type[PropertiesBaseSettings]:
     """动态创建配置子类，使用临时文件路径和自定义 settings_customise_sources。
 
     Args:
@@ -82,34 +85,15 @@ def _make_config_cls(
     Returns:
         动态创建的配置子类。
     """
-    cls_dict = {
-        "model_config": SettingsConfigDict(
-            env_prefix=env_prefix,
-            env_file=str(env_file),
-            env_file_encoding="utf-8",
-            extra="ignore",
-            frozen=True,
-        ),
-        "hot_reload": hot_reload,
-        "__annotations__": annotations,
-    }
-    cls_dict.update(fields)
-
-    config_cls = type(
-        "_DynamicUnitTestConfig",
-        (PropertiesBaseSettings,),
-        cls_dict,
-    )
-
-    @classmethod  # type: ignore[misc]
+    @classmethod
     def _custom_sources(
-        cls,
-        settings_cls,
-        init_settings,
-        env_settings,
-        dotenv_settings,
-        file_secret_settings,
-    ):
+        cls: type[PropertiesBaseSettings],
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
         """使用临时 properties 文件路径的自定义配置源。"""
         return (
             init_settings,
@@ -119,7 +103,26 @@ def _make_config_cls(
             file_secret_settings,
         )
 
-    config_cls.settings_customise_sources = _custom_sources
+    cls_dict: dict[str, Any] = {
+        "model_config": SettingsConfigDict(
+            env_prefix=env_prefix,
+            env_file=str(env_file),
+            env_file_encoding="utf-8",
+            extra="ignore",
+            frozen=True,
+        ),
+        "hot_reload": hot_reload,
+        "__annotations__": annotations,
+        "settings_customise_sources": _custom_sources,
+    }
+    cls_dict.update(fields)
+
+    config_cls = type(
+        "_DynamicUnitTestConfig",
+        (PropertiesBaseSettings,),
+        cls_dict,
+    )
+
     return config_cls
 
 
@@ -137,7 +140,9 @@ class TestConfigFileNotExist:
     **Validates: Requirement 3.4**
     """
 
-    def test_proxy_works_when_config_files_missing(self, tmp_path: Path, monkeypatch) -> None:
+    def test_proxy_works_when_config_files_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """配置文件不存在时，代理应使用默认值正常工作，不抛出异常。"""
         # 指向不存在的文件路径
         env_file = tmp_path / "nonexistent" / ".env"
@@ -198,7 +203,12 @@ class TestMtimeOSErrorWarning:
     **Validates: Requirement 3.5**
     """
 
-    def test_oserror_on_getmtime_logs_warning(self, tmp_path: Path, monkeypatch, caplog) -> None:
+    def test_oserror_on_getmtime_logs_warning(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """getmtime 抛出 OSError 时，应记录警告日志且 mtime 为 0.0。"""
         env_file, props_file = _setup_temp_config(
             tmp_path,
@@ -222,7 +232,7 @@ class TestMtimeOSErrorWarning:
         # 让 os.path.getmtime 对 props_file 抛出 OSError
         original_getmtime = os.path.getmtime
 
-        def raising_getmtime(path):
+        def raising_getmtime(path: str | bytes | PathLike[str] | PathLike[bytes]) -> float:
             """对 props_file 路径抛出 OSError。"""
             if str(path) == str(props_file):
                 raise OSError("模拟磁盘错误")
@@ -233,7 +243,7 @@ class TestMtimeOSErrorWarning:
         # 捕获日志
         with caplog.at_level(logging.WARNING, logger="common.configuration.config_proxy"):
             # 调用 _get_current_mtimes 触发 OSError
-            mtimes = proxy._get_current_mtimes()
+            mtimes = proxy.current_mtimes()
 
         # 验证 props_file 的 mtime 为 0.0
         assert mtimes[str(props_file)] == 0.0
@@ -264,7 +274,9 @@ class TestConcurrentRefreshSingleInstantiation:
     **Validates: Requirement 4.2**
     """
 
-    def test_concurrent_refresh_instantiates_only_once(self, tmp_path: Path, monkeypatch) -> None:
+    def test_concurrent_refresh_instantiates_only_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """多线程同时触发刷新时，配置类构造器应仅被调用一次。"""
         env_file, props_file = _setup_temp_config(
             tmp_path,
@@ -296,7 +308,7 @@ class TestConcurrentRefreshSingleInstantiation:
         count_lock = threading.Lock()
         original_init = config_cls.__init__
 
-        def counting_init(self_inner, *args, **kwargs):
+        def counting_init(self_inner: Any, *args: Any, **kwargs: Any) -> None:
             """追踪构造器调用次数的包装函数。"""
             nonlocal instantiation_count
             with count_lock:
@@ -310,7 +322,7 @@ class TestConcurrentRefreshSingleInstantiation:
         barrier = threading.Barrier(num_threads)
         errors: list[Exception] = []
 
-        def worker():
+        def worker() -> None:
             """工作线程：等待 barrier 后访问代理属性触发刷新。"""
             try:
                 barrier.wait(timeout=5)
@@ -351,7 +363,10 @@ class TestRefreshFailureErrorLog:
     """
 
     def test_refresh_failure_logs_error_with_exc_info(
-        self, tmp_path: Path, monkeypatch, caplog
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """刷新失败时应记录包含配置类名称和异常详情的错误日志。"""
         env_file, props_file = _setup_temp_config(

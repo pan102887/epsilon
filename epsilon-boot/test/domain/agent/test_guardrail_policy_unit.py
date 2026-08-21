@@ -9,13 +9,14 @@ _segment_count 启发式边界，逐一锁定上提前后行为等价（Behavior
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
 from domain.agent.guardrail_policy import (
     StaticAgentGuardrailPolicy,
-    _looks_batch,
-    _segment_count,
+    looks_batch,
+    segment_count,
 )
 from domain.agent.guardrails import (
     GuardrailAction,
@@ -34,7 +35,7 @@ def _snapshot(
     payload: RunPayload,
     latest_checkpoint_id: str | None = None,
     can_continue: bool = False,
-    segment_metadata: dict | None = None,
+    segment_metadata: dict[str, Any] | None = None,
 ) -> RunSnapshot:
     now = datetime(2026, 1, 1, tzinfo=UTC)
     return RunSnapshot(
@@ -59,11 +60,11 @@ def _snapshot(
     )
 
 
-def _chat_payload(chat: dict | None = None) -> RunPayload:
+def _chat_payload(chat: dict[str, Any] | None = None) -> RunPayload:
     return RunPayload(kind=RunKind.CHAT, session_id="s1", chat=chat or {"message": "hi"})
 
 
-def _task_payload(task: dict | None = None) -> RunPayload:
+def _task_payload(task: dict[str, Any] | None = None) -> RunPayload:
     return RunPayload(kind=RunKind.TASK, session_id="s1", task=task or {"goal": "g"})
 
 
@@ -455,60 +456,60 @@ def test_risk_metadata_tool_name_none_passthrough() -> None:
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("key", ["items", "batch", "targets", "inputs"])
 def test_looks_batch_list_len_two_is_batch(key: str) -> None:
-    assert _looks_batch({key: ["a", "b"]}) is True
+    assert looks_batch({key: ["a", "b"]}) is True
 
 
 @pytest.mark.parametrize("key", ["items", "batch", "targets", "inputs"])
 def test_looks_batch_list_len_one_is_not_batch(key: str) -> None:
-    assert _looks_batch({key: ["a"]}) is False
+    assert looks_batch({key: ["a"]}) is False
 
 
 def test_looks_batch_empty_list_is_not_batch() -> None:
-    assert _looks_batch({"items": []}) is False
+    assert looks_batch({"items": []}) is False
 
 
 def test_looks_batch_non_list_value_is_not_batch() -> None:
-    assert _looks_batch({"items": "a,b,c"}) is False
+    assert looks_batch({"items": "a,b,c"}) is False
 
 
 def test_looks_batch_constraints_with_keyword_is_batch() -> None:
-    assert _looks_batch({"constraints": ["请批量处理"]}) is True
+    assert looks_batch({"constraints": ["请批量处理"]}) is True
 
 
 def test_looks_batch_constraints_without_keyword_is_not_batch() -> None:
-    assert _looks_batch({"constraints": ["逐条处理"]}) is False
+    assert looks_batch({"constraints": ["逐条处理"]}) is False
 
 
 def test_looks_batch_empty_dict_is_not_batch() -> None:
-    assert _looks_batch({}) is False
+    assert looks_batch({}) is False
 
 
 # --------------------------------------------------------------------------- #
 # _segment_count 边界（Property 4）
 # --------------------------------------------------------------------------- #
 def test_segment_count_none_metadata_returns_zero() -> None:
-    assert _segment_count(None) == 0
+    assert segment_count(None) == 0
 
 
 def test_segment_count_non_dict_returns_zero() -> None:
-    assert _segment_count("not-a-dict") == 0  # type: ignore[arg-type]
+    assert segment_count("not-a-dict") == 0
 
 
 def test_segment_count_missing_key_returns_zero() -> None:
-    assert _segment_count({}) == 0
+    assert segment_count({}) == 0
 
 
 def test_segment_count_valid_int() -> None:
-    assert _segment_count({"segment_count": 3}) == 3
+    assert segment_count({"segment_count": 3}) == 3
 
 
 def test_segment_count_numeric_string_coerced() -> None:
-    assert _segment_count({"segment_count": "4"}) == 4
+    assert segment_count({"segment_count": "4"}) == 4
 
 
 def test_segment_count_non_numeric_returns_zero() -> None:
-    assert _segment_count({"segment_count": "abc"}) == 0
+    assert segment_count({"segment_count": "abc"}) == 0
 
 
 def test_segment_count_none_value_returns_zero() -> None:
-    assert _segment_count({"segment_count": None}) == 0
+    assert segment_count({"segment_count": None}) == 0

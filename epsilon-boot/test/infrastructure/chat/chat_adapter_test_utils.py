@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any, TypedDict
 from unittest.mock import MagicMock
 
 from application.chat import ChatApplicationService, ChatSessionContextWorkflow
@@ -14,18 +15,25 @@ from domain.prompt.value_objects import LoadedPrompt
 from infrastructure.prompt.workspace_guidance import append_workspace_path_guidance
 
 
+class ChatAdapterDependencies(TypedDict):
+    """Keyword dependencies accepted by ``ChatServiceAdapter``."""
+
+    session_workflow: Any
+    chat_application_service: Any
+
+
 def make_chat_adapter_dependencies(
     *,
     session_store: SessionContextStorePort,
     model_registry: ModelRegistryPort,
     loaded_prompt: LoadedPrompt,
     agent: AgentPort | MagicMock,
-    tool_schemas: list[dict],
+    tool_schemas: list[dict[str, Any]],
     max_tool_rounds: int,
     approval_store: ApprovalStateStorePort | MagicMock | None = None,
     session_index: SessionIndexPort | MagicMock | None = None,
     segment_policy: SegmentExecutionPolicy | None = None,
-) -> dict[str, object]:
+) -> ChatAdapterDependencies:
     """为直接构造 ChatServiceAdapter 的测试创建显式 application 依赖。
 
     Args:

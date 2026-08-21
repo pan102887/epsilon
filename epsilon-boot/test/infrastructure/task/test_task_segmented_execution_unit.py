@@ -2,21 +2,24 @@
 
 from __future__ import annotations
 
+from collections.abc import Set as AbstractSet
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from domain.agent.segmented_execution import SegmentExecutionPolicy
-from domain.agent.value_objects import AgentResult, ApprovalRequiredPayload
+from domain.agent.value_objects import AgentConfig, AgentResult, ApprovalRequiredPayload
 from domain.chat.context import ConversationContext, SystemMessage, ToolMessage, UserMessage
 from domain.chat.exceptions import ContinuationUnavailableError
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import ToolCallRequest
 from domain.prompt.value_objects import LoadedPrompt
 from domain.task.value_objects import Task, TaskContinueRequest, TaskStatus
 from infrastructure.task.task_agent_adapter import TaskAgentAdapter
 
 
-def _schema(name: str) -> dict:
+def _schema(name: str) -> dict[str, Any]:
     """构造测试工具 schema。"""
     return {"type": "function", "function": {"name": name, "parameters": {}}}
 
@@ -27,13 +30,15 @@ def _adapter(
     context: ConversationContext | None = None,
     policy: SegmentExecutionPolicy,
     max_rounds: int = 5,
-    schemas: list[dict] | None = None,
+    schemas: list[dict[str, Any]] | None = None,
 ) -> tuple[TaskAgentAdapter, MagicMock, MagicMock]:
     """构造测试用 TaskAgentAdapter。"""
     all_schemas = schemas or [_schema("search"), _schema("write")]
     tool_registry = MagicMock()
 
-    def get_schemas(tool_names=None):
+    def get_schemas(
+        tool_names: AbstractSet[str] | None = None,
+    ) -> list[dict[str, Any]]:
         if tool_names is None:
             return list(all_schemas)
         requested = set(tool_names)
@@ -82,7 +87,11 @@ def _append_tool_tail(context: ConversationContext, index: int = 1) -> None:
 async def test_execute_without_session_id_runs_single_segment_only() -> None:
     """无 session_id 时只执行首段，不自动续跑。"""
 
-    async def run(ctx, _config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         _append_tool_tail(ctx)
         return AgentResult(
             content="",
@@ -112,7 +121,11 @@ async def test_execute_auto_disabled_returns_segment_metadata() -> None:
     """自动续跑关闭时返回 auto_disabled 停止原因。"""
     context = ConversationContext()
 
-    async def run(ctx, _config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         _append_tool_tail(ctx)
         return AgentResult(
             content="",
@@ -144,7 +157,11 @@ async def test_execute_auto_continue_completes_and_merges_trace_usage_without_ne
     user_counts: list[int] = []
     max_rounds: list[int] = []
 
-    async def run(ctx, config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         user_counts.append(sum(isinstance(message, UserMessage) for message in ctx.get_messages()))
         max_rounds.append(config.max_rounds)
         if len(user_counts) == 1:
@@ -186,7 +203,11 @@ async def test_execute_stops_on_total_token_budget() -> None:
     """累计 token 达预算时不自动续跑。"""
     context = ConversationContext()
 
-    async def run(ctx, _config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         _append_tool_tail(ctx)
         return AgentResult(
             content="",
@@ -246,7 +267,11 @@ async def test_execute_stops_on_risk_gate_required_from_tool_metadata() -> None:
     """首段命中稳定 guardrail metadata 时按 risk_gate_required 停止。"""
     context = ConversationContext()
 
-    async def run(ctx, _config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         _append_tool_tail(ctx)
         tool_message = ctx.get_messages()[-1]
         assert isinstance(tool_message, ToolMessage)

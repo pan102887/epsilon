@@ -3,6 +3,11 @@
 验证 ``TaskAgentConfig`` 通过项目统一配置基类表达 ``TASK_AGENT_*`` 配置项。
 """
 
+from pathlib import Path
+
+import pytest
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
+
 from common.configuration.configuration_utils import PropertiesFileSettingsSource
 from infrastructure.task.task_config import (
     UNLIMITED_MAX_ROUNDS_SENTINEL,
@@ -30,10 +35,12 @@ class TestTaskAgentConfig:
 
     def test_max_rounds_accepts_configured_value(self) -> None:
         """验证配置系统能解析 ``TASK_AGENT_MAX_ROUNDS`` 对应的整数值。"""
-        config = TaskAgentConfig(max_rounds="7")
+        config = TaskAgentConfig.model_validate({"max_rounds": "7"})
         assert config.max_rounds == 7
 
-    def test_max_rounds_accepts_environment_override(self, monkeypatch) -> None:
+    def test_max_rounds_accepts_environment_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """验证环境变量覆盖仍由 TaskAgentConfig 统一处理。"""
         monkeypatch.setenv("TASK_AGENT_MAX_ROUNDS", "12")
 
@@ -41,7 +48,7 @@ class TestTaskAgentConfig:
 
         assert config.max_rounds == 12
 
-    def test_max_rounds_loads_from_config_properties(self, tmp_path) -> None:
+    def test_max_rounds_loads_from_config_properties(self, tmp_path: Path) -> None:
         """验证 TaskAgentConfig 能通过 config.properties source 读取配置。"""
         props_file = tmp_path / "config.properties"
         props_file.write_text("TASK_AGENT_MAX_ROUNDS=6\n", encoding="utf-8")
@@ -51,13 +58,14 @@ class TestTaskAgentConfig:
 
             @classmethod
             def settings_customise_sources(
-                cls,
-                settings_cls,
-                init_settings,
-                env_settings,
-                dotenv_settings,
-                file_secret_settings,
-            ):
+                cls: type[BaseSettings],
+                settings_cls: type[BaseSettings],
+                init_settings: PydanticBaseSettingsSource,
+                env_settings: PydanticBaseSettingsSource,
+                dotenv_settings: PydanticBaseSettingsSource,
+                file_secret_settings: PydanticBaseSettingsSource,
+            ) -> tuple[PydanticBaseSettingsSource, ...]:
+                del cls, init_settings, env_settings, dotenv_settings, file_secret_settings
                 return (
                     PropertiesFileSettingsSource(
                         settings_cls,

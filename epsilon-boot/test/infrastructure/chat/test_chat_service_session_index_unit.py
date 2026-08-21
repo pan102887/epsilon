@@ -117,7 +117,7 @@ async def test_save_context_and_index_keeps_existing_created_at() -> None:
     session_index.upsert = AsyncMock()
     adapter = _adapter(session_store=session_store, session_index=session_index)
 
-    await adapter._save_context_and_index("s1", context, model="m1")
+    await adapter.save_context_and_index("s1", context, model="m1")
 
     metadata = session_index.upsert.call_args.args[0]
     assert metadata.created_at_epoch_ms == 1000
@@ -137,7 +137,7 @@ async def test_save_context_failure_does_not_touch_index() -> None:
     adapter = _adapter(session_store=session_store, session_index=session_index)
 
     with pytest.raises(RuntimeError, match="save failed"):
-        await adapter._save_context_and_index("s1", ConversationContext())
+        await adapter.save_context_and_index("s1", ConversationContext())
 
     session_index.get.assert_not_awaited()
     session_index.upsert.assert_not_awaited()
@@ -154,7 +154,7 @@ async def test_index_failure_propagates_after_context_saved() -> None:
     adapter = _adapter(session_store=session_store, session_index=session_index)
 
     with pytest.raises(RuntimeError, match="index failed"):
-        await adapter._save_context_and_index("s1", ConversationContext())
+        await adapter.save_context_and_index("s1", ConversationContext())
 
     session_store.save.assert_awaited_once()
 

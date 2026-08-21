@@ -107,7 +107,7 @@ class TestEnvPrefix:
 
     def test_env_prefix_is_python_exec(self) -> None:
         """model_config 中 env_prefix 应为 'PYTHON_EXEC_'。"""
-        assert PythonExecConfig.model_config["env_prefix"] == "PYTHON_EXEC_"
+        assert PythonExecConfig.model_config.get("env_prefix") == "PYTHON_EXEC_"
 
 
 class TestDefaultAllowedModulesConstant:

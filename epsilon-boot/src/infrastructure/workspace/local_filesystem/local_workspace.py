@@ -26,7 +26,7 @@ Port 的本地文件系统后端，同时实现 ``LocallyMaterializable`` 子协
 
 - :data:`_LOG_CONTEXT_WHITELIST`：
   允许合并进结构化日志 ``extra`` 的 context 键白名单。
-- :data:`_WINDOWS_WARNING_EMITTED`：
+- :data:`_windows_warning_emitted`：
   Windows 下 ``edit`` 首次跳过 ``flock`` 时记录一次 warning 的哨兵。
 
 模块级函数：
@@ -44,8 +44,9 @@ import platform
 import re
 import shutil
 import stat as _stat
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Protocol, cast
 
 from domain.workspace.exceptions import (
     WorkspaceConfinementViolation,
@@ -60,9 +61,13 @@ from domain.workspace.value_objects import (
     WorkspaceStatEntry,
 )
 from infrastructure.workspace.local_filesystem._common_impl import (
-    _edit_with_fallback_match,
-    _read_bytes_in_range,
-    _write_bytes_atomically,
+    edit_with_fallback_match as _edit_with_fallback_match,
+)
+from infrastructure.workspace.local_filesystem._common_impl import (
+    read_bytes_in_range as _read_bytes_in_range,
+)
+from infrastructure.workspace.local_filesystem._common_impl import (
+    write_bytes_atomically as _write_bytes_atomically,
 )
 from infrastructure.workspace.local_filesystem._guards import (
     IdentityGuard,
@@ -75,6 +80,7 @@ logger = logging.getLogger(__name__)
 # ── 观测上下文白名单（需求 4.4 / 8.6） ──
 
 _LOG_CONTEXT_WHITELIST: frozenset[str] = frozenset({"tool_name", "trace_id", "agent_id"})
+LOG_CONTEXT_WHITELIST = _LOG_CONTEXT_WHITELIST
 """允许合并进结构化日志 ``extra`` 的 ``context`` 键白名单。
 
 **红线**：此集合以外的任何 ``context`` 键都必须被 :func:`_sanitize_context`
@@ -82,7 +88,7 @@ _LOG_CONTEXT_WHITELIST: frozenset[str] = frozenset({"tool_name", "trace_id", "ag
 """
 
 
-def _sanitize_context(context: dict | None) -> dict[str, Any]:
+def _sanitize_context(context: Mapping[str, object] | None) -> dict[str, object]:
     """从 ``context`` 中仅提取白名单字段，容忍 ``None`` 与未知 key。
 
     本函数是 ``LocalFilesystemWorkspace`` 所有 I/O 方法合并观测上下文到
@@ -100,6 +106,11 @@ def _sanitize_context(context: dict | None) -> dict[str, Any]:
     if not context:
         return {}
     return {k: v for k, v in context.items() if k in _LOG_CONTEXT_WHITELIST}
+
+
+def sanitize_context(context: Mapping[str, object] | None) -> dict[str, object]:
+    """返回允许写入结构化日志的上下文字段。"""
+    return _sanitize_context(context)
 
 
 # ── 路径敏感子串脱敏（需求 8.3） ──
@@ -139,13 +150,18 @@ def _sanitize_requested_path_for_log(requested_path: str) -> str:
     return _SENSITIVE_PATH_KEY_PATTERN.sub(_replace, requested_path)
 
 
+def sanitize_requested_path_for_log(requested_path: str) -> str:
+    """返回适合写入日志的脱敏请求路径。"""
+    return _sanitize_requested_path_for_log(requested_path)
+
+
 def _log_confinement_violation(
     *,
     operation: str,
     requested_path: str,
     resolved_workspace_path: str | None,
     violation_reason: str,
-    context: dict | None,
+    context: Mapping[str, object] | None,
 ) -> None:
     """结构化日志：越界违规（需求 8.1）。
 
@@ -176,14 +192,38 @@ def _log_confinement_violation(
     )
 
 
+def log_confinement_violation(
+    *,
+    operation: str,
+    requested_path: str,
+    resolved_workspace_path: str | None,
+    violation_reason: str,
+    context: Mapping[str, object] | None,
+) -> None:
+    """记录工作区边界违规的脱敏结构化日志。"""
+    _log_confinement_violation(
+        operation=operation,
+        requested_path=requested_path,
+        resolved_workspace_path=resolved_workspace_path,
+        violation_reason=violation_reason,
+        context=context,
+    )
+
+
 # ── Windows `edit` 无锁降级的一次性 warning 哨兵 ──
 
-_WINDOWS_WARNING_EMITTED: bool = False
+_windows_warning_emitted = False
 """Windows 下 ``edit`` 首次跳过 ``fcntl.flock`` 时记录一次 warning 的哨兵。
 
 本进程生命周期内首次触发 Windows 降级分支时置 ``True``，避免每次 ``edit``
 都重复打印同一条警告（降低日志噪声，保留一次性告警的可观测性）。
 """
+
+
+def reset_windows_warning_sentinel() -> None:
+    """Reset the process-local Windows fallback warning state for isolated tests."""
+    global _windows_warning_emitted
+    _windows_warning_emitted = False
 
 
 class LocalFilesystemWorkspace(Workspace, LocallyMaterializable):
@@ -264,7 +304,7 @@ class LocalFilesystemWorkspace(Workspace, LocallyMaterializable):
         host_path: Path,
         operation: str,
         logical_path: WorkspacePath,
-        context: dict | None,
+        context: Mapping[str, object] | None,
     ) -> None:
         """运行两守卫并在越界时落结构化日志（需求 8.1 / 8.3）。
 
@@ -314,7 +354,7 @@ class LocalFilesystemWorkspace(Workspace, LocallyMaterializable):
         self,
         path: WorkspacePath,
         *,
-        context: dict | None = None,
+        context: Mapping[str, object] | None = None,
     ) -> bool:
         """判定 ``path`` 是否存在。
 
@@ -382,7 +422,7 @@ class LocalFilesystemWorkspace(Workspace, LocallyMaterializable):
         self,
         path: WorkspacePath,
         *,
-        context: dict | None = None,
+        context: Mapping[str, object] | None = None,
     ) -> WorkspaceStatEntry:
         """返回 ``path`` 的元数据。
 
@@ -452,7 +492,7 @@ class LocalFilesystemWorkspace(Workspace, LocallyMaterializable):
         *,
         start_line: int | None = None,
         end_line: int | None = None,
-        context: dict | None = None,
+        context: Mapping[str, object] | None = None,
     ) -> bytes:
         """读取 ``path`` 的字节内容，可选按 UTF-8 行范围切片。
 
@@ -551,7 +591,7 @@ class LocalFilesystemWorkspace(Workspace, LocallyMaterializable):
         path: WorkspacePath,
         content: bytes,
         *,
-        context: dict | None = None,
+        context: Mapping[str, object] | None = None,
     ) -> int:
         """将 ``content`` 原子写入 ``path``，返回写入字节数。
 
@@ -650,7 +690,7 @@ class LocalFilesystemWorkspace(Workspace, LocallyMaterializable):
         old_content: bytes,
         new_content: bytes,
         *,
-        context: dict | None = None,
+        context: Mapping[str, object] | None = None,
     ) -> int:
         """首匹配替换（精确 + 行级模糊回退），带 ``fcntl.flock`` 进程间互斥。
 
@@ -832,7 +872,7 @@ class LocalFilesystemWorkspace(Workspace, LocallyMaterializable):
         host_path: Path,
         path: WorkspacePath,
         is_windows: bool,
-        context: dict | None,
+        context: Mapping[str, object] | None,
     ) -> int:
         """以 acquire-verify 循环为 ``edit`` 取得与当前 inode 一致的已加锁 fd。
 
@@ -859,9 +899,9 @@ class LocalFilesystemWorkspace(Workspace, LocallyMaterializable):
                 （``reason="os_error"``）。
         """
         if is_windows:
-            global _WINDOWS_WARNING_EMITTED
-            if not _WINDOWS_WARNING_EMITTED:
-                _WINDOWS_WARNING_EMITTED = True
+            global _windows_warning_emitted
+            if not _windows_warning_emitted:
+                _windows_warning_emitted = True
                 logger.warning(
                     "Windows 不支持 fcntl.flock，edit 将在无锁下进行",
                     extra={
@@ -886,7 +926,18 @@ class LocalFilesystemWorkspace(Workspace, LocallyMaterializable):
                 raise WorkspaceNotFoundError(workspace_path=path) from e
 
         # POSIX acquire-verify loop
-        import fcntl  # 延迟 import：Windows 分支不需要
+        import fcntl as fcntl_module  # 延迟 import：Windows 分支不需要
+
+        class _FcntlModule(Protocol):
+            """当前适配器使用的 ``fcntl`` 最小类型表面。"""
+
+            LOCK_EX: int
+
+            def flock(self, fd: int, operation: int) -> None:
+                """对文件描述符加锁。"""
+                ...
+
+        fcntl = cast(_FcntlModule, fcntl_module)
 
         while True:
             try:
@@ -977,7 +1028,7 @@ class LocalFilesystemWorkspace(Workspace, LocallyMaterializable):
         path: WorkspacePath,
         *,
         recursive: bool = True,
-        context: dict | None = None,
+        context: Mapping[str, object] | None = None,
     ) -> list[WorkspaceStatEntry]:
         """列出 ``path`` 下的条目。
 
@@ -1115,7 +1166,7 @@ class LocalFilesystemWorkspace(Workspace, LocallyMaterializable):
         self,
         path: WorkspacePath,
         *,
-        context: dict | None = None,
+        context: Mapping[str, object] | None = None,
     ) -> None:
         """删除 ``path``。
 
@@ -1252,4 +1303,13 @@ class LocalFilesystemWorkspace(Workspace, LocallyMaterializable):
         Returns:
             ``self._root / path.to_posix().lstrip("/")``。
         """
-        return self._root / path.to_posix().lstrip("/")
+        relative_path = path.to_posix().lstrip("/")
+        if not relative_path:
+            return self._root
+        # WindowsPath 会把 ``root / "0:"`` 当作盘符相对路径并丢弃 root。
+        # 先拼成完整字符串再构造 Path，确保任何已校验逻辑段都留在工作区内。
+        return Path(f"{self._root}{os.sep}{relative_path}")
+
+    def to_host_path(self, path: WorkspacePath) -> Path:
+        """将已校验的逻辑路径映射为宿主路径。"""
+        return self._to_host_path(path)

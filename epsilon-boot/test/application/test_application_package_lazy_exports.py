@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from collections.abc import Iterator
 
 import pytest
 
@@ -18,7 +19,7 @@ def _drop_application_modules() -> None:
 
 
 @pytest.fixture(autouse=True)
-def isolated_application_modules():
+def isolated_application_modules() -> Iterator[None]:
     """隔离本文件的应用层导入，避免 FastAPI app 缓存影响其他测试。"""
     _drop_application_modules()
     yield
@@ -33,7 +34,7 @@ def test_import_application_does_not_load_fastapi_app() -> None:
 
 
 def test_import_cli_runtime_does_not_load_fastapi_app_or_configure_container(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """CLI runtime 模块导入不应初始化 HTTP adapter 或配置容器。"""
     calls: list[str] = []
@@ -61,7 +62,7 @@ def test_service_config_export_does_not_load_fastapi_app() -> None:
     assert SERVER_APP_MODULE not in sys.modules
 
 
-def test_app_export_lazy_loads_fastapi_app(monkeypatch) -> None:
+def test_app_export_lazy_loads_fastapi_app(monkeypatch: pytest.MonkeyPatch) -> None:
     """兼容导出 app 时，才按需加载 FastAPI app 模块。"""
     calls: list[str] = []
     container_config = importlib.import_module("application.container_config")

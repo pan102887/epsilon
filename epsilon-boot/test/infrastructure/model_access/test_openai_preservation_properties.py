@@ -147,7 +147,9 @@ def _make_mock_request() -> httpx.Request:
     return httpx.Request("POST", "https://fake-api.example.com/v1/chat/completions")
 
 
-def _make_mock_response(status_code: int, headers: dict | None = None) -> httpx.Response:
+def _make_mock_response(
+    status_code: int, headers: dict[str, str] | None = None
+) -> httpx.Response:
     """构造一个模拟的 httpx.Response 对象。
 
     Args:
@@ -160,7 +162,7 @@ def _make_mock_response(status_code: int, headers: dict | None = None) -> httpx.
     resp = httpx.Response(
         status_code=status_code,
         request=_make_mock_request(),
-        headers=headers or {},
+        headers=headers if headers is not None else {},
     )
     return resp
 
@@ -194,7 +196,7 @@ class TestPreservationNormalResponse:
         request = _make_chat_request()
         mock_completion = _make_mock_completion(content)
 
-        adapter._client.chat.completions.create = AsyncMock(return_value=mock_completion)
+        adapter.client.chat.completions.create = AsyncMock(return_value=mock_completion)
 
         response = await adapter.chat(request)
 
@@ -235,7 +237,7 @@ class TestPreservationTimeoutError:
         mock_request = _make_mock_request()
         error = APITimeoutError(request=mock_request)
 
-        adapter._client.chat.completions.create = AsyncMock(side_effect=error)
+        adapter.client.chat.completions.create = AsyncMock(side_effect=error)
 
         with pytest.raises(ModelTimeoutError):
             await adapter.chat(request)
@@ -253,7 +255,7 @@ class TestPreservationTimeoutError:
         mock_request = _make_mock_request()
         error = APITimeoutError(request=mock_request)
 
-        adapter._client.chat.completions.create = AsyncMock(side_effect=error)
+        adapter.client.chat.completions.create = AsyncMock(side_effect=error)
 
         with pytest.raises(ModelTimeoutError):
             async for _ in adapter.stream(request):
@@ -291,7 +293,7 @@ class TestPreservationRateLimitError:
         adapter = _make_adapter()
         request = _make_chat_request()
 
-        headers = {}
+        headers: dict[str, str] = {}
         if retry_after is not None:
             headers["retry-after"] = retry_after
 
@@ -302,7 +304,7 @@ class TestPreservationRateLimitError:
             body=None,
         )
 
-        adapter._client.chat.completions.create = AsyncMock(side_effect=error)
+        adapter.client.chat.completions.create = AsyncMock(side_effect=error)
 
         with pytest.raises(ModelRateLimitError):
             await adapter.chat(request)
@@ -320,7 +322,7 @@ class TestPreservationRateLimitError:
         adapter = _make_adapter()
         request = _make_chat_request()
 
-        headers = {}
+        headers: dict[str, str] = {}
         if retry_after is not None:
             headers["retry-after"] = retry_after
 
@@ -331,7 +333,7 @@ class TestPreservationRateLimitError:
             body=None,
         )
 
-        adapter._client.chat.completions.create = AsyncMock(side_effect=error)
+        adapter.client.chat.completions.create = AsyncMock(side_effect=error)
 
         with pytest.raises(ModelRateLimitError):
             async for _ in adapter.stream(request):
@@ -382,7 +384,7 @@ class TestPreservationAPIError:
             body=None,
         )
 
-        adapter._client.chat.completions.create = AsyncMock(side_effect=error)
+        adapter.client.chat.completions.create = AsyncMock(side_effect=error)
 
         with pytest.raises(ModelAccessError) as exc_info:
             await adapter.chat(request)
@@ -418,7 +420,7 @@ class TestPreservationAPIError:
             body=None,
         )
 
-        adapter._client.chat.completions.create = AsyncMock(side_effect=error)
+        adapter.client.chat.completions.create = AsyncMock(side_effect=error)
 
         with pytest.raises(ModelAccessError) as exc_info:
             async for _ in adapter.stream(request):

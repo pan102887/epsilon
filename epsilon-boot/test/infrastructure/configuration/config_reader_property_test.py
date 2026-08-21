@@ -40,14 +40,16 @@ class TestConcurrentReadConsistency:
         deadline=5000,
         suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
-    def test_concurrent_reads_return_consistent_values(self, num_threads, num_reads_per_thread):
+    def test_concurrent_reads_return_consistent_values(
+        self, num_threads: int, num_reads_per_thread: int
+    ) -> None:
         """验证多线程并发读取同一配置实例时，所有线程获得一致的值。"""
         config = _PropTestConfig()
-        errors = []
+        errors: list[tuple[int, str]] = []
 
-        def read_fields(thread_id: int):
+        def read_fields(thread_id: int) -> list[tuple[str, int, bool, float]]:
             """单个线程的读取操作。"""
-            results = []
+            results: list[tuple[str, int, bool, float]] = []
             try:
                 for _ in range(num_reads_per_thread):
                     results.append((config.name, config.port, config.debug, config.ratio))
@@ -57,7 +59,7 @@ class TestConcurrentReadConsistency:
 
         with ThreadPoolExecutor(max_workers=num_threads) as executor:
             futures = [executor.submit(read_fields, i) for i in range(num_threads)]
-            all_results = []
+            all_results: list[tuple[str, int, bool, float]] = []
             for future in as_completed(futures):
                 all_results.extend(future.result())
 
@@ -76,7 +78,7 @@ class TestConcurrentReadConsistency:
         deadline=5000,
         suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
-    def test_multiple_config_instances_independent(self, num_threads):
+    def test_multiple_config_instances_independent(self, num_threads: int) -> None:
         """验证多个配置实例在并发场景下互不干扰。"""
 
         class _ConfigA(PropertiesBaseSettings):
@@ -89,9 +91,9 @@ class TestConcurrentReadConsistency:
 
         config_a = _ConfigA()
         config_b = _ConfigB()
-        errors = []
+        errors: list[tuple[int, str]] = []
 
-        def read_both(thread_id: int):
+        def read_both(thread_id: int) -> None:
             try:
                 for _ in range(20):
                     assert config_a.value == "a"

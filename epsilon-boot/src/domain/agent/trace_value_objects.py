@@ -33,6 +33,14 @@ ARTIFACT_LOGICAL_PATH_MAX_LEN = 512
 """产物逻辑路径最大长度。"""
 
 
+def _metadata_dict() -> dict[str, Any]:
+    return {}
+
+
+def _trace_steps() -> list[AgentStepTrace]:
+    return []
+
+
 @dataclass(frozen=True)
 class ModelCallTrace:
     """模型调用记录。
@@ -68,7 +76,7 @@ class ToolCallTrace:
     timestamp_epoch: float
     error_class: str | None = None
     error_message: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=_metadata_dict)
     kind: Literal["tool_call"] = field(default="tool_call", init=False)
 
 
@@ -113,8 +121,8 @@ class SessionTrace:
 
     session_id: str
     started_at_epoch: float
-    steps: list[AgentStepTrace] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    steps: list[AgentStepTrace] = field(default_factory=_trace_steps)
+    metadata: dict[str, Any] = field(default_factory=_metadata_dict)
 
 
 @dataclass(frozen=True)

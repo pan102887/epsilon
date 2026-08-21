@@ -3,11 +3,29 @@
 定义了与 LLM 交互所需的值对象，包括请求、响应、流式响应分片和模型信息。
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
     from domain.chat.context import BaseMessage
+
+
+def _usage_dict() -> dict[str, int]:
+    return {}
+
+
+def _tool_call_list() -> list[ToolCallRequest]:
+    return []
+
+
+def _metadata_dict() -> dict[str, Any]:
+    return {}
+
+
+def _provider_set() -> frozenset[str]:
+    return frozenset()
 
 
 @dataclass(frozen=True)
@@ -52,7 +70,7 @@ class ChatRequest:
         extra_params: 扩展参数字典，用于传递特定模型的自定义参数。
     """
 
-    messages: "list[BaseMessage]"
+    messages: list[BaseMessage]
     model: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None
@@ -78,7 +96,7 @@ class ChatRequest:
         if not self.messages:
             raise ValueError("messages 不能为空")
 
-        for index, msg in enumerate(self.messages):
+        for index, msg in enumerate(cast("list[object]", self.messages)):
             if not isinstance(msg, BaseMessage):
                 raise ValueError(
                     f"messages[{index}] 必须为 BaseMessage 子类实例，当前类型: {type(msg).__name__}"
@@ -137,9 +155,9 @@ class LLMResponse:
 
     content: str
     model: str
-    usage: dict[str, int] = field(default_factory=dict)
+    usage: dict[str, int] = field(default_factory=_usage_dict)
     latency_ms: float = 0.0
-    tool_calls: list[ToolCallRequest] = field(default_factory=list)
+    tool_calls: list[ToolCallRequest] = field(default_factory=_tool_call_list)
 
 
 @dataclass(frozen=True)
@@ -222,7 +240,7 @@ class StreamingChunk:
     delta_content: str = ""
     finished: bool = False
     usage: dict[str, int] | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=_metadata_dict)
     tool_calls: list[StreamingToolCallDelta] | None = None
 
 
@@ -243,4 +261,4 @@ class ModelInfo:
     id: str
     object: str = "model"
     owned_by: str = ""
-    providers: frozenset[str] = field(default_factory=frozenset)
+    providers: frozenset[str] = field(default_factory=_provider_set)

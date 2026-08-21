@@ -39,7 +39,7 @@ class ToolExecutionRuntime(Protocol):
     对应方法逐一对应，语义不变。
     """
 
-    async def _execute_tool_call(
+    async def execute_tool_call_for_concurrency(
         self,
         context: ConversationContext,
         tool_call: ToolCallRequest,
@@ -52,7 +52,7 @@ class ToolExecutionRuntime(Protocol):
         """执行单个工具调用并返回 (结果, 是否错误)。"""
         ...
 
-    async def _record_tool_call_trace(
+    async def record_tool_call_trace(
         self,
         session_id: str | None,
         round_num: int,
@@ -64,7 +64,7 @@ class ToolExecutionRuntime(Protocol):
         """记录单个工具调用 trace。"""
         ...
 
-    async def _record_tool_after_observation(
+    async def record_tool_after_observation(
         self,
         *,
         tool_call: ToolCallRequest,
@@ -120,7 +120,7 @@ class ConcurrentToolExecutor:
             if len(tool_calls) == 1:
                 tc = tool_calls[0]
                 start_t = time.time()
-                result, is_error = await self._runtime._execute_tool_call(
+                result, is_error = await self._runtime.execute_tool_call_for_concurrency(
                     context,
                     tc,
                     config,
@@ -135,7 +135,7 @@ class ConcurrentToolExecutor:
                     tc: ToolCallRequest,
                 ) -> tuple[str, ToolExecutionResult, bool, float]:
                     start_t = time.time()
-                    result, is_error = await self._runtime._execute_tool_call(
+                    result, is_error = await self._runtime.execute_tool_call_for_concurrency(
                         context,
                         tc,
                         config,
@@ -151,10 +151,10 @@ class ConcurrentToolExecutor:
 
             for tc in tool_calls:
                 result, is_error, elapsed = tool_results[tc.id]
-                await self._runtime._record_tool_call_trace(
+                await self._runtime.record_tool_call_trace(
                     session_id, round_num, tc, result, is_error, elapsed
                 )
-                await self._runtime._record_tool_after_observation(
+                await self._runtime.record_tool_after_observation(
                     tool_call=tc,
                     usage=None,
                     round_num=round_num,
@@ -192,7 +192,7 @@ class ConcurrentToolExecutor:
                 tc = tool_calls[0]
                 yield self._tool_progress_chunk(round_num, tc, "start")
                 start_t = time.time()
-                result, is_error = await self._runtime._execute_tool_call(
+                result, is_error = await self._runtime.execute_tool_call_for_concurrency(
                     context,
                     tc,
                     config,
@@ -207,7 +207,7 @@ class ConcurrentToolExecutor:
                     tc: ToolCallRequest,
                 ) -> tuple[str, ToolExecutionResult, bool, float]:
                     start_t = time.time()
-                    result, is_error = await self._runtime._execute_tool_call(
+                    result, is_error = await self._runtime.execute_tool_call_for_concurrency(
                         context,
                         tc,
                         config,
@@ -225,10 +225,10 @@ class ConcurrentToolExecutor:
                 result, is_error, elapsed = tool_results[tc.id]
                 if len(tool_calls) > 1:
                     yield self._tool_progress_chunk(round_num, tc, "start")
-                await self._runtime._record_tool_call_trace(
+                await self._runtime.record_tool_call_trace(
                     session_id, round_num, tc, result, is_error, elapsed
                 )
-                await self._runtime._record_tool_after_observation(
+                await self._runtime.record_tool_after_observation(
                     tool_call=tc,
                     usage=None,
                     round_num=round_num,
@@ -271,7 +271,7 @@ class ConcurrentToolExecutor:
                     metadata={"round": round_num},
                 )
                 start_t = time.time()
-                result, is_error = await self._runtime._execute_tool_call(
+                result, is_error = await self._runtime.execute_tool_call_for_concurrency(
                     context,
                     tc,
                     config,
@@ -286,7 +286,7 @@ class ConcurrentToolExecutor:
                     tc: ToolCallRequest,
                 ) -> tuple[str, ToolExecutionResult, bool, float]:
                     start_t = time.time()
-                    result, is_error = await self._runtime._execute_tool_call(
+                    result, is_error = await self._runtime.execute_tool_call_for_concurrency(
                         context,
                         tc,
                         config,
@@ -310,10 +310,10 @@ class ConcurrentToolExecutor:
                         arguments=tc.arguments,
                         metadata={"round": round_num},
                     )
-                await self._runtime._record_tool_call_trace(
+                await self._runtime.record_tool_call_trace(
                     session_id, round_num, tc, result, is_error, elapsed
                 )
-                await self._runtime._record_tool_after_observation(
+                await self._runtime.record_tool_after_observation(
                     tool_call=tc,
                     usage=None,
                     round_num=round_num,

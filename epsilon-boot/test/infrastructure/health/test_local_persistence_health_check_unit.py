@@ -5,6 +5,7 @@
 
 import os
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
@@ -53,7 +54,7 @@ async def test_check_down_when_access_returns_false(
     # 模拟写权限缺失：读返回 True、写返回 False
     real_access = os.access
 
-    def fake_access(path, mode):
+    def fake_access(path: str | bytes | os.PathLike[str], mode: int) -> bool:
         if mode & os.W_OK:
             return False
         return real_access(path, mode)
@@ -71,7 +72,8 @@ async def test_check_down_when_tempfile_fails(tmp_path: Path, monkeypatch: pytes
     """``tempfile.NamedTemporaryFile`` 抛 ``OSError`` → DOWN。"""
     import infrastructure.health.local_persistence_health_check_adapter as module
 
-    def boom(*args, **kwargs):
+    def boom(*args: object, **kwargs: object) -> NoReturn:
+        del args, kwargs
         raise OSError("fake touch failure")
 
     monkeypatch.setattr(module.tempfile, "NamedTemporaryFile", boom)
@@ -86,7 +88,8 @@ async def test_check_never_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     """即使底层抛 ``OSError``，适配器也必须返回 DOWN 而非抛出。"""
     import infrastructure.health.local_persistence_health_check_adapter as module
 
-    def boom(*args, **kwargs):
+    def boom(*args: object, **kwargs: object) -> NoReturn:
+        del args, kwargs
         raise OSError("broken")
 
     monkeypatch.setattr(module.tempfile, "NamedTemporaryFile", boom)

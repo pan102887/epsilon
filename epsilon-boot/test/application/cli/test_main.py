@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import TracebackType
 from typing import Any
+
+import pytest
 
 from application.cli import main as cli_main
 
@@ -37,7 +40,12 @@ class FakeRuntime:
     async def __aenter__(self) -> FakeRuntime:
         return self
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         return None
 
     async def execute_once_json(self, goal: str, *, model: str | None = None) -> FakeJsonResult:
@@ -58,7 +66,10 @@ def test_exec_parser_accepts_json_flag() -> None:
     assert args.model == "glm-4.7"
 
 
-def test_exec_json_outputs_structured_payload(monkeypatch, capsys) -> None:
+def test_exec_json_outputs_structured_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     monkeypatch.setattr(cli_main, "CliRuntime", FakeRuntime)
     monkeypatch.setattr(cli_main, "_configure_cli_file_logging", lambda: None)
 

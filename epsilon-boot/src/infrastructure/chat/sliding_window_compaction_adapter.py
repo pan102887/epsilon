@@ -7,6 +7,7 @@
 """
 
 import logging
+from collections.abc import Sequence
 
 from domain.chat.context import AssistantMessage, BaseMessage, ToolMessage
 from domain.chat.value_objects import ContextCompactionResult
@@ -37,6 +38,11 @@ class SlidingWindowCompactionAdapter:
         if max_messages <= 0:
             raise ValueError(f"max_messages 必须为正整数，当前值为 {max_messages}")
         self._max_messages = max_messages
+
+    @property
+    def max_messages(self) -> int:
+        """Maximum number of non-system messages retained."""
+        return self._max_messages
 
     def _trim_with_pairing(
         self,
@@ -117,7 +123,7 @@ class SlidingWindowCompactionAdapter:
         kept_reverse.reverse()
         return kept_reverse
 
-    def compact_messages(self, messages: list[BaseMessage]) -> list[BaseMessage]:
+    def compact_messages(self, messages: Sequence[BaseMessage]) -> list[BaseMessage]:
         """同步压缩消息列表。
 
         执行配对保护的滑动窗口压缩策略：保留所有 system 消息，对非 system
@@ -147,7 +153,7 @@ class SlidingWindowCompactionAdapter:
 
     async def compact(
         self,
-        messages: list[BaseMessage],
+        messages: Sequence[BaseMessage],
         *,
         model_access: ModelAccessPort | None = None,
         model: str | None = None,

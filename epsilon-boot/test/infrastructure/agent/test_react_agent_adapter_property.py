@@ -4,6 +4,7 @@
 - 消息序列化正确性：OpenAICompatibleAdapter._to_openai_messages 输出格式正确
 """
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import hypothesis.strategies as st
@@ -20,7 +21,9 @@ from domain.chat.context import (
     ToolMessage,
     UserMessage,
 )
+from domain.chat.ports import ContextBuilderPort
 from domain.chat.value_objects import ContextBuilderResult
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import LLMResponse, StreamingChunk, ToolCallRequest
 from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 from infrastructure.model_access.openai_compatible_adapter import OpenAICompatibleAdapter
@@ -85,7 +88,7 @@ def test_message_serialization_correctness(messages: list[BaseMessage]) -> None:
 
     **Validates: Requirements 4.7**
     """
-    result = OpenAICompatibleAdapter._to_openai_messages(messages)
+    result = OpenAICompatibleAdapter.to_openai_messages(messages)
 
     assert len(result) == len(messages), (
         f"序列化结果长度不一致: 输入={len(messages)}, 输出={len(result)}"
@@ -113,16 +116,26 @@ def test_message_serialization_correctness(messages: list[BaseMessage]) -> None:
 # ── Property 4: Token usage accumulation ──
 # Feature: agent-abstraction-layer, Property 4: Token usage accumulation
 
-def _make_context_builder(usage: dict[str, int] | None = None) -> MagicMock:
+class _PassthroughContextBuilder:
+    """测试用原样消息构建器。"""
+
+    def __init__(self, usage: dict[str, int] | None = None) -> None:
+        self._usage = usage or {}
+
+    async def build(
+        self,
+        messages: list[BaseMessage],
+        *,
+        model_access: ModelAccessPort | None = None,
+        model: str | None = None,
+    ) -> ContextBuilderResult:
+        del model_access, model
+        return ContextBuilderResult(messages=messages, usage=dict(self._usage))
+
+
+def _make_context_builder(usage: dict[str, int] | None = None) -> ContextBuilderPort:
     """构造原样透传领域消息列表的 ContextBuilderPort mock。"""
-    context_builder = MagicMock()
-    context_builder.build = AsyncMock(
-        side_effect=lambda msgs, **kwargs: ContextBuilderResult(
-            messages=msgs,
-            usage=usage or {},
-        )
-    )
-    return context_builder
+    return _PassthroughContextBuilder(usage)
 
 
 # 策略：生成随机 token 用量字典
@@ -349,32 +362,6 @@ async def test_tool_exception_handling(error_message: str) -> None:
 # Feature: agent-abstraction-layer, Property 6: Agent run behavioral equivalence
 
 
-def _serialize_context_messages(messages):
-    """将消息列表序列化为可比较的元组列表。
-
-    提取每条消息的 (类型名, content, tool_calls, tool_call_id) 用于比较两个上下文
-    中的消息序列是否等价。
-
-    Args:
-        messages: BaseMessage 对象列表
-
-    Returns:
-        元组列表，每个元组包含消息的关键属性
-    """
-    result = []
-    for msg in messages:
-        entry = {
-            "type": type(msg).__name__,
-            "content": msg.content,
-        }
-        if isinstance(msg, AssistantMessage) and msg.tool_calls:
-            entry["tool_calls"] = [(tc.id, tc.name, tc.arguments) for tc in msg.tool_calls]
-        if isinstance(msg, ToolMessage):
-            entry["tool_call_id"] = msg.tool_call_id
-        result.append(entry)
-    return result
-
-
 @settings(max_examples=100, deadline=5000)
 @given(
     usages=st.lists(usage_st, min_size=1, max_size=4),
@@ -396,7 +383,7 @@ async def test_agent_run_behavioral_equivalence(
     responses = _build_llm_response_sequence(usages)
     max_rounds = len(responses) + 5
 
-    tool_schemas = [
+    tool_schemas: list[dict[str, Any]] = [
         {
             "type": "function",
             "function": {
@@ -492,7 +479,7 @@ async def test_agent_run_streaming_equivalence(
     responses = _build_llm_response_sequence(usages)
     max_rounds = len(responses) + 5
 
-    tool_schemas = [
+    tool_schemas: list[dict[str, Any]] = [
         {
             "type": "function",
             "function": {
@@ -588,7 +575,7 @@ async def test_iter_rounds_and_run_produce_equivalent_content(
     responses = _build_llm_response_sequence(usages)
     max_rounds = len(responses) + 5
 
-    tool_schemas = [
+    tool_schemas: list[dict[str, Any]] = [
         {
             "type": "function",
             "function": {
@@ -642,7 +629,7 @@ async def test_iter_rounds_and_run_produce_equivalent_content(
 
     # 直接消费 _iter_rounds 并手动执行工具
     final_content: str = ""
-    async for outcome in adapter_b._iter_rounds(context_b, config, model_access_b):
+    async for outcome in adapter_b.iter_rounds(context_b, config, model_access_b):
         if outcome.kind == "tool_calls":
             for tool_call in outcome.tool_calls:
                 context_b.add_tool_result(

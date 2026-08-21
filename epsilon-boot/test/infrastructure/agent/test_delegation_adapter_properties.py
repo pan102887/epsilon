@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -70,7 +71,7 @@ async def test_delegation_adapter_converts_task_result_to_delegation_result(
     config: NamedAgentConfig,
     task_goal: str,
     task_result: TaskResult,
-    input_data: dict | None,
+    input_data: dict[str, Any] | None,
 ) -> None:
     """验证 DelegationAdapter 正确将 TaskResult 转换为 DelegationResult。
 
@@ -134,7 +135,7 @@ async def test_delegation_adapter_raises_agent_not_found_for_unregistered_name(
     """
     # 1. 创建 AgentRegistryAdapter 并注册生成的配置
     registry = AgentRegistryAdapter()
-    registered_names = set()
+    registered_names: set[str] = set()
     for config in registered_configs:
         registry.register(config)
         registered_names.add(config.name)

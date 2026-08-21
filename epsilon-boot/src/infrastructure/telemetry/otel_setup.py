@@ -20,8 +20,9 @@
 嵌入 FastAPI 的 lifespan 生命周期。
 """
 
+import importlib
 import logging
-from typing import Any
+from typing import Any, Protocol, cast
 
 from opentelemetry import trace
 from opentelemetry.sdk.resources import SERVICE_NAME, SERVICE_VERSION, Resource
@@ -43,8 +44,39 @@ from .otel_config import otel_config
 
 logger = logging.getLogger(__name__)
 
+
+class _Instrumentor(Protocol):
+    """可选 OpenTelemetry 自动埋点器的最小接口。"""
+
+    def instrument(self, **kwargs: Any) -> None: ...
+
+
+class _FastAPIInstrumentor(Protocol):
+    """FastAPI 自动埋点器的类级调用接口。"""
+
+    @staticmethod
+    def instrument_app(app: Any) -> None: ...
+
+
+def _instrumentor(module_name: str, class_name: str) -> _Instrumentor:
+    """动态加载可选埋点包，避免把无类型信息依赖带入核心模块。"""
+    module = importlib.import_module(module_name)
+    instrumentor_type = cast(type[_Instrumentor], getattr(module, class_name))
+    return instrumentor_type()
+
 _tracer_provider: TracerProvider | None = None
 """模块级 TracerProvider 实例，由 ``init_telemetry()`` 创建，``shutdown_telemetry()`` 释放。"""
+
+
+def tracer_provider() -> TracerProvider | None:
+    """返回当前模块持有的 TracerProvider。"""
+    return _tracer_provider
+
+
+def set_tracer_provider(provider: TracerProvider | None) -> None:
+    """替换模块持有的 TracerProvider，供生命周期装配和测试隔离使用。"""
+    global _tracer_provider
+    _tracer_provider = provider
 
 
 def _build_resource() -> Resource:
@@ -63,6 +95,11 @@ def _build_resource() -> Resource:
             "deployment.environment": otel_config.environment,
         }
     )
+
+
+def build_resource() -> Resource:
+    """构建描述当前服务的 OpenTelemetry Resource。"""
+    return _build_resource()
 
 
 def _build_sampler() -> Sampler:
@@ -93,6 +130,11 @@ def _build_sampler() -> Sampler:
         return ParentBasedTraceIdRatio(ratio)
 
 
+def build_sampler() -> Sampler:
+    """根据当前配置构建采样器。"""
+    return _build_sampler()
+
+
 def _build_exporter() -> SpanExporter:
     """根据配置构建 Span 导出器。
 
@@ -120,6 +162,11 @@ def _build_exporter() -> SpanExporter:
     )
 
 
+def build_exporter() -> SpanExporter:
+    """根据当前配置构建 Span 导出器。"""
+    return _build_exporter()
+
+
 def _instrument_components() -> None:
     """根据配置对各组件执行自动埋点。
 
@@ -131,39 +178,44 @@ def _instrument_components() -> None:
     """
     if otel_config.instrument_httpx:
         try:
-            from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-
-            HTTPXClientInstrumentor().instrument()
+            _instrumentor(
+                "opentelemetry.instrumentation.httpx", "HTTPXClientInstrumentor"
+            ).instrument()
             logger.info("OpenTelemetry httpx 自动埋点已启用")
         except Exception:
             logger.warning("httpx 自动埋点失败，跳过", exc_info=True)
 
     if otel_config.instrument_redis:
         try:
-            from opentelemetry.instrumentation.redis import RedisInstrumentor
-
-            RedisInstrumentor().instrument()
+            _instrumentor(
+                "opentelemetry.instrumentation.redis", "RedisInstrumentor"
+            ).instrument()
             logger.info("OpenTelemetry Redis 自动埋点已启用")
         except Exception:
             logger.warning("Redis 自动埋点失败，跳过", exc_info=True)
 
     if otel_config.instrument_sqlalchemy:
         try:
-            from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
-
-            SQLAlchemyInstrumentor().instrument()
+            _instrumentor(
+                "opentelemetry.instrumentation.sqlalchemy", "SQLAlchemyInstrumentor"
+            ).instrument()
             logger.info("OpenTelemetry SQLAlchemy 自动埋点已启用")
         except Exception:
             logger.warning("SQLAlchemy 自动埋点失败，跳过", exc_info=True)
 
     if otel_config.log_correlation:
         try:
-            from opentelemetry.instrumentation.logging import LoggingInstrumentor
-
-            LoggingInstrumentor().instrument(set_logging_format=False)
+            _instrumentor(
+                "opentelemetry.instrumentation.logging", "LoggingInstrumentor"
+            ).instrument(set_logging_format=False)
             logger.info("OpenTelemetry Logging 关联已启用（trace_id/span_id 注入日志记录）")
         except Exception:
             logger.warning("Logging 自动埋点失败，跳过", exc_info=True)
+
+
+def instrument_components() -> None:
+    """按当前配置启用可选组件自动埋点。"""
+    _instrument_components()
 
 
 def instrument_fastapi_app(app: Any) -> None:
@@ -184,9 +236,11 @@ def instrument_fastapi_app(app: Any) -> None:
         return
 
     try:
-        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-
-        FastAPIInstrumentor.instrument_app(app)
+        module = importlib.import_module("opentelemetry.instrumentation.fastapi")
+        instrumentor_type = cast(
+            type[_FastAPIInstrumentor], vars(module)["FastAPIInstrumentor"]
+        )
+        instrumentor_type.instrument_app(app)
         logger.info("OpenTelemetry FastAPI 自动埋点已启用")
     except Exception:
         logger.warning("FastAPI 自动埋点失败，跳过", exc_info=True)

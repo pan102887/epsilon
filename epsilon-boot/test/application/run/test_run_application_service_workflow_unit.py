@@ -5,13 +5,13 @@ from __future__ import annotations
 from collections.abc import Collection
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from application.run.run_application_service import RunApplicationService
 from domain.run.exceptions import RunIdempotencyConflictError, RunUnknownWorkflowError
-from domain.run.ports import WorkflowSelection
+from domain.run.ports import RunEventStorePort, RunStorePort, WorkflowSelection
 from domain.run.value_objects import (
     EventRetentionPolicy,
     RunCapacityPolicy,
@@ -158,8 +158,8 @@ def _service(
     """构造 RunApplicationService。"""
 
     return RunApplicationService(
-        run_store=store,
-        event_store=event_store,
+        run_store=cast(RunStorePort, store),
+        event_store=cast(RunEventStorePort, event_store),
         capacity_policy=RunCapacityPolicy(max_queued_runs=10, max_running_runs=10),
         event_retention_policy=EventRetentionPolicy(
             max_event_count=100,

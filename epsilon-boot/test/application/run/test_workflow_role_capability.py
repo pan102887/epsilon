@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from application.run.workflow_orchestrator import WorkflowRunOrchestrator
+from domain.agent.ports import ApprovalStateStorePort
 from domain.agent.value_objects import ApprovalInterrupt
 from domain.chat.context import ConversationContext
 from domain.run.checkpoint_context import (
@@ -16,6 +18,12 @@ from domain.run.checkpoint_context import (
     set_run_checkpoint_context,
 )
 from domain.run.outcome import RunExecutionOutcome
+from domain.run.ports import (
+    RunCheckpointSinkPort,
+    RunEventStorePort,
+    RunStorePort,
+    WorkflowRegistryPort,
+)
 from domain.run.value_objects import (
     CheckpointPhase,
     DurableCheckpoint,
@@ -100,15 +108,13 @@ class _RunStore:
         """记录 child Run 创建请求并返回真实 child 快照。"""
 
         self.created.append(request)
-        self.child = RunSnapshot(
-            **{
-                **_snapshot(workflow_state=request.workflow_run_state or _state()).__dict__,
-                "run_id": "created-child-run",
-                "payload": request.payload,
-                "workflow_run_state": request.workflow_run_state,
-                "workflow_name": request.workflow_name,
-                "status": RunStatus.QUEUED,
-            }
+        self.child = replace(
+            _snapshot(workflow_state=request.workflow_run_state or _state()),
+            run_id="created-child-run",
+            payload=request.payload,
+            workflow_run_state=request.workflow_run_state,
+            workflow_name=request.workflow_name,
+            status=RunStatus.QUEUED,
         )
         return self.child
 
@@ -428,7 +434,7 @@ async def test_child_run_enabled_creates_real_child_and_checkpoints_before_waiti
             owner_id="worker-1",
             segment_index=7,
             recovery_mode=False,
-            sink=checkpoint_sink,
+            sink=cast(RunCheckpointSinkPort, checkpoint_sink),
             usage={"total_tokens": 3},
         )
     )
@@ -462,13 +468,11 @@ async def test_child_run_enabled_creates_real_child_and_checkpoints_before_waiti
 async def test_child_run_resume_observes_terminal_child_and_writes_reconciled_event() -> None:
     """父 Run 恢复时应观察真实 child 终态并写 CHILD_RUN_RECONCILED。"""
 
-    child = RunSnapshot(
-        **{
-            **_snapshot(workflow_state=_state()).__dict__,
-            "run_id": "child-1",
-            "status": RunStatus.SUCCEEDED,
-            "terminal_reason": "completed",
-        }
+    child = replace(
+        _snapshot(workflow_state=_state()),
+        run_id="child-1",
+        status=RunStatus.SUCCEEDED,
+        terminal_reason="completed",
     )
     events = _EventStore()
     approvals = _ApprovalStore()
@@ -513,12 +517,10 @@ async def test_child_run_resume_observes_terminal_child_and_writes_reconciled_ev
 async def test_child_run_resume_unreconciled_nonterminal_child_stays_waiting() -> None:
     """child 未终态时父 Run 恢复应保持 waiting，不假定成功完成。"""
 
-    child = RunSnapshot(
-        **{
-            **_snapshot(workflow_state=_state()).__dict__,
-            "run_id": "child-1",
-            "status": RunStatus.RUNNING,
-        }
+    child = replace(
+        _snapshot(workflow_state=_state()),
+        run_id="child-1",
+        status=RunStatus.RUNNING,
     )
     events = _EventStore()
     approvals = _ApprovalStore()
@@ -721,11 +723,11 @@ def _orchestrator(
     """构造测试编排器。"""
 
     return WorkflowRunOrchestrator(
-        event_store=event_store,
-        workflow_registry=_Registry(workflow),
+        event_store=cast(RunEventStorePort, event_store),
+        workflow_registry=cast(WorkflowRegistryPort, _Registry(workflow)),
         workflow_serializer=WorkflowSerializerAdapter(),
-        approval_store=approvals,
-        run_store=run_store,
+        approval_store=cast(ApprovalStateStorePort, approvals),
+        run_store=cast(RunStorePort | None, run_store),
         now=_Clock(),
     )
 

@@ -13,22 +13,15 @@
 
 import os
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
-from pydantic_settings import SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from common.configuration import ConfigProxy, PropertiesBaseSettings, create_config
-
-
-class _TestConfig(PropertiesBaseSettings):
-    """属性测试专用配置类，hot_reload 默认为 False。"""
-
-    model_config = SettingsConfigDict(env_prefix="PBT_PROXY_TEST_")
-
-    name: str = "default"
-    port: int = 8080
+from common.configuration.configuration_utils import PropertiesFileSettingsSource
 
 
 def _make_config_class(enable_hot_reload: bool) -> type[PropertiesBaseSettings]:
@@ -162,10 +155,10 @@ class TestAttributeForwardingProperty:
         )
 
         # 通过工厂函数创建代理对象（hot_reload=True → ConfigProxy）
-        proxy = create_config(config_cls)
+        proxy = cast(Any, create_config(config_cls))
 
         # 直接实例化配置类
-        direct = config_cls()
+        direct = cast(Any, config_cls())
 
         # 需求 2.1, 7.1: 代理通过 __getattr__ 透明转发属性访问
         # 需求 2.2, 6.2: 代理返回值与直接实例访问相同
@@ -236,7 +229,7 @@ class TestProxyIdentityEquivalenceProperty:
         )
 
         # 通过工厂函数创建代理对象（hot_reload=True → ConfigProxy）
-        proxy = create_config(config_cls)
+        proxy = cast(Any, create_config(config_cls))
 
         # 直接实例化配置类
         direct = config_cls()
@@ -321,7 +314,7 @@ class TestImmutableSemanticsProperty:
                 "port": 9090,
             },
         )
-        proxy = create_config(config_cls)
+        proxy = cast(Any, create_config(config_cls))
 
         # 记录赋值前的状态快照
         repr_before = repr(proxy)
@@ -367,7 +360,11 @@ class TestMtimeBasedRefreshProperty:
         suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     def test_mtime_based_config_refresh(
-        self, initial_port: int, updated_port: int, tmp_path: Path, monkeypatch
+        self,
+        initial_port: int,
+        updated_port: int,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """验证 mtime 未变更时返回缓存实例，mtime 变更后返回新配置值。
 
@@ -419,19 +416,15 @@ class TestMtimeBasedRefreshProperty:
         )
 
         # 覆盖 settings_customise_sources 以使用临时 properties 文件
-        from common.configuration.configuration_utils import (
-            PropertiesFileSettingsSource,
-        )
-
-        @classmethod  # type: ignore[misc]
+        @classmethod
         def _custom_sources(
-            cls,
-            settings_cls,
-            init_settings,
-            env_settings,
-            dotenv_settings,
-            file_secret_settings,
-        ):
+            cls: type[PropertiesBaseSettings],
+            settings_cls: type[BaseSettings],
+            init_settings: PydanticBaseSettingsSource,
+            env_settings: PydanticBaseSettingsSource,
+            dotenv_settings: PydanticBaseSettingsSource,
+            file_secret_settings: PydanticBaseSettingsSource,
+        ) -> tuple[PydanticBaseSettingsSource, ...]:
             """使用临时 properties 文件路径的自定义配置源。"""
             return (
                 init_settings,
@@ -441,10 +434,10 @@ class TestMtimeBasedRefreshProperty:
                 file_secret_settings,
             )
 
-        config_cls.settings_customise_sources = _custom_sources
+        cast(Any, config_cls).settings_customise_sources = _custom_sources
 
         # 创建代理对象
-        proxy = ConfigProxy(config_cls)
+        proxy = cast(Any, ConfigProxy(config_cls))
 
         # 验证初始值
         assert proxy.port == initial_port, f"初始 port 应为 {initial_port}，实际为 {proxy.port}"
@@ -495,7 +488,10 @@ class TestRefreshFailureRetainsOldConfigProperty:
         suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     def test_refresh_failure_retains_old_config(
-        self, initial_port: int, tmp_path: Path, monkeypatch
+        self,
+        initial_port: int,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """验证配置刷新失败时代理继续返回旧配置值，不抛出异常。
 
@@ -529,10 +525,6 @@ class TestRefreshFailureRetainsOldConfigProperty:
         monkeypatch.setattr("common.configuration.config_proxy._find_file", mock_find_file)
 
         # 动态创建 hot_reload=True 的配置子类，port 为 int 类型（严格校验）
-        from common.configuration.configuration_utils import (
-            PropertiesFileSettingsSource,
-        )
-
         config_cls = type(
             "_DynamicFailRetainConfig",
             (PropertiesBaseSettings,),
@@ -551,15 +543,15 @@ class TestRefreshFailureRetainsOldConfigProperty:
         )
 
         # 覆盖 settings_customise_sources 以使用临时 properties 文件
-        @classmethod  # type: ignore[misc]
+        @classmethod
         def _custom_sources(
-            cls,
-            settings_cls,
-            init_settings,
-            env_settings,
-            dotenv_settings,
-            file_secret_settings,
-        ):
+            cls: type[PropertiesBaseSettings],
+            settings_cls: type[BaseSettings],
+            init_settings: PydanticBaseSettingsSource,
+            env_settings: PydanticBaseSettingsSource,
+            dotenv_settings: PydanticBaseSettingsSource,
+            file_secret_settings: PydanticBaseSettingsSource,
+        ) -> tuple[PydanticBaseSettingsSource, ...]:
             """使用临时 properties 文件路径的自定义配置源。"""
             return (
                 init_settings,
@@ -569,10 +561,10 @@ class TestRefreshFailureRetainsOldConfigProperty:
                 file_secret_settings,
             )
 
-        config_cls.settings_customise_sources = _custom_sources
+        cast(Any, config_cls).settings_customise_sources = _custom_sources
 
         # 创建代理对象并验证初始值
-        proxy = ConfigProxy(config_cls)
+        proxy = cast(Any, ConfigProxy(config_cls))
         assert proxy.port == initial_port, f"初始 port 应为 {initial_port}，实际为 {proxy.port}"
 
         # 将 config.properties 修改为非法内容（port 为非数字字符串，导致 int 校验失败）
@@ -620,7 +612,10 @@ class TestFailedRefreshPreventsRetryProperty:
         suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     def test_failed_refresh_prevents_subsequent_retry(
-        self, initial_port: int, tmp_path: Path, monkeypatch
+        self,
+        initial_port: int,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """验证失败刷新后，文件未再次修改时后续访问不再尝试重新实例化。
 
@@ -656,10 +651,6 @@ class TestFailedRefreshPreventsRetryProperty:
         monkeypatch.setattr("common.configuration.config_proxy._find_file", mock_find_file)
 
         # 动态创建 hot_reload=True 的配置子类
-        from common.configuration.configuration_utils import (
-            PropertiesFileSettingsSource,
-        )
-
         config_cls = type(
             "_DynamicNoRetryConfig",
             (PropertiesBaseSettings,),
@@ -678,15 +669,15 @@ class TestFailedRefreshPreventsRetryProperty:
         )
 
         # 覆盖 settings_customise_sources 以使用临时 properties 文件
-        @classmethod  # type: ignore[misc]
+        @classmethod
         def _custom_sources(
-            cls,
-            settings_cls,
-            init_settings,
-            env_settings,
-            dotenv_settings,
-            file_secret_settings,
-        ):
+            cls: type[PropertiesBaseSettings],
+            settings_cls: type[BaseSettings],
+            init_settings: PydanticBaseSettingsSource,
+            env_settings: PydanticBaseSettingsSource,
+            dotenv_settings: PydanticBaseSettingsSource,
+            file_secret_settings: PydanticBaseSettingsSource,
+        ) -> tuple[PydanticBaseSettingsSource, ...]:
             """使用临时 properties 文件路径的自定义配置源。"""
             return (
                 init_settings,
@@ -696,10 +687,10 @@ class TestFailedRefreshPreventsRetryProperty:
                 file_secret_settings,
             )
 
-        config_cls.settings_customise_sources = _custom_sources
+        cast(Any, config_cls).settings_customise_sources = _custom_sources
 
         # 创建代理对象并验证初始值
-        proxy = ConfigProxy(config_cls)
+        proxy = cast(Any, ConfigProxy(config_cls))
         assert proxy.port == initial_port, f"初始 port 应为 {initial_port}，实际为 {proxy.port}"
 
         # 将 config.properties 修改为非法内容（port 为非数字字符串，导致 int 校验失败）
@@ -722,7 +713,7 @@ class TestFailedRefreshPreventsRetryProperty:
 
         call_count = 0
 
-        def tracking_init(self_inner, *args, **kwargs):
+        def tracking_init(self_inner: Any, *args: Any, **kwargs: Any) -> None:
             """追踪构造器调用次数的包装函数。"""
             nonlocal call_count
             call_count += 1

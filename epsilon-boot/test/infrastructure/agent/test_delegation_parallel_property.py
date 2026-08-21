@@ -20,7 +20,7 @@ from domain.agent.value_objects import (
     DelegationRequest,
     NamedAgentConfig,
 )
-from domain.task.value_objects import TaskResult, TaskStatus
+from domain.task.value_objects import Task, TaskResult, TaskStatus
 from infrastructure.agent.agent_registry_adapter import AgentRegistryAdapter
 from infrastructure.agent.delegation_adapter import DelegationAdapter
 
@@ -78,7 +78,7 @@ async def test_delegate_parallel_preserves_order_and_isolates_failures(
 
     task_agent = AsyncMock()
 
-    async def _execute(task):
+    async def _execute(task: Task) -> TaskResult:
         if "fail" in task.goal:
             raise RuntimeError("simulated runtime failure")
         return TaskResult(

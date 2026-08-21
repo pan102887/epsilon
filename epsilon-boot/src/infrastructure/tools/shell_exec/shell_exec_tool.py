@@ -94,6 +94,10 @@ _WIN_PRESERVED_VARS: set[str] = {
     "COMSPEC",
 }
 
+SENSITIVE_KEYWORDS = _SENSITIVE_KEYWORDS
+UNIX_PRESERVED_VARS = _UNIX_PRESERVED_VARS
+WIN_PRESERVED_VARS = _WIN_PRESERVED_VARS
+
 
 def _blocked_command_reason(command: str) -> str | None:
     """返回 Shell 命令命中安全阻断的原因，未命中时返回 None。"""
@@ -116,6 +120,11 @@ def _blocked_command_reason(command: str) -> str | None:
             return reason
 
     return None
+
+
+def blocked_command_reason(command: str) -> str | None:
+    """返回 Shell 命令的安全阻断原因，供诊断和测试使用。"""
+    return _blocked_command_reason(command)
 
 
 def _reject_dangerous_command(command: str, *, tool_name: str) -> None:

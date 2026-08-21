@@ -43,12 +43,12 @@ from domain.model_access.value_objects import (
 logger = logging.getLogger(__name__)
 
 
-class _RoundStreamAccumulator:
+class RoundStreamAccumulator:
     """单轮流式分片累积器，对外产出与 ``model_access.chat`` 等价的 ``LLMResponse``。
 
     使用方式（仅由 ``_iter_rounds`` 内部使用）::
 
-        accumulator = _RoundStreamAccumulator(model=config.model or "")
+        accumulator = RoundStreamAccumulator(model=config.model or "")
         await accumulator.consume(model_access.stream(chat_request))
         response = accumulator.build_response()
 
@@ -101,8 +101,7 @@ class _RoundStreamAccumulator:
         async for chunk in stream:
             self.record_chunk(chunk)
 
-        if self._start is not None:
-            self._latency_ms = (time.monotonic() - self._start) * 1000.0
+        self._latency_ms = (time.monotonic() - self._start) * 1000.0
 
     def record_chunk(self, chunk: StreamingChunk) -> None:
         """累积单个流式分片。
@@ -193,7 +192,7 @@ class _RoundStreamAccumulator:
         if self._final_tool_calls is not None:
             tool_calls = list(self._final_tool_calls)
         else:
-            tool_calls = []
+            tool_calls: list[ToolCallRequest] = []
             for index in sorted(self._acc_tool_calls):
                 slot = self._acc_tool_calls[index]
                 tc_id = slot.get("id") or ""

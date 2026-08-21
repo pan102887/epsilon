@@ -2,6 +2,7 @@
 
 import json
 import logging
+from collections.abc import Sequence
 
 from domain.chat.context import BaseMessage, SystemMessage, UserMessage
 from domain.chat.value_objects import ContextCompactionResult
@@ -41,45 +42,58 @@ class LLMSummaryCompactionAdapter:
         self._keep_recent_messages = keep_recent_messages
         self._fallback = fallback
 
+    @property
+    def trigger_tokens(self) -> int:
+        return self._trigger_tokens
+
+    @property
+    def keep_recent_messages(self) -> int:
+        return self._keep_recent_messages
+
+    @property
+    def fallback(self) -> SlidingWindowCompactionAdapter:
+        return self._fallback
+
     async def compact(
         self,
-        messages: list[BaseMessage],
+        messages: Sequence[BaseMessage],
         *,
         model_access: ModelAccessPort | None = None,
         model: str | None = None,
     ) -> ContextCompactionResult:
         """按 token 阈值压缩消息列表。"""
+        message_list = list(messages)
         if model_access is None:
             return await self._fallback_with_warning(
-                messages,
+                message_list,
                 reason_class="ModelAccessMissing",
             )
-        if model_access.count_tokens(messages) < self._trigger_tokens:
-            return ContextCompactionResult(messages=list(messages))
+        if model_access.count_tokens(message_list) < self._trigger_tokens:
+            return ContextCompactionResult(messages=message_list)
 
-        system_messages, earlier_messages, recent_messages = self._split_messages(messages)
+        system_messages, earlier_messages, recent_messages = self._split_messages(message_list)
         if not earlier_messages:
-            return ContextCompactionResult(messages=list(messages))
+            return ContextCompactionResult(messages=message_list)
 
         try:
             request = self._build_summary_request(earlier_messages, model=model)
             response = await model_access.chat(request)
         except Exception as exc:
             return await self._fallback_with_warning(
-                messages,
+                message_list,
                 reason_class=type(exc).__name__,
             )
 
         if response.tool_calls:
             return await self._fallback_with_warning(
-                messages,
+                message_list,
                 reason_class="SummaryToolCalls",
             )
 
         summary = response.content.strip()
         if not summary:
             return await self._fallback_with_warning(
-                messages,
+                message_list,
                 reason_class="BlankSummary",
             )
 

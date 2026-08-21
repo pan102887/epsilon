@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
+from typing import Any
 
 from application.task.task_trace_workflow import TaskTraceWorkflow
 from domain.agent.exceptions import (
@@ -24,7 +25,12 @@ from domain.agent.segmented_progress import (
     normalized_tool_call_digest,
     total_tokens_from_usage,
 )
-from domain.agent.value_objects import AgentConfig, AgentResult, ApprovalInterrupt
+from domain.agent.value_objects import (
+    AgentConfig,
+    AgentResult,
+    ApprovalDecision,
+    ApprovalInterrupt,
+)
 from domain.chat.context import ConversationContext, SystemMessage, ToolMessage
 from domain.chat.exceptions import ContinuationUnavailableError
 from domain.chat.ports import SessionContextStorePort
@@ -53,7 +59,7 @@ PrepareExecuteTaskCallable = Callable[[Task, ConversationContext], TaskRunPlan]
 PrepareResumeTaskCallable = Callable[[str, ConversationContext, str | None], TaskRunPlan]
 RunTaskAgentCallable = Callable[[ConversationContext, AgentConfig], Awaitable[AgentResult]]
 ResumeTaskAgentCallable = Callable[
-    [ConversationContext, AgentConfig, ApprovalInterrupt, tuple],
+    [ConversationContext, AgentConfig, ApprovalInterrupt, tuple[ApprovalDecision, ...]],
     Awaitable[AgentResult],
 ]
 CanContinueTaskCallable = Callable[[ConversationContext], bool]
@@ -410,10 +416,7 @@ class TaskApplicationService:
             )
             return
         system_message = existing_system_messages[0]
-        if (
-            isinstance(system_message.metadata, dict)
-            and "task_allowed_tool_names" not in system_message.metadata
-        ):
+        if "task_allowed_tool_names" not in system_message.metadata:
             system_message.metadata["task_allowed_tool_names"] = plan.allowed_tool_names
 
     @staticmethod
@@ -422,7 +425,7 @@ class TaskApplicationService:
         context: ConversationContext,
         pre_message_count: int,
         approval_required: bool = False,
-        approval_metadata: dict | None = None,
+        approval_metadata: dict[str, Any] | None = None,
     ) -> tuple[bool, str | None]:
         guardrail_reason: str | None = None
         for message in context.get_messages()[pre_message_count:]:
@@ -438,7 +441,10 @@ class TaskApplicationService:
 
         approval_data = approval_metadata or {}
         if approval_required and approval_data.get("source") == "guardrail":
-            return True, approval_data.get("guardrail_reason") or guardrail_reason
+            approval_reason = approval_data.get("guardrail_reason")
+            if isinstance(approval_reason, str) and approval_reason:
+                return True, approval_reason
+            return True, guardrail_reason
         return False, guardrail_reason
 
     @staticmethod

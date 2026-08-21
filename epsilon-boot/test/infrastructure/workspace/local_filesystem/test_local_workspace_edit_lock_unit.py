@@ -24,7 +24,9 @@ import errno
 import logging
 import sys
 import threading
+from collections.abc import Iterator
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
@@ -52,11 +54,11 @@ def ws(tmp_path: Path) -> LocalFilesystemWorkspace:
 
 
 @pytest.fixture(autouse=True)
-def _reset_windows_warning_sentinel():
+def reset_windows_warning_sentinel_fixture() -> Iterator[None]:
     """每个用例前后把 Windows 一次性 warning 哨兵重置为 ``False``。"""
-    _lw._WINDOWS_WARNING_EMITTED = False
+    _lw.reset_windows_warning_sentinel()
     yield
-    _lw._WINDOWS_WARNING_EMITTED = False
+    _lw.reset_windows_warning_sentinel()
 
 
 class TestEditConcurrencyMutex:
@@ -164,7 +166,7 @@ class TestFlockEagainTranslatesToLockFailed:
 
         import fcntl as _fcntl  # POSIX 专用，跳过了 Windows 用例
 
-        def _raise_eagain(*_args, **_kwargs):
+        def _raise_eagain(*_args: object, **_kwargs: object) -> NoReturn:
             raise BlockingIOError(errno.EAGAIN, "Resource temporarily unavailable")
 
         monkeypatch.setattr(_fcntl, "flock", _raise_eagain)

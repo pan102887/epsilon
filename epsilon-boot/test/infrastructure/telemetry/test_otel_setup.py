@@ -7,10 +7,11 @@
 组件埋点开关控制、故障隔离和 SDK 初始化/关闭流程的正确性。
 """
 
+import importlib
 import io
 import logging
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Protocol, cast
 from unittest.mock import MagicMock, patch
 
 from hypothesis import given, settings
@@ -23,15 +24,24 @@ from opentelemetry.sdk.trace.sampling import (
     TraceIdRatioBased,
 )
 
-import infrastructure.telemetry.otel_setup as otel_setup_module
 from infrastructure.telemetry.otel_setup import (
-    _build_exporter,
-    _build_resource,
-    _build_sampler,
-    _instrument_components,
+    build_exporter as _build_exporter,
+)
+from infrastructure.telemetry.otel_setup import (
+    build_resource as _build_resource,
+)
+from infrastructure.telemetry.otel_setup import (
+    build_sampler as _build_sampler,
+)
+from infrastructure.telemetry.otel_setup import (
     init_telemetry,
     instrument_fastapi_app,
+    set_tracer_provider,
     shutdown_telemetry,
+    tracer_provider,
+)
+from infrastructure.telemetry.otel_setup import (
+    instrument_components as _instrument_components,
 )
 
 # ---------------------------------------------------------------------------
@@ -45,6 +55,14 @@ _safe_text = st.text(
 
 # 已知采样器名称集合
 _KNOWN_SAMPLER_NAMES = {"always_on", "always_off", "traceidratio", "parentbased_traceidratio"}
+
+
+class _LoggingInstrumentor(Protocol):
+    """测试使用的 LoggingInstrumentor 最小接口。"""
+
+    def instrument(self, *, set_logging_format: bool) -> None: ...
+
+    def uninstrument(self) -> None: ...
 
 
 # ===================================================================
@@ -425,15 +443,15 @@ class TestInitShutdownTelemetry:
         mock_config.enabled = False
 
         # 确保初始状态为 None
-        otel_setup_module._tracer_provider = None
+        set_tracer_provider(None)
 
         try:
             with patch("infrastructure.telemetry.otel_setup.otel_config", mock_config):
                 await init_telemetry()
 
-            assert otel_setup_module._tracer_provider is None
+            assert tracer_provider() is None
         finally:
-            otel_setup_module._tracer_provider = None
+            set_tracer_provider(None)
 
     async def test_init_creates_tracer_provider_when_enabled(self) -> None:
         """验证 enabled=True 时 init_telemetry 创建 TracerProvider 并设为全局 provider。"""
@@ -457,12 +475,13 @@ class TestInitShutdownTelemetry:
             ):
                 await init_telemetry()
 
-                assert otel_setup_module._tracer_provider is not None
+                assert tracer_provider() is not None
                 mock_trace.set_tracer_provider.assert_called_once()
         finally:
-            if otel_setup_module._tracer_provider is not None:
-                otel_setup_module._tracer_provider.shutdown()
-                otel_setup_module._tracer_provider = None
+            provider = tracer_provider()
+            if provider is not None:
+                provider.shutdown()
+                set_tracer_provider(None)
 
     async def test_init_uses_batch_span_processor(self) -> None:
         """验证 TracerProvider 使用 BatchSpanProcessor 处理 span 数据。"""
@@ -489,31 +508,32 @@ class TestInitShutdownTelemetry:
 
                 mock_bsp.assert_called_once()
         finally:
-            if otel_setup_module._tracer_provider is not None:
-                otel_setup_module._tracer_provider.shutdown()
-                otel_setup_module._tracer_provider = None
+            provider = tracer_provider()
+            if provider is not None:
+                provider.shutdown()
+                set_tracer_provider(None)
 
     async def test_shutdown_calls_provider_shutdown(self) -> None:
         """验证 shutdown_telemetry 调用 provider.shutdown() 并释放引用。"""
         mock_provider = MagicMock()
-        otel_setup_module._tracer_provider = mock_provider
+        set_tracer_provider(mock_provider)
 
         try:
             await shutdown_telemetry()
 
             mock_provider.shutdown.assert_called_once()
-            assert otel_setup_module._tracer_provider is None
+            assert tracer_provider() is None
         finally:
-            otel_setup_module._tracer_provider = None
+            set_tracer_provider(None)
 
     async def test_shutdown_safe_when_provider_is_none(self) -> None:
         """验证 shutdown_telemetry 在 provider 为 None 时安全返回，不抛出异常。"""
-        otel_setup_module._tracer_provider = None
+        set_tracer_provider(None)
 
         # 不应抛出任何异常
         await shutdown_telemetry()
 
-        assert otel_setup_module._tracer_provider is None
+        assert tracer_provider() is None
 
 
 # ===================================================================
@@ -814,9 +834,11 @@ class TestLogCorrelation:
 
         **需求: 9.1, 9.3**
         """
-        from opentelemetry.instrumentation.logging import LoggingInstrumentor
-
-        instrumentor = LoggingInstrumentor()
+        logging_module = importlib.import_module("opentelemetry.instrumentation.logging")
+        instrumentor_type = cast(
+            type[_LoggingInstrumentor], vars(logging_module)["LoggingInstrumentor"]
+        )
+        instrumentor = instrumentor_type()
         instrumentor.instrument(set_logging_format=True)
 
         try:

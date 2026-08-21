@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
 
 from application.task import TaskApplicationService, TaskRunPlan, TaskTraceWorkflow
 from domain.agent.exceptions import ApprovalDecisionCountMismatchError, ApprovalExpiredError
+from domain.agent.ports import ApprovalStateStorePort
 from domain.agent.segmented_execution import SegmentExecutionPolicy
 from domain.agent.value_objects import (
     AgentConfig,
@@ -18,6 +20,7 @@ from domain.agent.value_objects import (
 )
 from domain.chat.context import ConversationContext, ToolMessage, UserMessage
 from domain.chat.exceptions import ContinuationUnavailableError
+from domain.chat.ports import SessionContextStorePort
 from domain.model_access.value_objects import ToolCallRequest
 from domain.task.value_objects import (
     Task,
@@ -95,8 +98,8 @@ def _service(
     store = _SessionStore(context)
     return (
         TaskApplicationService(
-            session_store=store,
-            approval_store=approval_store,
+            session_store=cast(SessionContextStorePort, store),
+            approval_store=cast(ApprovalStateStorePort | None, approval_store),
             trace_workflow=TaskTraceWorkflow(),
             segment_policy=segment_policy or SegmentExecutionPolicy(),
             prompt_id="task-template@v1",

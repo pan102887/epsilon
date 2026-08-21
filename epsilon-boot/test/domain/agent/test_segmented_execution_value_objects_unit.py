@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import cast
+
 import pytest
 
 from domain.agent.segmented_execution import (
@@ -45,8 +48,9 @@ def test_segment_execution_policy_rejects_invalid_values(
     value: int,
 ) -> None:
     """策略字段必须拒绝无法执行的非法阈值。"""
+    constructor = cast(Callable[..., SegmentExecutionPolicy], SegmentExecutionPolicy)
     with pytest.raises(ValueError):
-        SegmentExecutionPolicy(**{field: value})
+        constructor(**{field: value})
 
 
 def test_segment_budget_usage_plus_segment_accumulates_counts() -> None:

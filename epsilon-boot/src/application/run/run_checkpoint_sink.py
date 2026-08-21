@@ -12,7 +12,11 @@ from domain.chat.context import ConversationContext
 from domain.model_access.value_objects import ToolCallRequest
 from domain.run.checkpoint_context import get_run_checkpoint_context
 from domain.run.exceptions import RunCheckpointWriteError
-from domain.run.ports import RunCheckpointSinkPort, RunCheckpointStorePort, RunEventStorePort
+from domain.run.ports import (
+    RunCheckpointSinkPort,
+    RunCheckpointStorePort,
+    RunEventAppenderPort,
+)
 from domain.run.value_objects import (
     CheckpointPhase,
     CheckpointRetentionPolicy,
@@ -34,7 +38,7 @@ class RunCheckpointSink(RunCheckpointSinkPort):
         self,
         *,
         checkpoint_store: RunCheckpointStorePort,
-        event_store: RunEventStorePort,
+        event_store: RunEventAppenderPort,
         retention_policy: CheckpointRetentionPolicy,
         now: Callable[[], datetime] | None = None,
     ) -> None:

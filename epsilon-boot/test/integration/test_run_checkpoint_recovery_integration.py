@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +17,7 @@ from domain.run.value_objects import (
     RunEventType,
     RunKind,
     RunPayload,
+    RunSnapshot,
     RunStatus,
     ToolLedgerStatus,
     ToolReplayPolicy,
@@ -34,10 +36,13 @@ from infrastructure.run.run_serialization_adapters import GuardrailSerializerAda
 pytestmark = pytest.mark.asyncio
 
 
-async def test_file_backend_recovers_expired_run_from_compatible_checkpoint(tmp_path) -> None:
+async def test_file_backend_recovers_expired_run_from_compatible_checkpoint(
+    tmp_path: Path,
+) -> None:
     run_store, checkpoint_store = _stores(tmp_path)
     service = _service(run_store, checkpoint_store)
     claimed = await _expired_run(run_store)
+    assert claimed.lease is not None
     checkpoint = await checkpoint_store.save_checkpoint(_checkpoint(claimed.run_id))
 
     recovered = await service.sweep_expired_leases(
@@ -53,10 +58,11 @@ async def test_file_backend_recovers_expired_run_from_compatible_checkpoint(tmp_
     assert [event.event_type for event in events] == [RunEventType.RUN_RECOVERY_QUEUED]
 
 
-async def test_completed_tool_ledger_does_not_block_recovery(tmp_path) -> None:
+async def test_completed_tool_ledger_does_not_block_recovery(tmp_path: Path) -> None:
     run_store, checkpoint_store = _stores(tmp_path)
     service = _service(run_store, checkpoint_store)
     claimed = await _expired_run(run_store)
+    assert claimed.lease is not None
     await checkpoint_store.save_checkpoint(_checkpoint(claimed.run_id))
     await checkpoint_store.put_tool_pending(
         _ledger(claimed.run_id, status=ToolLedgerStatus.COMPLETED, result="cached")
@@ -69,10 +75,11 @@ async def test_completed_tool_ledger_does_not_block_recovery(tmp_path) -> None:
     assert [snapshot.status for snapshot in recovered] == [RunStatus.QUEUED]
 
 
-async def test_pending_manual_review_tool_marks_run_lost(tmp_path) -> None:
+async def test_pending_manual_review_tool_marks_run_lost(tmp_path: Path) -> None:
     run_store, checkpoint_store = _stores(tmp_path)
     service = _service(run_store, checkpoint_store)
     claimed = await _expired_run(run_store)
+    assert claimed.lease is not None
     await checkpoint_store.save_checkpoint(_checkpoint(claimed.run_id))
     await checkpoint_store.put_tool_pending(
         _ledger(claimed.run_id, status=ToolLedgerStatus.PENDING, result=None)
@@ -91,7 +98,9 @@ async def test_pending_manual_review_tool_marks_run_lost(tmp_path) -> None:
     assert [event.event_type for event in events] == [RunEventType.RUN_RECOVERY_FAILED]
 
 
-def _stores(tmp_path):
+def _stores(
+    tmp_path: Path,
+) -> tuple[LocalFileRunStoreAdapter, LocalFileRunCheckpointStoreAdapter]:
     lock_factory = LockFactory(acquire_timeout_ms=1000)
     path_policy = CrossPlatformPathPolicy()
     atomic_writer = TempFileAtomicWriter(fsync_on_write=False)
@@ -111,7 +120,10 @@ def _stores(tmp_path):
     )
 
 
-def _service(run_store, checkpoint_store) -> RunRecoveryService:
+def _service(
+    run_store: LocalFileRunStoreAdapter,
+    checkpoint_store: LocalFileRunCheckpointStoreAdapter,
+) -> RunRecoveryService:
     return RunRecoveryService(
         run_store=run_store,
         checkpoint_store=checkpoint_store,
@@ -123,7 +135,7 @@ def _service(run_store, checkpoint_store) -> RunRecoveryService:
     )
 
 
-async def _expired_run(run_store):
+async def _expired_run(run_store: LocalFileRunStoreAdapter) -> RunSnapshot:
     created = await run_store.create_run(
         RunCreateRequest(
             payload=RunPayload(

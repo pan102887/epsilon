@@ -10,10 +10,10 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime
 from enum import Enum, StrEnum
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
-from domain.run.ports import RunEventStorePort
+from domain.run.ports import RunEventAppenderPort
 from domain.run.runtime_context import (
     get_run_execution_context,
     set_run_execution_context,
@@ -32,7 +32,7 @@ from infrastructure.run.workflow_serialization import (
 
 async def record_collaboration_step(
     *,
-    event_store: RunEventStorePort | None,
+    event_store: RunEventAppenderPort | None,
     action: CollaborationAction,
     target_agent: str | None,
     task_summary: str,
@@ -56,7 +56,7 @@ async def record_collaboration_step(
         target_role=target_role,
         target_agent=target_agent,
         action=action,
-        task_summary=_safe_text(task_summary),
+        task_summary=_safe_text(task_summary) or "",
         result_summary=_safe_text(result_summary),
         depth=depth if depth is not None else context.depth,
         created_at=datetime.now(UTC),
@@ -94,7 +94,8 @@ def summarize_workflow_handoff_state(
     handoff_state = workflow_run_state.get("handoff_state")
     if not isinstance(handoff_state, dict):
         return _base_summary(collaboration_summary)
-    payload = {
+    handoff_state = cast(dict[str, Any], handoff_state)
+    payload: dict[str, Any] = {
         "link_id": f"handoff_{uuid4().hex}",
         "run_id": workflow_run_state.get("run_id"),
         "phase": workflow_run_state.get("current_phase"),
@@ -118,7 +119,7 @@ def summarize_workflow_handoff_state(
 
 async def record_workflow_handoff(
     *,
-    event_store: RunEventStorePort | None,
+    event_store: RunEventAppenderPort | None,
     target_agent: str | None,
     reason: str,
     target_role: str | None = None,
@@ -193,7 +194,7 @@ async def record_workflow_handoff(
 
 async def record_collaboration_limit_hit(
     *,
-    event_store: RunEventStorePort | None,
+    event_store: RunEventAppenderPort | None,
     reason: str,
     action: CollaborationAction | None = None,
     target_agent: str | None = None,
@@ -243,7 +244,12 @@ def _updated_summary(
     """更新 collaboration summary 并裁剪 latest_steps。"""
 
     summary = _base_summary(collaboration_summary)
-    latest_steps = [item for item in summary.get("latest_steps", []) if isinstance(item, dict)]
+    raw_latest_steps = summary.get("latest_steps", [])
+    latest_steps: list[dict[str, Any]] = [
+        cast(dict[str, Any], item)
+        for item in cast(list[Any], raw_latest_steps)
+        if isinstance(item, dict)
+    ]
     latest_steps.append(step_payload)
     keep = max(int(recent_limit), 1)
     summary["latest_steps"] = latest_steps[-keep:]
@@ -304,7 +310,9 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, (StrEnum, Enum)):
         return value.value
     if isinstance(value, dict):
+        value = cast(dict[Any, Any], value)
         return {str(key): _json_safe(item) for key, item in value.items()}
     if isinstance(value, (list, tuple, set, frozenset)):
+        value = cast(list[Any] | tuple[Any, ...] | set[Any] | frozenset[Any], value)
         return [_json_safe(item) for item in value]
     return str(value)

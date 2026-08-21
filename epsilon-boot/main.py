@@ -6,6 +6,7 @@
 
 import os
 import sys
+from typing import Any
 
 # 将 src/ 目录加入模块搜索路径，使 domain 层的裸导入（如 from domain.xxx import ...）
 # 在运行时也能正确解析，与 pyproject.toml 中 pytest 的 pythonpath = ["src"] 保持一致。
@@ -35,7 +36,7 @@ import logging  # noqa: E402  # 须在 sys.path 与 win32 stub 配置后再导�
 _original_factory = logging.getLogRecordFactory()
 
 
-def _otel_record_factory(*args, **kwargs):  # type: ignore[no-untyped-def]
+def _otel_record_factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
     """创建带有 OTel 默认字段的 LogRecord。"""
     record = _original_factory(*args, **kwargs)
     if not hasattr(record, "otelTraceID"):
@@ -96,7 +97,7 @@ def main() -> None:
     # - 同时配置 uvicorn、uvicorn.error、uvicorn.access 三个 logger，
     #   确保 uvicorn 自身的访问日志和错误日志也使用统一格式
     # -----------------------------------------------------------------------
-    UVICORN_LOG_CONFIG: dict = {
+    UVICORN_LOG_CONFIG: dict[str, Any] = {
         "version": 1,
         "disable_existing_loggers": False,
         "formatters": {

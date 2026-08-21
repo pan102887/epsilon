@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from domain.run.ports import RunEventStorePort
+from domain.run.ports import RunEventAppenderPort
 from domain.run.runtime_context import get_run_execution_context
 from domain.run.value_objects import RunEventType
 from domain.run.workflow import (
@@ -23,7 +23,7 @@ from domain.run.workflow_context import get_workflow_collaboration_context
 
 async def enforce_workflow_capability_before_action(
     *,
-    event_store: RunEventStorePort | None,
+    event_store: RunEventAppenderPort | None,
     action: WorkflowCapabilityAction,
     target: str | None,
 ) -> WorkflowCapabilityDecision | None:

@@ -36,7 +36,7 @@ _DEFAULT_TREE_IGNORE: frozenset[str] = frozenset({".git", "__pycache__", ".venv"
 # ── read ──
 
 
-def _read_bytes_in_range(
+def read_bytes_in_range(
     host_path: Path,
     start_line: int | None,
     end_line: int | None,
@@ -89,7 +89,7 @@ def _read_bytes_in_range(
 # ── write ──
 
 
-def _write_bytes_atomically(host_path: Path, content: bytes) -> int:
+def write_bytes_atomically(host_path: Path, content: bytes) -> int:
     """原子写入字节内容，自动创建父目录。
 
     算法：
@@ -142,7 +142,7 @@ def _write_bytes_atomically(host_path: Path, content: bytes) -> int:
 # ── edit ──
 
 
-def _edit_with_fallback_match(
+def edit_with_fallback_match(
     current_bytes: bytes,
     old_content: bytes,
     new_content: bytes,
@@ -215,7 +215,7 @@ def _edit_with_fallback_match(
 # ── tree ──
 
 
-def _render_tree(
+def render_tree(
     directory: Path,
     prefix: str = "",
     ignore: frozenset[str] | set[str] | None = None,
@@ -257,5 +257,5 @@ def _render_tree(
         lines.append(f"{prefix}{connector}{entry.name}")
         if entry.is_dir():
             extension = "    " if i == len(entries) - 1 else "│   "
-            lines.append(_render_tree(entry, prefix + extension, effective_ignore))
+            lines.append(render_tree(entry, prefix + extension, effective_ignore))
     return "\n".join(lines)

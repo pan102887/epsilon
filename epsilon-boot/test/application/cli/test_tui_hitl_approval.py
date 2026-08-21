@@ -5,10 +5,12 @@
 """
 
 from collections.abc import AsyncIterator
+from typing import cast
 
 from application.cli.approval_screen import ApprovalScreen
+from application.cli.runtime import CliRuntime
 from application.cli.session import TuiSessionState
-from application.cli.tui import _EpsilonTextualApp
+from application.cli.tui import EpsilonTextualApp
 from domain.agent.value_objects import (
     AgentStreamEvent,
     ApprovalDecision,
@@ -84,10 +86,10 @@ class FakeApprovalRuntime:
 async def test_tui_opens_approval_screen_on_approval_required() -> None:
     """验证收到 approval_required 时打开 ApprovalScreen 并可提交决策续播。"""
     runtime = FakeApprovalRuntime()
-    app = _EpsilonTextualApp(runtime)  # type: ignore[arg-type]
+    app = EpsilonTextualApp(cast(CliRuntime, runtime))
 
     async with app.run_test(size=(100, 30)) as pilot:
-        app._set_composer_text("write")
+        app.set_composer_text("write")
         await app.action_submit()
 
         screen: ApprovalScreen | None = None
@@ -103,8 +105,8 @@ async def test_tui_opens_approval_screen_on_approval_required() -> None:
 
         for _ in range(50):
             await pilot.pause(0.01)
-            if app._current_task is None:
+            if app.current_task is None:
                 break
 
-    assert app._current_task is None
+    assert app.current_task is None
     assert runtime.resumed == [("s1", "a1", [ApprovalDecision("approve", "call-1")])]

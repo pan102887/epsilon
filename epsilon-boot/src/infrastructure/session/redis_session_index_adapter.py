@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Protocol, cast
 
 import redis.asyncio as aioredis
 
@@ -16,6 +17,12 @@ from domain.chat.ports import SessionIndexPort
 from domain.chat.value_objects import SessionMetadata
 
 logger = logging.getLogger(__name__)
+
+
+class _RecentSessionCommands(Protocol):
+    """最近会话查询使用的 Redis 命令最小协议。"""
+
+    async def zrevrange(self, name: str, start: int, end: int) -> list[str | bytes]: ...
 
 
 class RedisSessionIndexAdapter(SessionIndexPort):
@@ -33,6 +40,11 @@ class RedisSessionIndexAdapter(SessionIndexPort):
         self._key_prefix = key_prefix
         self._recent_zset_key = recent_zset_key
         self._ttl_seconds = ttl_seconds
+
+    @property
+    def ttl_seconds(self) -> int:
+        """返回会话索引 TTL 配置。"""
+        return self._ttl_seconds
 
     def _make_key(self, session_id: str) -> str:
         """生成会话元数据 Redis key。"""
@@ -83,7 +95,8 @@ class RedisSessionIndexAdapter(SessionIndexPort):
             return []
 
         try:
-            raw_ids = await self._redis.zrevrange(self._recent_zset_key, 0, limit - 1)
+            commands = cast(_RecentSessionCommands, self._redis)
+            raw_ids = await commands.zrevrange(self._recent_zset_key, 0, limit - 1)
         except aioredis.RedisError as exc:
             logger.error("Failed to list recent session index ids: %s", exc)
             raise
@@ -145,13 +158,20 @@ def _metadata_from_dict(data: dict[str, object]) -> SessionMetadata:
     """从字典恢复会话元数据值对象。"""
     return SessionMetadata(
         session_id=str(data["session_id"]),
-        updated_at_epoch_ms=int(data["updated_at_epoch_ms"]),
-        message_count=int(data["message_count"]),
+        updated_at_epoch_ms=_as_int(data["updated_at_epoch_ms"]),
+        message_count=_as_int(data["message_count"]),
         preview=str(data["preview"]),
         created_at_epoch_ms=(
-            int(data["created_at_epoch_ms"])
+            _as_int(data["created_at_epoch_ms"])
             if data.get("created_at_epoch_ms") is not None
             else None
         ),
         model=str(data["model"]) if data.get("model") is not None else None,
     )
+
+
+def _as_int(value: object) -> int:
+    """把 JSON 标量转换为整数，并拒绝容器等无效值。"""
+    if isinstance(value, (str, bytes, int, float)):
+        return int(value)
+    raise TypeError(f"expected integer-compatible value, got {type(value).__name__}")

@@ -4,6 +4,8 @@
 进行属性测试，验证序列化输出始终满足正确性属性。
 """
 
+from typing import cast
+
 import hypothesis.strategies as st
 from hypothesis import given, settings
 
@@ -108,4 +110,6 @@ def test_readiness_result_to_dict_checks_keys_match_names(
     d = readiness_result_to_dict(result)
     assert "checks" in d
     expected_names = {check.name for check in result.checks}
-    assert set(d["checks"].keys()) == expected_names
+    checks = d["checks"]
+    assert isinstance(checks, dict)
+    assert set(cast(dict[str, object], checks)) == expected_names

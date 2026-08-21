@@ -36,7 +36,10 @@ def _make_ws_path(s: str) -> WorkspacePath:
 def _fake_workspace(*, root_hint: str = "/tmp/ws") -> MagicMock:
     ws = MagicMock(name="Workspace")
     ws.display_root_hint.return_value = root_hint
-    ws.resolve_path.side_effect = lambda s: _make_ws_path(s if s.startswith("/") else f"/{s}")
+    def _resolve(value: str) -> WorkspacePath:
+        return _make_ws_path(value if value.startswith("/") else f"/{value}")
+
+    ws.resolve_path.side_effect = _resolve
     ws.list_dir = AsyncMock(return_value=[])
     return ws
 
@@ -225,7 +228,9 @@ def test_description_contains_display_root_hint() -> None:
 
 def test_source_does_not_import_os_or_pathlib() -> None:
     """AST 扫描 ListDirTool 源码：不得 import os / pathlib / common_tools。"""
-    src_path = Path(inspect.getsourcefile(ListDirTool))
+    source_file = inspect.getsourcefile(ListDirTool)
+    assert source_file is not None
+    src_path = Path(source_file)
     tree = ast.parse(src_path.read_text(encoding="utf-8"))
     banned_modules = {"os", "pathlib", "common.tools.common_tools"}
     for node in ast.walk(tree):

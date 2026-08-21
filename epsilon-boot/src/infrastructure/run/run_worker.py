@@ -10,7 +10,7 @@ import uuid
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from enum import Enum, StrEnum
-from typing import Any
+from typing import Any, cast
 
 from domain.run.outcome import (
     RunExecutionOutcome,
@@ -484,6 +484,16 @@ def _run_log_extra(
     return data
 
 
+def run_log_extra(
+    snapshot: RunSnapshot,
+    *,
+    worker_id: str | None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """构造 Run worker 的结构化日志字段。"""
+    return _run_log_extra(snapshot, worker_id=worker_id, **extra)
+
+
 def _json_safe(value: Any) -> Any:
     if isinstance(value, StrEnum):
         return value.value
@@ -491,12 +501,14 @@ def _json_safe(value: Any) -> Any:
         return value.value
     if isinstance(value, datetime):
         return value.isoformat()
-    if is_dataclass(value):
+    if is_dataclass(value) and not isinstance(value, type):
         return _json_safe(asdict(value))
     if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
+        mapping = cast(dict[object, object], value)
+        return {str(key): _json_safe(item) for key, item in mapping.items()}
     if isinstance(value, (list, tuple)):
-        return [_json_safe(item) for item in value]
+        items = cast(list[object] | tuple[object, ...], value)
+        return [_json_safe(item) for item in items]
     return value
 
 

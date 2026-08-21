@@ -104,10 +104,10 @@ class TestBugConditionConfigDrivenRegistration:
 
         # 验证所有模型都已注册到 _model_providers 映射中
         for model_name in model_list:
-            assert model_name in registry._model_providers, (
+            assert model_name in registry.model_providers, (
                 f"模型 {model_name!r} 未出现在 _model_providers 映射中"
             )
-            assert provider_name in registry._model_providers[model_name], (
+            assert provider_name in registry.model_providers[model_name], (
                 f"提供商 {provider_name!r} 未关联到模型 {model_name!r}"
             )
 
@@ -138,8 +138,8 @@ class TestBugConditionConcreteCase:
         )
 
         assert result is True
-        assert "claude-3-5-sonnet-20241022" in registry._model_providers
-        assert "claude" in registry._model_providers["claude-3-5-sonnet-20241022"]
+        assert "claude-3-5-sonnet-20241022" in registry.model_providers
+        assert "claude" in registry.model_providers["claude-3-5-sonnet-20241022"]
 
     def test_no_http_client_required(self) -> None:
         """验证 ProviderRegistry 初始化不再需要 http_client 参数。

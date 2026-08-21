@@ -29,7 +29,10 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+from collections.abc import Iterator
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -42,7 +45,7 @@ from domain.workspace.ports import Workspace
 from domain.workspace.value_objects import WorkspaceBackendKind
 
 
-def _load_container_config_module():
+def _load_container_config_module() -> Any:
     """直接加载 ``container_config`` 模块，绕过 ``application/__init__.py``。
 
     理由与 ``test_container_config.py`` 完全一致：``application/__init__.py``
@@ -55,6 +58,8 @@ def _load_container_config_module():
     spec = importlib.util.spec_from_file_location(
         "test_workspace_container_integration_module", str(config_path)
     )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"无法加载容器配置模块: {config_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -64,9 +69,14 @@ _config_module = _load_container_config_module()
 configure_container = _config_module.configure_container
 
 
+def _resolved_path(path: Path) -> str:
+    """同步解析测试路径，隔离异步用例中的阻塞文件系统调用。"""
+    return str(path.resolve())
+
+
 def _make_workspace_config_stub(
     *,
-    backend: WorkspaceBackendKind = WorkspaceBackendKind.LOCAL_FILESYSTEM,
+    backend: object = WorkspaceBackendKind.LOCAL_FILESYSTEM,
     root: str = "",
     follow_symlinks: bool = False,
     create_if_missing: bool = False,
@@ -88,23 +98,17 @@ def _make_workspace_config_stub(
 
 
 @pytest.fixture(autouse=True)
-def _isolate_container():
+def isolate_container() -> Iterator[None]:
     """每个用例隔离全局容器状态，避免用例间注册残留污染。"""
     from common.container import container
 
-    original_registry = container._registry.copy()
-    original_singletons = container._singletons.copy()
-    original_resources = container._async_resources[:]
-    original_initialized = container._initialized_resources[:]
+    original_state = container.capture_state()
     yield
-    container._registry = original_registry
-    container._singletons = original_singletons
-    container._async_resources = original_resources
-    container._initialized_resources = original_initialized
+    container.restore_state(original_state)
 
 
 @pytest.fixture(autouse=True)
-def _reset_workspace_singleton():
+def reset_workspace_singleton() -> Iterator[None]:
     """重置模块级 ``_workspace_singleton`` 以避免跨用例泄漏。"""
     original = _config_module._workspace_singleton
     yield
@@ -116,7 +120,7 @@ def _reset_workspace_singleton():
 # ---------------------------------------------------------------------------
 
 
-async def test_init_workspace_happy_path_resolves_workspace_instance(tmp_path):
+async def test_init_workspace_happy_path_resolves_workspace_instance(tmp_path: Path) -> None:
     """配置合法时 ``_init_workspace`` 完成后可通过 ``Workspace`` 解析实例。
 
     不调用 ``configure_container()``（后者会注册所有 Port → Adapter，受
@@ -146,7 +150,7 @@ async def test_init_workspace_happy_path_resolves_workspace_instance(tmp_path):
     assert caps.local_materialization is True
 
 
-async def test_init_workspace_populates_module_singleton(tmp_path):
+async def test_init_workspace_populates_module_singleton(tmp_path: Path) -> None:
     """``_init_workspace`` 成功后 ``_workspace_singleton`` 被赋值为非空实例。"""
     cfg = _make_workspace_config_stub(
         backend=WorkspaceBackendKind.LOCAL_FILESYSTEM,
@@ -167,7 +171,9 @@ async def test_init_workspace_populates_module_singleton(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-async def test_init_workspace_empty_root_defaults_to_cwd(tmp_path, monkeypatch):
+async def test_init_workspace_empty_root_defaults_to_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """``root=""`` 时 ``_init_workspace`` 默认使用进程当前工作目录。"""
     monkeypatch.chdir(tmp_path)
     cfg = _make_workspace_config_stub(
@@ -179,10 +185,12 @@ async def test_init_workspace_empty_root_defaults_to_cwd(tmp_path, monkeypatch):
         await _config_module._init_workspace()
 
     assert _config_module._workspace_singleton is not None
-    assert _config_module._workspace_singleton.display_root_hint() == str(tmp_path.resolve())
+    assert _config_module._workspace_singleton.display_root_hint() == _resolved_path(tmp_path)
 
 
-async def test_init_workspace_whitespace_root_defaults_to_cwd(tmp_path, monkeypatch):
+async def test_init_workspace_whitespace_root_defaults_to_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """``root`` 仅含空白字符也视为未配置，默认使用进程当前工作目录。"""
     monkeypatch.chdir(tmp_path)
     cfg = _make_workspace_config_stub(
@@ -194,7 +202,7 @@ async def test_init_workspace_whitespace_root_defaults_to_cwd(tmp_path, monkeypa
         await _config_module._init_workspace()
 
     assert _config_module._workspace_singleton is not None
-    assert _config_module._workspace_singleton.display_root_hint() == str(tmp_path.resolve())
+    assert _config_module._workspace_singleton.display_root_hint() == _resolved_path(tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +210,7 @@ async def test_init_workspace_whitespace_root_defaults_to_cwd(tmp_path, monkeypa
 # ---------------------------------------------------------------------------
 
 
-async def test_init_workspace_root_points_to_file_raises(tmp_path):
+async def test_init_workspace_root_points_to_file_raises(tmp_path: Path) -> None:
     """``WORKSPACE_ROOT`` 指向已存在的普通文件时必须拒绝启动。"""
     file_path = tmp_path / "not_a_dir.txt"
     file_path.write_text("x", encoding="utf-8")
@@ -226,7 +234,7 @@ async def test_init_workspace_root_points_to_file_raises(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-async def test_init_workspace_relative_root_raises(tmp_path):
+async def test_init_workspace_relative_root_raises(tmp_path: Path) -> None:
     """``WORKSPACE_ROOT`` 为相对路径必须拒绝。"""
     cfg = _make_workspace_config_stub(
         backend=WorkspaceBackendKind.LOCAL_FILESYSTEM,
@@ -247,7 +255,7 @@ async def test_init_workspace_relative_root_raises(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-async def test_init_workspace_missing_root_without_create_raises(tmp_path):
+async def test_init_workspace_missing_root_without_create_raises(tmp_path: Path) -> None:
     """``root`` 不存在且 ``create_if_missing=False`` 必须 fail-fast。"""
     missing_path = tmp_path / "does_not_exist"
     cfg = _make_workspace_config_stub(
@@ -268,7 +276,7 @@ async def test_init_workspace_missing_root_without_create_raises(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-async def test_init_workspace_missing_root_with_create_succeeds(tmp_path):
+async def test_init_workspace_missing_root_with_create_succeeds(tmp_path: Path) -> None:
     """``create_if_missing=True`` 时自动创建目录，启动成功。"""
     missing_path = tmp_path / "auto_create" / "ws"
     cfg = _make_workspace_config_stub(
@@ -289,7 +297,7 @@ async def test_init_workspace_missing_root_with_create_succeeds(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-async def test_init_workspace_unsupported_backend_raises(tmp_path):
+async def test_init_workspace_unsupported_backend_raises(tmp_path: Path) -> None:
     """通过 stub 直接注入非 LOCAL_FILESYSTEM 的 backend（绕过 validator），
     验证 ``_init_workspace`` 的防御性 ``factory is None`` 分支仍能 fail-fast。
 
@@ -306,7 +314,7 @@ async def test_init_workspace_unsupported_backend_raises(tmp_path):
             return "<FakeBackend.OSS>"
 
     cfg = _make_workspace_config_stub(
-        backend=_FakeBackend(),  # type: ignore[arg-type]
+        backend=_FakeBackend(),
         root=str(tmp_path),
     )
 
@@ -339,7 +347,7 @@ def test_configure_container_registers_workspace_before_tool_registry():
 
     from common.container import container
 
-    resource_names = [entry.name for entry in container._async_resources]
+    resource_names = container.async_resource_names()
 
     # workspace 异步资源在注册列表中存在
     assert "workspace" in resource_names, f"workspace 资源未注册，实际列表：{resource_names}"
@@ -351,9 +359,7 @@ def test_configure_container_registers_workspace_before_tool_registry():
     )
 
     # Workspace 和 ToolRegistry 均在 _registry 中注册
-    registry_types = {
-        key if isinstance(key, type) else key[0] for key in container._registry
-    }
+    registry_types = container.registered_types()
     assert Workspace in registry_types, "Workspace 未注册到 DI 容器"
     assert ToolRegistry in registry_types, "ToolRegistry 未注册到 DI 容器"
 

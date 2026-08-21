@@ -8,6 +8,7 @@ Agent Loop 逻辑已从 ChatServiceAdapter 迁移到 ReActAgentAdapter，
 因此 Agent Loop 相关测试直接测试 ReActAgentAdapter.run()。
 """
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -18,6 +19,7 @@ from domain.agent.value_objects import (
     AgentConfig,
     ApprovalDecision,
     ApprovalInterrupt,
+    ApprovalInterruptSummary,
     ApprovalPolicy,
     PendingActionRequest,
 )
@@ -83,7 +85,9 @@ class _MemoryApprovalStore(ApprovalStateStorePort):
         """清空最近一次审批中断。"""
         self.saved = None
 
-    async def list_pending_by_session(self, session_id: str) -> list:
+    async def list_pending_by_session(
+        self, session_id: str
+    ) -> list[ApprovalInterruptSummary]:
         """返回空审批摘要。"""
         return []
 
@@ -146,7 +150,7 @@ def _make_react_adapter(
 
 
 def _make_config(
-    tool_schemas: list | None = None,
+    tool_schemas: list[dict[str, Any]] | None = None,
     max_rounds: int = 10,
 ) -> AgentConfig:
     """创建测试用 AgentConfig。
@@ -566,13 +570,9 @@ async def test_agent_loop_resume_approve_uses_builder_and_continues() -> None:
     context.session_id = "s-resume"
     context.add_system_message("你是一个有用的 AI 助手。")
     context.add_user_message("继续")
-    context._messages.append(
-        AssistantMessage(
-            content="需要审批",
-            tool_calls=[
-                ToolCallRequest(id="call_r", name="test_tool", arguments='{"k": "v"}'),
-            ],
-        )
+    context.add_assistant_message_with_tool_calls(
+        "需要审批",
+        [ToolCallRequest(id="call_r", name="test_tool", arguments='{"k": "v"}')],
     )
     interrupt = ApprovalInterrupt(
         session_id="s-resume",

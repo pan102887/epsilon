@@ -18,6 +18,10 @@ def _path(value: str) -> WorkspacePath:
     return WorkspacePath(_posix=PurePosixPath(value))
 
 
+def _resolve_path(value: str) -> WorkspacePath:
+    return _path(value if value.startswith("/") else f"/{value}")
+
+
 def _entry(value: str, *, is_file: bool = True) -> WorkspaceStatEntry:
     return WorkspaceStatEntry(
         path=_path(value),
@@ -31,7 +35,7 @@ def _entry(value: str, *, is_file: bool = True) -> WorkspaceStatEntry:
 def _workspace() -> MagicMock:
     ws = MagicMock()
     ws.display_root_hint.return_value = "/tmp/ws"
-    ws.resolve_path.side_effect = lambda s: _path(s if s.startswith("/") else f"/{s}")
+    ws.resolve_path.side_effect = _resolve_path
     ws.list_dir = AsyncMock(return_value=[])
     return ws
 

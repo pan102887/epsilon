@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from application.api.routers.runs import RunSnapshotBody, _snapshot_body
+from application.api.routers.runs import RunSnapshotBody, snapshot_body
 from domain.run.value_objects import RunKind, RunPayload, RunSnapshot, RunStatus
 
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -120,7 +120,7 @@ def test_snapshot_body_exposes_latest_steps_guardrail_and_workflow_state() -> No
         ],
     }
 
-    body = _snapshot_body(
+    body = snapshot_body(
         _snapshot(
             collaboration_summary=collaboration_summary,
             guardrail_summary=guardrail_summary,
@@ -143,7 +143,7 @@ def test_snapshot_body_exposes_latest_steps_guardrail_and_workflow_state() -> No
 def test_snapshot_body_prefers_latest_steps_over_historical_recent_steps() -> None:
     """新旧协作步骤同时存在时，Run 视图契约必须以 latest_steps 为准。"""
 
-    body = _snapshot_body(
+    body = snapshot_body(
         _snapshot(
             collaboration_summary={
                 "latest_steps": [

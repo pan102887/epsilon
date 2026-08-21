@@ -7,6 +7,8 @@
 无需真实网络。覆盖工具发现、schema 映射、正常调用、错误调用与名称前缀/清洗。
 """
 
+from collections.abc import AsyncGenerator
+
 import pytest
 from fastmcp import FastMCP
 
@@ -87,7 +89,7 @@ class _FakeClient:
 
 
 @pytest.fixture
-async def bridge() -> MCPToolBridge:
+async def bridge() -> AsyncGenerator[MCPToolBridge]:
     bridge = MCPToolBridge(transport=_build_server())
     try:
         yield bridge

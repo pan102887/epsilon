@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from domain.agent.value_objects import AgentResult
+from domain.agent.value_objects import AgentConfig, AgentResult
 from domain.chat.context import ConversationContext, ToolMessage
 from domain.chat.value_objects import ChatContinueRequestVO
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import ToolCallRequest
 from domain.prompt.value_objects import LoadedPrompt
 from infrastructure.chat.chat_service_adapter import ChatServiceAdapter
@@ -31,7 +33,9 @@ def _adapter(
         version="v1",
         content="system",
     )
-    tool_schemas = [{"type": "function", "function": {"name": "search"}}]
+    tool_schemas: list[dict[str, Any]] = [
+        {"type": "function", "function": {"name": "search"}}
+    ]
     return (
         ChatServiceAdapter(
             session_store=session_store,
@@ -77,7 +81,11 @@ async def test_continue_chat_reads_risk_gate_required_from_new_tool_metadata() -
     """continue_chat 应从新增 ToolMessage.metadata 读取风险门禁。"""
     context = _continuable_context()
 
-    async def run(ctx, _config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         ctx.add_assistant_message_with_tool_calls(
             "",
             [ToolCallRequest(id="call-2", name="search", arguments="{}")],
@@ -124,7 +132,7 @@ def test_segment_risk_gate_required_ignores_observe_marker() -> None:
         }
     )
 
-    required, reason = ChatServiceAdapter._segment_risk_gate_required(
+    required, reason = ChatServiceAdapter.segment_risk_gate_required(
         context=context,
         pre_message_count=3,
     )
@@ -135,7 +143,7 @@ def test_segment_risk_gate_required_ignores_observe_marker() -> None:
 
 def test_segment_risk_gate_required_uses_guardrail_approval_metadata() -> None:
     """guardrail 来源审批在无 ToolMessage 时也应触发风险门禁。"""
-    required, reason = ChatServiceAdapter._segment_risk_gate_required(
+    required, reason = ChatServiceAdapter.segment_risk_gate_required(
         context=ConversationContext(),
         pre_message_count=0,
         approval_required=True,

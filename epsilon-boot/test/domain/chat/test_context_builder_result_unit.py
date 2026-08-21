@@ -2,13 +2,13 @@
 
 import pytest
 
-from domain.chat.context import SystemMessage, UserMessage
+from domain.chat.context import BaseMessage, SystemMessage, UserMessage
 from domain.chat.value_objects import ContextBuilderResult
 
 
 def test_context_builder_result_accepts_valid_values() -> None:
     """合法领域消息列表、usage 和元数据可构造上下文构建结果。"""
-    messages = [
+    messages: list[BaseMessage] = [
         SystemMessage(content="follow instructions"),
         UserMessage(content="hello"),
     ]

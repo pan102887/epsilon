@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import fields, is_dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 from domain.run.workflow import (
     ChildRunOrchestrationState,
@@ -92,11 +92,13 @@ def _json_safe(value: Any) -> Any:
     if is_dataclass(value):
         return _dataclass_to_json_safe_dict(value)
     if isinstance(value, tuple):
-        return [_json_safe(item) for item in value]
+        return [_json_safe(item) for item in cast(tuple[object, ...], value)]
     if isinstance(value, frozenset):
-        return [_json_safe(item) for item in sorted(value)]
+        values = cast(frozenset[str], value)
+        return [_json_safe(item) for item in sorted(values)]
     if isinstance(value, list):
-        return [_json_safe(item) for item in value]
+        return [_json_safe(item) for item in cast(list[object], value)]
     if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
+        mapping = cast(dict[object, object], value)
+        return {str(key): _json_safe(item) for key, item in mapping.items()}
     return value

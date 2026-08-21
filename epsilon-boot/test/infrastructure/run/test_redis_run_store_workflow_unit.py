@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncGenerator
 
 import pytest
 
@@ -17,7 +18,7 @@ pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture
-async def store() -> RedisRunStoreAdapter:
+async def store() -> AsyncGenerator[RedisRunStoreAdapter]:
     """构造 fakeredis Run store。"""
 
     client = fakeredis.FakeRedis()
@@ -62,13 +63,14 @@ async def test_legacy_snapshot_without_workflow_fields_loads_as_none(
 ) -> None:
     """旧 Redis JSON 缺失 workflow 字段时反序列化应得到 None。"""
     snapshot = await store.create_run(_request())
-    key = store._snapshot_key(snapshot.run_id)
-    raw = await store._redis.get(key)
+    key = store.snapshot_key(snapshot.run_id)
+    raw = await store.redis_client.get(key)
+    assert raw is not None
     data = json.loads(raw)
     data.pop("workflow_name", None)
     data.pop("workflow_run_state", None)
     data.pop("collaboration_summary", None)
-    await store._redis.set(key, json.dumps(data))
+    await store.redis_client.set(key, json.dumps(data))
 
     loaded = await store.get_run(snapshot.run_id)
 

@@ -4,15 +4,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from application.run.run_execution_coordinator import RunExecutionCoordinator
 from application.run.workflow_orchestrator import WorkflowRunOrchestrator
+from domain.chat.ports import ChatServicePort
 from domain.chat.value_objects import ChatContinueRequestVO, ChatRequestVO, ChatResponseVO
 from domain.run.checkpoint_context import get_run_checkpoint_context
 from domain.run.outcome import RunExecutionOutcome
+from domain.run.ports import RunCheckpointStorePort, RunEventStorePort, WorkflowRegistryPort
 from domain.run.value_objects import (
     CheckpointRetentionPolicy,
     RunEvent,
@@ -31,6 +33,7 @@ from domain.run.workflow import (
     WorkflowPhaseDefinition,
 )
 from domain.run.workflow_context import get_workflow_collaboration_context
+from domain.task.ports import TaskAgentPort
 from infrastructure.run.run_serialization_adapters import (
     SegmentSerializerAdapter,
     WorkflowSerializerAdapter,
@@ -62,7 +65,7 @@ class _ObservingChatService:
         return ChatResponseVO(
             session_id=request.session_id,
             reply="ok",
-            model=request.model,
+            model=request.model or "test-model",
             usage={},
             prompt_id="chat-default@v1",
         )
@@ -77,7 +80,7 @@ class _ObservingChatService:
         return ChatResponseVO(
             session_id=request.session_id,
             reply="continued",
-            model=request.model,
+            model=request.model or "test-model",
             usage={},
             prompt_id="chat-default@v1",
         )
@@ -141,6 +144,14 @@ class _Registry:
         return self.workflow
 
 
+def _event_store_port(store: _EventStore) -> RunEventStorePort:
+    return cast(RunEventStorePort, store)
+
+
+def _registry_port(registry: _Registry) -> WorkflowRegistryPort:
+    return cast(WorkflowRegistryPort, registry)
+
+
 class _FakeOrchestrator:
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -174,15 +185,19 @@ def _coordinator(
     checkpoint_enabled: bool = False,
 ) -> RunExecutionCoordinator:
     return RunExecutionCoordinator(
-        chat_service=chat,
-        task_agent=_UnusedTaskAgent(),
+        chat_service=cast(ChatServicePort, chat),
+        task_agent=cast(TaskAgentPort, _UnusedTaskAgent()),
         segment_serializer=SegmentSerializerAdapter(),
-        checkpoint_store=_CheckpointStore() if checkpoint_enabled else None,
-        event_store=event_store,
+        checkpoint_store=(
+            cast(RunCheckpointStorePort, _CheckpointStore()) if checkpoint_enabled else None
+        ),
+        event_store=_event_store_port(event_store) if event_store is not None else None,
         retention_policy=CheckpointRetentionPolicy(10, 3600, 4096, 100),
         checkpoint_enabled=checkpoint_enabled,
         workflow_orchestrator=workflow_orchestrator,
-        workflow_registry=workflow_registry,
+        workflow_registry=(
+            _registry_port(workflow_registry) if workflow_registry is not None else None
+        ),
     )
 
 
@@ -192,7 +207,7 @@ def _snapshot(
     result: dict[str, Any] | None = None,
     workflow: bool = True,
 ) -> RunSnapshot:
-    state = (
+    state: dict[str, Any] | None = (
         {
             "workflow_name": "code_change",
             "current_phase": "plan",
@@ -285,8 +300,8 @@ async def test_without_workflow_state_keeps_existing_chat_path() -> None:
         chat,
         event_store=events,
         workflow_orchestrator=WorkflowRunOrchestrator(
-            event_store=events,
-            workflow_registry=registry,
+            event_store=_event_store_port(events),
+            workflow_registry=_registry_port(registry),
             workflow_serializer=WorkflowSerializerAdapter(),
             now=lambda: _NOW,
         ),
@@ -311,8 +326,8 @@ async def test_checkpoint_and_workflow_contexts_are_visible_in_same_window() -> 
         chat,
         event_store=events,
         workflow_orchestrator=WorkflowRunOrchestrator(
-            event_store=events,
-            workflow_registry=registry,
+            event_store=_event_store_port(events),
+            workflow_registry=_registry_port(registry),
             workflow_serializer=WorkflowSerializerAdapter(),
             now=lambda: _NOW,
         ),
@@ -339,8 +354,8 @@ async def test_contexts_reset_when_workflow_execution_fails() -> None:
         chat,
         event_store=events,
         workflow_orchestrator=WorkflowRunOrchestrator(
-            event_store=events,
-            workflow_registry=registry,
+            event_store=_event_store_port(events),
+            workflow_registry=_registry_port(registry),
             workflow_serializer=WorkflowSerializerAdapter(),
             now=lambda: _NOW,
         ),
@@ -365,8 +380,8 @@ async def test_workflow_continue_uses_continue_chat_without_readding_user_messag
         chat,
         event_store=events,
         workflow_orchestrator=WorkflowRunOrchestrator(
-            event_store=events,
-            workflow_registry=registry,
+            event_store=_event_store_port(events),
+            workflow_registry=_registry_port(registry),
             workflow_serializer=WorkflowSerializerAdapter(),
             now=lambda: _NOW,
         ),

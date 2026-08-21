@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -29,11 +30,13 @@ import pytest
 from domain.agent.tools import ToolExecutionResult
 from domain.agent.value_objects import (
     AgentConfig,
+    AgentStreamEvent,
     ApprovalInterrupt,
     ApprovalPolicy,
 )
-from domain.chat.context import ConversationContext
+from domain.chat.context import BaseMessage, ConversationContext
 from domain.chat.value_objects import ContextBuilderResult
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import (
     ChatRequest,
     LLMResponse,
@@ -48,7 +51,13 @@ from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 class _FakeContextBuilder:
     """测试 fake: 原样透传领域消息列表、空 usage。"""
 
-    async def build(self, messages, **kwargs) -> ContextBuilderResult:
+    async def build(
+        self,
+        messages: list[BaseMessage],
+        *,
+        model_access: ModelAccessPort | None = None,
+        model: str | None = None,
+    ) -> ContextBuilderResult:
         return ContextBuilderResult(
             messages=messages,
             usage={},
@@ -125,6 +134,14 @@ class _FakeModel:
         response = self._chat_responses.pop(0)
         for chunk in _response_to_chunks(response):
             yield chunk
+
+    def count_tokens(self, messages: list[BaseMessage]) -> int:
+        return 0
+
+
+class _TerminationLogRecord(logging.LogRecord):
+    round_num: int
+    tool_call_count: int
 
 
 def _config(max_rounds: int = 2) -> AgentConfig:
@@ -215,7 +232,9 @@ async def test_run_max_rounds_hit_terminated_reason() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_max_rounds_hit_emits_warning(caplog) -> None:
+async def test_run_max_rounds_hit_emits_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """``run``: max_rounds 命中时记录 Max_Rounds_Termination_Warning。"""
     adapter = _adapter()
     model = _FakeModel(chat_responses=[_tool_calls_response(0), _tool_calls_response(1)])
@@ -224,7 +243,11 @@ async def test_run_max_rounds_hit_emits_warning(caplog) -> None:
     with caplog.at_level(logging.WARNING):
         await adapter.run(context, _config(max_rounds=2), model)
 
-    warnings = [r for r in caplog.records if "达到 max_rounds 仍存在未消费 tool_calls" in r.message]
+    warnings = [
+        cast(_TerminationLogRecord, record)
+        for record in caplog.records
+        if "达到 max_rounds 仍存在未消费 tool_calls" in record.message
+    ]
     assert len(warnings) == 1
     record = warnings[0]
     assert record.round_num == 2
@@ -245,7 +268,7 @@ async def test_run_streaming_max_rounds_hit_skips_stream() -> None:
     model = _FakeModel(chat_responses=[_tool_calls_response(0)])
     context = ConversationContext()
 
-    chunks = []
+    chunks: list[StreamingChunk] = []
     async for chunk in adapter.run_streaming(context, _config(max_rounds=2), model):
         chunks.append(chunk)
 
@@ -269,7 +292,7 @@ async def test_run_events_max_rounds_hit_skips_stream() -> None:
     model = _FakeModel(chat_responses=[_tool_calls_response(0)])
     context = ConversationContext()
 
-    events = []
+    events: list[AgentStreamEvent] = []
     async for ev in adapter.run_events(context, _config(max_rounds=2), model):
         events.append(ev)
 
@@ -298,7 +321,7 @@ async def test_run_text_kind_terminated_reason_completed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_text_kind_no_warning(caplog) -> None:
+async def test_run_text_kind_no_warning(caplog: pytest.LogCaptureFixture) -> None:
     """最后一轮 text kind 不触发 Max_Rounds_Termination_Warning。"""
     adapter = _adapter()
     model = _FakeModel(chat_responses=[_tool_calls_response(0), _text_response("ok")])
@@ -329,7 +352,7 @@ async def test_run_approval_kind_terminated_reason_completed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_approval_kind_no_warning(caplog) -> None:
+async def test_run_approval_kind_no_warning(caplog: pytest.LogCaptureFixture) -> None:
     """approval kind 不触发 Max_Rounds_Termination_Warning。"""
     adapter = _adapter(approval_interrupt=True)
     model = _FakeModel(chat_responses=[_tool_calls_response(0)])

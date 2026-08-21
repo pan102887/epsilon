@@ -5,7 +5,9 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
+import pytest
 
 import application.cli.runtime as runtime_module
 from application.cli.runtime import CliRuntime
@@ -18,7 +20,12 @@ from domain.agent.ports import (
     TraceStorePort,
 )
 from domain.agent.tools import Tool, ToolExecutionResult, ToolRegistry
-from domain.agent.trace_value_objects import SessionTrace, ToolCallTrace
+from domain.agent.trace_value_objects import (
+    AgentStepTrace,
+    ArtifactTrace,
+    SessionTrace,
+    ToolCallTrace,
+)
 from domain.agent.value_objects import (
     AgentStreamEvent,
     ApprovalDecision,
@@ -37,6 +44,7 @@ from domain.chat.value_objects import (
 from domain.model_access.ports import ModelRegistryPort
 from domain.model_access.value_objects import ModelInfo, StreamingChunk
 from domain.run.value_objects import (
+    RunCreateRequest,
     RunEvent,
     RunEventType,
     RunKind,
@@ -44,6 +52,7 @@ from domain.run.value_objects import (
     RunSnapshot,
     RunStatus,
 )
+from domain.storage.storage_tier import StorageTier
 from domain.task.ports import TaskAgentPort
 from domain.task.value_objects import Task, TaskResult, TaskStatus
 from domain.workspace.ports import Workspace
@@ -162,9 +171,9 @@ class FakeWorkspace:
 
 class FakeRunService:
     def __init__(self) -> None:
-        self.created_requests = []
-        self.calls = []
-        self.events = [
+        self.created_requests: list[RunCreateRequest] = []
+        self.calls: list[tuple[Any, ...]] = []
+        self.events: list[RunEvent] = [
             RunEvent(
                 run_id="run-1",
                 cursor=2,
@@ -174,7 +183,7 @@ class FakeRunService:
             )
         ]
 
-    async def create_run(self, request):
+    async def create_run(self, request: RunCreateRequest) -> RunSnapshot:
         self.created_requests.append(request)
         return _snapshot(
             "run-1",
@@ -398,21 +407,48 @@ class FakeTraceStore:
             )
         }
 
-    async def append_step(self, session_id, step, *, tier=None):  # type: ignore[no-untyped-def]
+    async def append_step(
+        self,
+        session_id: str,
+        step: AgentStepTrace,
+        *,
+        tier: StorageTier = StorageTier.PROJECT,
+    ) -> None:
         raise NotImplementedError
 
-    async def get_session_trace(self, session_id, *, tier=None):  # type: ignore[no-untyped-def]
+    async def get_session_trace(
+        self,
+        session_id: str,
+        *,
+        tier: StorageTier = StorageTier.PROJECT,
+    ) -> SessionTrace | None:
         return self.traces.get(session_id)
 
-    async def list_traces(self, limit=20, *, tier=None):  # type: ignore[no-untyped-def]
+    async def list_traces(
+        self,
+        limit: int = 20,
+        *,
+        tier: StorageTier = StorageTier.PROJECT,
+    ) -> list[SessionTrace]:
         return list(self.traces.values())[:limit]
 
 
 class FakeArtifactStore:
-    async def append_artifact(self, session_id, artifact, *, tier=None):  # type: ignore[no-untyped-def]
+    async def append_artifact(
+        self,
+        session_id: str,
+        artifact: ArtifactTrace,
+        *,
+        tier: StorageTier = StorageTier.PROJECT,
+    ) -> None:
         raise NotImplementedError
 
-    async def list_artifacts(self, session_id, *, tier=None):  # type: ignore[no-untyped-def]
+    async def list_artifacts(
+        self,
+        session_id: str,
+        *,
+        tier: StorageTier = StorageTier.PROJECT,
+    ) -> list[ArtifactTrace]:
         return []
 
 
@@ -473,7 +509,7 @@ def _snapshot(
     )
 
 
-async def test_runtime_start_resolves_shared_ports(monkeypatch) -> None:
+async def test_runtime_start_resolves_shared_ports(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_container = FakeContainer()
     monkeypatch.setattr(runtime_module, "_container_configured", True)
 
@@ -497,7 +533,7 @@ async def test_runtime_start_resolves_shared_ports(monkeypatch) -> None:
 async def test_runtime_stream_main_agent_uses_tui_state() -> None:
     fake_container = FakeContainer()
     runtime = CliRuntime(di_container=fake_container)  # type: ignore[arg-type]
-    runtime.chat_service = fake_container.chat
+    runtime.chat_service = cast(ChatServicePort, fake_container.chat)
 
     state = TuiSessionState(session_id="tui-test", model="qwen3")
     chunks = [chunk.delta_content async for chunk in runtime.stream_main_agent("hi", state)]
@@ -510,7 +546,7 @@ async def test_runtime_stream_main_agent_uses_tui_state() -> None:
 async def test_runtime_stream_main_agent_events_wraps_legacy_chunks() -> None:
     fake_container = FakeContainer()
     runtime = CliRuntime(di_container=fake_container)  # type: ignore[arg-type]
-    runtime.chat_service = fake_container.chat
+    runtime.chat_service = cast(ChatServicePort, fake_container.chat)
 
     state = TuiSessionState(session_id="tui-test", model="qwen3")
     events = [event async for event in runtime.stream_main_agent_events("hi", state)]
@@ -528,7 +564,7 @@ async def test_runtime_stream_main_agent_events_wraps_legacy_chunks() -> None:
 async def test_runtime_resume_main_agent_events_forwards_stream() -> None:
     fake_container = FakeContainer()
     runtime = CliRuntime(di_container=fake_container)  # type: ignore[arg-type]
-    runtime.chat_service = fake_container.chat
+    runtime.chat_service = cast(ChatServicePort, fake_container.chat)
 
     decision = ApprovalDecision(type="approve", tool_call_id="call-1")
     events = [
@@ -558,7 +594,7 @@ async def test_runtime_resume_main_agent_events_forwards_stream() -> None:
 async def test_runtime_resume_main_agent_events_symmetric_with_stream_events() -> None:
     fake_container = FakeContainer()
     runtime = CliRuntime(di_container=fake_container)  # type: ignore[arg-type]
-    runtime.chat_service = fake_container.chat
+    runtime.chat_service = cast(ChatServicePort, fake_container.chat)
 
     state = TuiSessionState(session_id="tui-test", model="qwen3")
     stream_events = [event async for event in runtime.stream_main_agent_events("hi", state)]
@@ -580,7 +616,7 @@ async def test_runtime_resume_main_agent_events_symmetric_with_stream_events() -
 async def test_runtime_load_pending_actions_returns_full_actions() -> None:
     fake_container = FakeContainer()
     runtime = CliRuntime(di_container=fake_container)  # type: ignore[arg-type]
-    runtime.approval_store = fake_container.approvals
+    runtime.approval_store = cast(ApprovalStateStorePort, fake_container.approvals)
 
     actions = await runtime.load_pending_actions("tui-test", "approval-1")
 
@@ -592,7 +628,7 @@ async def test_runtime_load_pending_actions_returns_full_actions() -> None:
 async def test_runtime_load_pending_actions_missing_batch_returns_empty() -> None:
     fake_container = FakeContainer()
     runtime = CliRuntime(di_container=fake_container)  # type: ignore[arg-type]
-    runtime.approval_store = fake_container.approvals
+    runtime.approval_store = cast(ApprovalStateStorePort, fake_container.approvals)
 
     actions = await runtime.load_pending_actions("tui-test", "missing")
 
@@ -624,7 +660,7 @@ def test_runtime_policy_for_delegates_to_policy_port() -> None:
 async def test_runtime_execute_once_builds_task() -> None:
     fake_container = FakeContainer()
     runtime = CliRuntime(di_container=fake_container)  # type: ignore[arg-type]
-    runtime.task_agent = fake_container.task
+    runtime.task_agent = cast(TaskAgentPort, fake_container.task)
 
     result = await runtime.execute_once("summarize", model="glm-4.7")
 
@@ -636,7 +672,7 @@ async def test_runtime_execute_once_builds_task() -> None:
 async def test_runtime_execute_once_json_maps_task_result() -> None:
     fake_container = FakeContainer()
     runtime = CliRuntime(di_container=fake_container)  # type: ignore[arg-type]
-    runtime.task_agent = fake_container.task
+    runtime.task_agent = cast(TaskAgentPort, fake_container.task)
     runtime.artifact_store = fake_container.artifact_store  # type: ignore[assignment]
 
     result = await runtime.execute_once_json("summarize", model="glm-4.7")
@@ -653,7 +689,7 @@ async def test_runtime_execute_once_json_maps_task_result() -> None:
 async def test_runtime_lists_sessions_from_index() -> None:
     fake_container = FakeContainer()
     runtime = CliRuntime(di_container=fake_container)  # type: ignore[arg-type]
-    runtime.session_index = fake_container.session_index
+    runtime.session_index = cast(SessionIndexPort, fake_container.session_index)
 
     sessions = await runtime.list_sessions(limit=2)
 
@@ -663,9 +699,9 @@ async def test_runtime_lists_sessions_from_index() -> None:
 async def test_runtime_resume_session_returns_metadata_and_approvals() -> None:
     fake_container = FakeContainer()
     runtime = CliRuntime(di_container=fake_container)  # type: ignore[arg-type]
-    runtime.session_store = fake_container.session_store
-    runtime.session_index = fake_container.session_index
-    runtime.approval_store = fake_container.approvals
+    runtime.session_store = cast(SessionContextStorePort, fake_container.session_store)
+    runtime.session_index = cast(SessionIndexPort, fake_container.session_index)
+    runtime.approval_store = cast(ApprovalStateStorePort, fake_container.approvals)
 
     result = await runtime.resume_session("tui-test")
 
@@ -679,8 +715,8 @@ async def test_runtime_resume_session_returns_metadata_and_approvals() -> None:
 async def test_runtime_resume_session_missing_index_does_not_probe_context() -> None:
     fake_container = FakeContainer()
     runtime = CliRuntime(di_container=fake_container)  # type: ignore[arg-type]
-    runtime.session_store = fake_container.session_store
-    runtime.session_index = fake_container.session_index
+    runtime.session_store = cast(SessionContextStorePort, fake_container.session_store)
+    runtime.session_index = cast(SessionIndexPort, fake_container.session_index)
 
     result = await runtime.resume_session("missing")
 
@@ -691,8 +727,8 @@ async def test_runtime_resume_session_missing_index_does_not_probe_context() -> 
 async def test_runtime_resume_session_deletes_stale_index_when_context_missing() -> None:
     fake_container = FakeContainer()
     runtime = CliRuntime(di_container=fake_container)  # type: ignore[arg-type]
-    runtime.session_store = fake_container.session_store
-    runtime.session_index = fake_container.session_index
+    runtime.session_store = cast(SessionContextStorePort, fake_container.session_store)
+    runtime.session_index = cast(SessionIndexPort, fake_container.session_index)
 
     result = await runtime.resume_session("stale-session")
 
@@ -704,8 +740,8 @@ async def test_runtime_resume_session_deletes_stale_index_when_context_missing()
 async def test_runtime_resume_indexed_empty_session_succeeds() -> None:
     fake_container = FakeContainer()
     runtime = CliRuntime(di_container=fake_container)  # type: ignore[arg-type]
-    runtime.session_store = fake_container.session_store
-    runtime.session_index = fake_container.session_index
+    runtime.session_store = cast(SessionContextStorePort, fake_container.session_store)
+    runtime.session_index = cast(SessionIndexPort, fake_container.session_index)
 
     result = await runtime.resume_session("empty-session")
 
@@ -717,9 +753,9 @@ async def test_runtime_resume_indexed_empty_session_succeeds() -> None:
 async def test_runtime_delete_session_returns_previous_existence_and_delegates() -> None:
     fake_container = FakeContainer()
     runtime = CliRuntime(di_container=fake_container)  # type: ignore[arg-type]
-    runtime.chat_service = fake_container.chat
-    runtime.session_store = fake_container.session_store
-    runtime.session_index = fake_container.session_index
+    runtime.chat_service = cast(ChatServicePort, fake_container.chat)
+    runtime.session_store = cast(SessionContextStorePort, fake_container.session_store)
+    runtime.session_index = cast(SessionIndexPort, fake_container.session_index)
 
     assert await runtime.delete_session("tui-test") is True
     assert await runtime.delete_session("missing") is False
@@ -740,6 +776,7 @@ async def test_runtime_create_chat_run_builds_run_payload() -> None:
     assert request.payload.session_id == "tui-test"
     assert request.payload.chat == {"message": "hello"}
     assert request.payload.model == "qwen3"
+    assert request.client_request_id is not None
     assert request.client_request_id.startswith("tui:chat:tui-test:")
 
 
@@ -755,6 +792,7 @@ async def test_runtime_create_task_run_builds_run_payload() -> None:
     assert request.payload.kind is RunKind.TASK
     assert request.payload.task == {"goal": "summarize repo"}
     assert request.payload.chat is None
+    assert request.client_request_id is not None
     assert request.client_request_id.startswith("tui:task:tui-test:")
 
 
@@ -781,8 +819,8 @@ async def test_runtime_coding_status_reads_pending_and_trace() -> None:
     fake_container = FakeContainer()
     runtime = CliRuntime(di_container=fake_container)  # type: ignore[arg-type]
     runtime.model_registry = fake_container.models
-    runtime.workspace = fake_container.workspace
-    runtime.approval_store = fake_container.approvals
+    runtime.workspace = cast(Workspace, fake_container.workspace)
+    runtime.approval_store = cast(ApprovalStateStorePort, fake_container.approvals)
     runtime.trace_store = fake_container.trace_store  # type: ignore[assignment]
 
     snapshot = await runtime.coding_status(TuiSessionState(session_id="tui-test"))

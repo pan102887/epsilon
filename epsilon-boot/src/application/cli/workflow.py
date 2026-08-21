@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from domain.agent.trace_value_objects import SessionTrace, ToolCallTrace
 
 WorkflowFileGroup = Literal["read", "write", "execute", "other"]
+
+
+def _empty_file_groups() -> dict[WorkflowFileGroup, tuple[str, ...]]:
+    return {}
 
 _TEST_PATTERNS = (
     "pytest",
@@ -76,7 +80,9 @@ class CodingTestsSnapshot:
 class CodingFilesSnapshot:
     """`/files` 命令展示的会话文件触达快照。"""
 
-    groups: dict[WorkflowFileGroup, tuple[str, ...]] = field(default_factory=dict)
+    groups: dict[WorkflowFileGroup, tuple[str, ...]] = field(
+        default_factory=_empty_file_groups
+    )
     trace_available: bool = False
 
 
@@ -206,7 +212,8 @@ def _metadata_paths(metadata: dict[str, Any]) -> tuple[str, ...]:
     for key in ("file_paths", "paths"):
         value = metadata.get(key)
         if isinstance(value, list | tuple):
-            candidates.extend(item for item in value if isinstance(item, str))
+            sequence = cast(list[object] | tuple[object, ...], value)
+            candidates.extend(item for item in sequence if isinstance(item, str))
     return tuple(path for path in (_sanitize_path(item) for item in candidates) if path)
 
 

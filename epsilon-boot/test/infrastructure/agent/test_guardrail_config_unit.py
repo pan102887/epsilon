@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 from common.configuration import ConfigurationError, PropertiesFileSettingsSource
 from domain.agent.guardrails import (
@@ -45,13 +46,14 @@ def test_guardrail_config_loads_from_config_properties(tmp_path: Path) -> None:
     class _ConfigFromProperties(AgentGuardrailConfig):
         @classmethod
         def settings_customise_sources(
-            cls,
-            settings_cls,
-            init_settings,
-            env_settings,
-            dotenv_settings,
-            file_secret_settings,
-        ):
+            cls: type[BaseSettings],
+            settings_cls: type[BaseSettings],
+            init_settings: PydanticBaseSettingsSource,
+            env_settings: PydanticBaseSettingsSource,
+            dotenv_settings: PydanticBaseSettingsSource,
+            file_secret_settings: PydanticBaseSettingsSource,
+        ) -> tuple[PydanticBaseSettingsSource, ...]:
+            del cls, init_settings, env_settings, dotenv_settings, file_secret_settings
             return (
                 PropertiesFileSettingsSource(
                     settings_cls,
@@ -167,4 +169,4 @@ def test_guardrail_config_rejects_invalid_values(
     message: str,
 ) -> None:
     with pytest.raises(ConfigurationError, match=message):
-        AgentGuardrailConfig(**{field_name: value})
+        AgentGuardrailConfig.model_validate({field_name: value})

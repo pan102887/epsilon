@@ -5,6 +5,7 @@
 以及 tool_call_id 不匹配 / 数量不匹配 / 重复恢复的错误传播（Property1）。
 """
 
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -14,10 +15,13 @@ from domain.agent.exceptions import (
     ApprovalDecisionCountMismatchError,
     ApprovalDecisionOrderMismatchError,
 )
+from domain.agent.ports import ApprovalStateStorePort
 from domain.agent.value_objects import (
     AgentResult,
+    AgentStreamEvent,
     ApprovalDecision,
     ApprovalInterrupt,
+    ApprovalInterruptSummary,
     ApprovalRequiredPayload,
     PendingActionRequest,
 )
@@ -52,7 +56,10 @@ class MemoryApprovalStore:
     async def delete_session(self, session_id: str) -> None:
         self.interrupt = None
 
-    async def list_pending_by_session(self, session_id: str) -> list:
+    async def list_pending_by_session(
+        self, session_id: str
+    ) -> list[ApprovalInterruptSummary]:
+        del session_id
         return []
 
 
@@ -93,7 +100,10 @@ def _adapter(agent: MagicMock, approval_store: MemoryApprovalStore) -> ChatServi
         )
     )
     loaded_prompt = prompt_registry.get.return_value
-    tool_schemas = [{"type": "function", "function": {"name": "write_file"}}]
+    tool_schemas: list[dict[str, Any]] = [
+        {"type": "function", "function": {"name": "write_file"}}
+    ]
+    approval_store_port = cast(ApprovalStateStorePort, approval_store)
     return ChatServiceAdapter(
         session_store=session_store,
         model_registry=model_registry,
@@ -110,7 +120,7 @@ def _adapter(agent: MagicMock, approval_store: MemoryApprovalStore) -> ChatServi
         tool_calling_enabled=True,
         max_tool_rounds=3,
         tool_schemas=tool_schemas,
-        approval_store=approval_store,  # type: ignore[arg-type]
+        approval_store=approval_store_port,
         **make_chat_adapter_dependencies(
             session_store=session_store,
             model_registry=model_registry,
@@ -118,12 +128,14 @@ def _adapter(agent: MagicMock, approval_store: MemoryApprovalStore) -> ChatServi
             agent=agent,
             tool_schemas=tool_schemas,
             max_tool_rounds=3,
-            approval_store=approval_store,  # type: ignore[arg-type]
+            approval_store=approval_store_port,
         ),
     )
 
 
-async def _collect(adapter: ChatServiceAdapter, request: ApprovalResumeRequestVO) -> list:
+async def _collect(
+    adapter: ChatServiceAdapter, request: ApprovalResumeRequestVO
+) -> list[AgentStreamEvent]:
     """消费 stream_resume_approval 产出的全部事件为列表。"""
     return [event async for event in adapter.stream_resume_approval(request)]
 

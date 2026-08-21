@@ -39,31 +39,29 @@ from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 from infrastructure.agent.static_guardrail_policy import StaticAgentGuardrailPolicy
 from infrastructure.run.run_serialization_adapters import WorkflowSerializerAdapter
 from test.application.run.test_workflow_checkpoint_recovery_unit import (
-    _checkpoint,
-    _CheckpointStore,
-    _pending_ledger,
-    _RunStore,
-    _service,
-    _snapshot,
+    CheckpointStore,
+    RunStore,
+    build_service,
+    checkpoint,
+    pending_ledger,
+    snapshot,
 )
 from test.application.run.test_workflow_checkpoint_recovery_unit import (
-    _EventStore as _RecoveryEventStore,
+    EventStore as RecoveryEventStore,
 )
 from test.infrastructure.agent.test_react_agent_guardrail_unit import (
-    _config as _guardrail_config,
-)
-from test.infrastructure.agent.test_react_agent_guardrail_unit import (
-    _CriticalTool,
-    _tool_call,
+    CriticalTool,
+    guardrail_config,
+    tool_call,
 )
 from test.infrastructure.agent.test_workflow_collaboration_governance_unit import (
-    _Delegation,
-    _parent_context_token,
-    _Registry,
-    _workflow_token,
+    Delegation,
+    Registry,
+    parent_context_token,
+    workflow_token,
 )
 from test.infrastructure.agent.test_workflow_collaboration_governance_unit import (
-    _EventStore as _CollaborationEventStore,
+    EventStore as CollaborationEventStore,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -173,14 +171,14 @@ def _approval_snapshot() -> RunSnapshot:
 
 
 async def test_checkpoint_recovery_keeps_workflow_phase_and_tool_replay_boundary() -> None:
-    run_store = _RunStore(
-        _snapshot(
+    run_store = RunStore(
+        snapshot(
             workflow_run_state={"workflow_name": "code_change", "current_phase": "execute"},
             collaboration_summary={"delegation_count": 2},
         )
     )
-    events = _RecoveryEventStore()
-    recovery = _service(run_store, _CheckpointStore(_checkpoint()), events)
+    events = RecoveryEventStore()
+    recovery = build_service(run_store, CheckpointStore(checkpoint()), events)
 
     recovered = await recovery.sweep_expired_leases(now=_NOW)
 
@@ -192,12 +190,12 @@ async def test_checkpoint_recovery_keeps_workflow_phase_and_tool_replay_boundary
     assert recovered[0].collaboration_summary == {"delegation_count": 2}
     assert events.events[-1].event_type is RunEventType.RUN_RECOVERY_QUEUED
 
-    blocked = _service(
-        _RunStore(_snapshot()),
-        _CheckpointStore(_checkpoint(), [_pending_ledger(ToolReplayPolicy.NEVER_REPLAY)]),
-        _RecoveryEventStore(),
+    blocked = build_service(
+        RunStore(snapshot()),
+        CheckpointStore(checkpoint(), [pending_ledger(ToolReplayPolicy.NEVER_REPLAY)]),
+        RecoveryEventStore(),
     )
-    decision = await blocked.evaluate_recovery(_snapshot())
+    decision = await blocked.evaluate_recovery(snapshot())
 
     assert decision.recoverable is False
     assert decision.reason == "pending_tool_replay_blocked"
@@ -241,17 +239,17 @@ async def test_awaiting_approval_resume_preserves_current_workflow_phase() -> No
 
 
 async def test_delegate_handoff_and_limit_hit_are_observable_in_event_stream() -> None:
-    events = _CollaborationEventStore()
-    delegation = _Delegation()
-    delegate_tool = DelegateToAgentTool(_Registry(), delegation, event_store=events)
-    handoff_tool = HandoffToAgentTool(_Registry(), delegation, event_store=events)
-    parallel_tool = DelegateParallelTool(_Registry(), delegation, event_store=events)
+    events = CollaborationEventStore()
+    delegation = Delegation()
+    delegate_tool = DelegateToAgentTool(Registry(), delegation, event_store=events)
+    handoff_tool = HandoffToAgentTool(Registry(), delegation, event_store=events)
+    parallel_tool = DelegateParallelTool(Registry(), delegation, event_store=events)
 
-    workflow_token = _workflow_token(max_parallel_delegations=1)
+    workflow_context_token = workflow_token(max_parallel_delegations=1)
     try:
         delegate_result = await delegate_tool.execute(agent_name="agent-a", task_goal="single")
         assert delegate_result.content == "ok"
-        parent_token = _parent_context_token()
+        parent_token = parent_context_token()
         try:
             with pytest.raises(HandoffPerformed):
                 await handoff_tool.execute(agent_name="agent-a")
@@ -264,7 +262,7 @@ async def test_delegate_handoff_and_limit_hit_are_observable_in_event_stream() -
             ]
         )
     finally:
-        reset_workflow_collaboration_context(workflow_token)
+        reset_workflow_collaboration_context(workflow_context_token)
 
     assert "并行委派数量超限" in limit_result.content
     assert [event.event_type for event in events.events] == [
@@ -277,7 +275,7 @@ async def test_delegate_handoff_and_limit_hit_are_observable_in_event_stream() -
 
 async def test_guardrail_critical_enforce_still_blocks_tool_with_workflow_context() -> None:
     registry = MagicMock()
-    registry.get.return_value = _CriticalTool()
+    registry.get.return_value = CriticalTool()
     registry.execute = AsyncMock(return_value=ToolExecutionResult(content="tool ok"))
     adapter = ReActAgentAdapter(
         tool_registry=registry,
@@ -285,15 +283,15 @@ async def test_guardrail_critical_enforce_still_blocks_tool_with_workflow_contex
         guardrail_policy=StaticAgentGuardrailPolicy(GuardrailPolicy(mode=GuardrailMode.ENFORCE)),
     )
     context = ConversationContext()
-    workflow_token = _workflow_token()
+    workflow_context_token = workflow_token()
     try:
-        result, is_error = await adapter._execute_tool_call(
+        result, is_error = await adapter.execute_tool_call_result(
             context,
-            _tool_call(),
-            _guardrail_config(),
+            tool_call(),
+            guardrail_config(),
         )
     finally:
-        reset_workflow_collaboration_context(workflow_token)
+        reset_workflow_collaboration_context(workflow_context_token)
 
     assert "critical" in result.content
     assert is_error is True

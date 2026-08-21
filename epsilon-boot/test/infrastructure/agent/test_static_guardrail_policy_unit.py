@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from domain.agent.guardrails import (
     GuardrailAction,
     GuardrailEvaluationContext,
@@ -19,7 +21,7 @@ def _snapshot(
     *,
     payload: RunPayload,
     latest_checkpoint_id: str | None = None,
-    segment_metadata: dict | None = None,
+    segment_metadata: dict[str, Any] | None = None,
 ) -> RunSnapshot:
     from datetime import UTC, datetime
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
@@ -72,8 +72,12 @@ class ToolCircuitBreaker:
             self._states[tool_name] = _BreakerState()
         return self._states[tool_name]
 
+    def state_for(self, tool_name: str) -> _BreakerState:
+        """Return the current breaker state for diagnostics and tests."""
+        return self._get_state(tool_name)
+
     @asynccontextmanager
-    async def guard(self, tool_name: str) -> AsyncIterator[None]:
+    async def guard(self, tool_name: str) -> AsyncGenerator[None]:
         """熔断保护上下文管理器。
 
         进入时检查状态：

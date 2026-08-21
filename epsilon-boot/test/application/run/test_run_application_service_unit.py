@@ -5,11 +5,12 @@ from __future__ import annotations
 from collections.abc import Collection
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from application.run.run_application_service import (
+    ApprovalResumer,
     ApprovalResumeResult,
     RunApplicationService,
 )
@@ -31,7 +32,12 @@ from domain.run.exceptions import (
     RunNotFoundError,
     RunQueueFullError,
 )
-from domain.run.ports import ApprovalResumeStoreResult
+from domain.run.ports import (
+    ApprovalResumeStoreResult,
+    RunEventStorePort,
+    RunStorePort,
+    WorkflowSelectorPort,
+)
 from domain.run.runtime_context import get_run_execution_context
 from domain.run.value_objects import (
     EventRetentionPolicy,
@@ -436,15 +442,15 @@ def _service(
     max_queued_runs: int = 10,
     max_running_runs: int = 10,
     max_event_count: int = 100,
-    approval_resumer=None,
+    approval_resumer: ApprovalResumer | None = None,
     wakeups: list[str] | None = None,
-    workflow_selector=None,
+    workflow_selector: WorkflowSelectorPort | None = None,
 ) -> RunApplicationService:
     """构造带内存 fake 的 RunApplicationService。"""
 
     return RunApplicationService(
-        run_store=store or _MemoryRunStore(),
-        event_store=event_store or _MemoryEventStore(),
+        run_store=cast(RunStorePort, store or _MemoryRunStore()),
+        event_store=cast(RunEventStorePort, event_store or _MemoryEventStore()),
         capacity_policy=RunCapacityPolicy(
             max_queued_runs=max_queued_runs,
             max_running_runs=max_running_runs,
@@ -678,7 +684,11 @@ async def test_resume_approval_run_uses_injected_resumer_and_enqueues() -> None:
     calls: list[tuple[str, str | None, int]] = []
     observed_contexts: list[tuple[str, str, int]] = []
 
-    async def resumer(snapshot, decisions, model=None):
+    async def resumer(
+        snapshot: RunSnapshot,
+        decisions: list[ApprovalDecision],
+        model: str | None = None,
+    ) -> ApprovalResumeResult:
         calls.append((snapshot.run_id, model, len(decisions)))
         run_context = get_run_execution_context()
         assert run_context is not None
@@ -739,7 +749,11 @@ async def test_resume_approval_run_releases_short_lease_after_approval_error_and
 
     calls = 0
 
-    async def resumer(snapshot, decisions, model=None):
+    async def resumer(
+        snapshot: RunSnapshot,
+        decisions: list[ApprovalDecision],
+        model: str | None = None,
+    ) -> ApprovalResumeResult:
         nonlocal calls
         calls += 1
         if calls == 1:
@@ -793,7 +807,11 @@ async def test_resume_approval_run_accept_keeps_payload_without_duplicate_chat_i
     received_snapshots: list[RunSnapshot] = []
     accepted_result = {"status": "completed", "reply": "done", "accepted": True}
 
-    async def resumer(snapshot, decisions, model=None):
+    async def resumer(
+        snapshot: RunSnapshot,
+        decisions: list[ApprovalDecision],
+        model: str | None = None,
+    ) -> ApprovalResumeResult:
         assert decisions == [ApprovalDecision(type="approve", tool_call_id="call-1")]
         assert model == "model-c"
         received_snapshots.append(snapshot)
@@ -836,7 +854,11 @@ async def test_resume_approval_run_accept_keeps_payload_without_duplicate_chat_i
 async def test_resume_approval_run_can_return_terminal_succeeded_snapshot() -> None:
     """审批恢复回调可让同一 Run 通过专用 store 方法进入成功终态。"""
 
-    async def resumer(snapshot, decisions, model=None):
+    async def resumer(
+        snapshot: RunSnapshot,
+        decisions: list[ApprovalDecision],
+        model: str | None = None,
+    ) -> ApprovalResumeResult:
         return ApprovalResumeResult(
             status="succeeded",
             result={"message": "done"},
@@ -871,7 +893,11 @@ async def test_resume_approval_run_can_return_terminal_succeeded_snapshot() -> N
 async def test_resume_approval_run_can_return_terminal_failed_snapshot() -> None:
     """审批恢复回调可让同一 Run 通过专用 store 方法进入失败终态。"""
 
-    async def resumer(snapshot, decisions, model=None):
+    async def resumer(
+        snapshot: RunSnapshot,
+        decisions: list[ApprovalDecision],
+        model: str | None = None,
+    ) -> ApprovalResumeResult:
         return ApprovalResumeResult(
             status="failed",
             error={"message": "审批恢复失败"},
@@ -906,7 +932,11 @@ async def test_resume_approval_run_can_return_terminal_failed_snapshot() -> None
 async def test_resume_approval_run_can_return_terminal_cancelled_snapshot() -> None:
     """审批恢复回调可让同一 Run 通过专用 store 方法进入取消终态。"""
 
-    async def resumer(snapshot, decisions, model=None):
+    async def resumer(
+        snapshot: RunSnapshot,
+        decisions: list[ApprovalDecision],
+        model: str | None = None,
+    ) -> ApprovalResumeResult:
         return ApprovalResumeResult(
             status="cancelled",
             result={"reason": "rejected"},
@@ -946,7 +976,11 @@ async def test_resume_approval_run_reenters_awaiting_approval_with_new_approval_
     guardrail_summary = {"action": "require_approval", "evaluation_count": 2}
     collaboration_summary = {"latest_steps": [{"id": "step-1"}]}
 
-    async def resumer(snapshot, decisions, model=None):
+    async def resumer(
+        snapshot: RunSnapshot,
+        decisions: list[ApprovalDecision],
+        model: str | None = None,
+    ) -> ApprovalResumeResult:
         return ApprovalResumeResult(
             status="awaiting_approval",
             approval_id="approval-2",
@@ -993,7 +1027,11 @@ async def test_resume_approval_run_reenters_awaiting_approval_with_new_approval_
 async def test_resume_approval_run_preserves_snapshot_summaries_when_resumer_returns_none() -> None:
     """审批恢复结果缺少新摘要时，store 应保留当前已持久化摘要字段。"""
 
-    async def resumer(snapshot, decisions, model=None):
+    async def resumer(
+        snapshot: RunSnapshot,
+        decisions: list[ApprovalDecision],
+        model: str | None = None,
+    ) -> ApprovalResumeResult:
         return ApprovalResumeResult(
             status="queued",
             result={"accepted": True},
@@ -1035,7 +1073,11 @@ async def test_resume_approval_run_preserves_snapshot_summaries_when_resumer_ret
 async def test_resume_approval_run_rejected_keeps_same_payload_and_writes_cancelled_event() -> None:
     """审批拒绝进入取消终态时不应重复原始输入，只保留同一 Run payload。"""
 
-    async def resumer(snapshot, decisions, model=None):
+    async def resumer(
+        snapshot: RunSnapshot,
+        decisions: list[ApprovalDecision],
+        model: str | None = None,
+    ) -> ApprovalResumeResult:
         return ApprovalResumeResult(
             status="cancelled",
             result={"reason": "rejected"},

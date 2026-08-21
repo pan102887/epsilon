@@ -229,7 +229,7 @@ async def test_stream_progress_single_tool_yields_start_before_execution() -> No
     assert first.metadata["phase"] == "start"
     assert runtime.started == []
 
-    second_task = asyncio.create_task(anext(stream))
+    second_task = asyncio.ensure_future(anext(stream))
     await asyncio.sleep(0)
     assert runtime.started == ["call-a"]
 
@@ -292,7 +292,7 @@ async def test_stream_events_single_tool_yields_start_before_execution() -> None
     assert first.kind == "tool_start"
     assert runtime.started == []
 
-    second_task = asyncio.create_task(anext(stream))
+    second_task = asyncio.ensure_future(anext(stream))
     await asyncio.sleep(0)
     assert runtime.started == ["call-a"]
 

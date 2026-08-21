@@ -18,7 +18,10 @@ v3 起 ReAct 内部全程 ``model_access.stream``。本模块为大量 v2 测试
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+from typing import Any
 
+from domain.chat.context import BaseMessage
 from domain.model_access.value_objects import (
     ChatRequest,
     LLMResponse,
@@ -113,13 +116,26 @@ class FakeStreamModel:
         for chunk in self._default_final_chunks:
             yield chunk
 
+    def count_tokens(self, messages: list[BaseMessage]) -> int:
+        return sum(len(message.content) for message in messages)
+
+
+@dataclass
+class StreamCallCounter:
+    """Typed call history for dynamically installed stream mocks."""
+
+    responses: list[LLMResponse]
+    final_chunks: list[StreamingChunk] | None = None
+    call_count: int = 0
+    calls: list[ChatRequest] = field(default_factory=list[ChatRequest])
+
 
 def install_stream_mock(
-    model_access,
+    model_access: Any,
     responses: list[LLMResponse],
     *,
     final_chunks: list[StreamingChunk] | None = None,
-):
+) -> StreamCallCounter:
     """把一个 ``MagicMock`` 改造为 v3 ``stream`` 等价 mock。
 
     用法（替代原 ``model_access.chat = AsyncMock(side_effect=responses)``）::
@@ -133,13 +149,12 @@ def install_stream_mock(
     的 spec 等价替代（NFR-3）。
     """
 
-    counter = type("StreamCallCounter", (), {})()
-    counter.call_count = 0
-    counter.calls: list[ChatRequest] = []
-    counter.responses = list(responses)
-    counter.final_chunks = list(final_chunks) if final_chunks is not None else None
+    counter = StreamCallCounter(
+        responses=list(responses),
+        final_chunks=list(final_chunks) if final_chunks is not None else None,
+    )
 
-    async def _stream(request: ChatRequest):
+    async def _stream(request: ChatRequest) -> AsyncIterator[StreamingChunk]:
         counter.call_count += 1
         counter.calls.append(request)
         if counter.responses:

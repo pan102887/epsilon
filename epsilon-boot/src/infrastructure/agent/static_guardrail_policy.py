@@ -11,8 +11,12 @@ from __future__ import annotations
 
 from domain.agent.guardrail_policy import (
     StaticAgentGuardrailPolicy,
-    _looks_batch,
-    _segment_count,
+)
+from domain.agent.guardrail_policy import (
+    looks_batch as _looks_batch,
+)
+from domain.agent.guardrail_policy import (
+    segment_count as _segment_count,
 )
 
 __all__ = ["StaticAgentGuardrailPolicy", "_looks_batch", "_segment_count"]

@@ -18,9 +18,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from domain.agent.tools import ToolExecutionResult
-from domain.agent.value_objects import AgentConfig
-from domain.chat.context import ConversationContext
+from domain.agent.value_objects import AgentConfig, AgentStreamEvent
+from domain.chat.context import BaseMessage, ConversationContext
 from domain.chat.value_objects import ContextBuilderResult
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import (
     ChatRequest,
     LLMResponse,
@@ -31,7 +32,14 @@ from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 
 
 class _FakeContextBuilder:
-    async def build(self, messages, **kwargs) -> ContextBuilderResult:
+    async def build(
+        self,
+        messages: list[BaseMessage],
+        *,
+        model_access: ModelAccessPort | None = None,
+        model: str | None = None,
+    ) -> ContextBuilderResult:
+        del model_access, model
         return ContextBuilderResult(
             messages=messages,
             usage={},
@@ -41,7 +49,7 @@ class _FakeContextBuilder:
 def _adapter() -> ReActAgentAdapter:
     return ReActAgentAdapter(
         tool_registry=MagicMock(execute=AsyncMock(return_value=ToolExecutionResult(content="ok"))),
-        context_builder=_FakeContextBuilder(),  # type: ignore[arg-type]
+        context_builder=_FakeContextBuilder(),
     )
 
 
@@ -97,6 +105,9 @@ class _FakeModelAccess:
         for c in self._chunks:
             yield c
 
+    def count_tokens(self, messages: list[BaseMessage]) -> int:
+        return len(messages)
+
 
 @pytest.mark.asyncio
 async def test_tool_arguments_delta_emitted_with_correct_payload() -> None:
@@ -108,7 +119,7 @@ async def test_tool_arguments_delta_emitted_with_correct_payload() -> None:
     context = ConversationContext()
     context.add_user_message("hi")
 
-    events = []
+    events: list[AgentStreamEvent] = []
     async for ev in adapter.run_events(context, _config(max_rounds=1), model):
         events.append(ev)
 
@@ -170,11 +181,14 @@ async def test_intermediate_round_emits_no_tool_arguments_delta() -> None:
             for c in chunks:
                 yield c
 
+        def count_tokens(self, messages: list[BaseMessage]) -> int:
+            return len(messages)
+
     adapter = _adapter()
     context = ConversationContext()
     context.add_user_message("ask")
 
-    events = []
+    events: list[AgentStreamEvent] = []
     async for ev in adapter.run_events(context, _config(max_rounds=2), _ModelTwoRounds()):
         events.append(ev)
 

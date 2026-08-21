@@ -6,21 +6,24 @@ import importlib.util
 import json
 import pathlib
 from collections.abc import AsyncIterator
+from typing import Any, Protocol
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from domain.agent.segmented_execution import SegmentBudgetUsage, SegmentRunMetadata
 from domain.agent.value_objects import AgentStreamEvent
-from domain.chat.value_objects import ChatResponseVO
+from domain.chat.value_objects import ChatRequestVO, ChatResponseVO
 from domain.task.value_objects import TaskResult, TaskStatus
 
 _ROOT = pathlib.Path(__file__).resolve().parents[3]
 
 
-def _load_module(relative: str, name: str):
+def _load_module(relative: str, name: str) -> Any:
     path = _ROOT / "src" / relative
     spec = importlib.util.spec_from_file_location(name, str(path))
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -116,7 +119,11 @@ async def test_task_execute_response_includes_segment_fields() -> None:
     }
 
 
-async def _read_sse_data(response) -> list[str]:
+class _SseResponse(Protocol):
+    body_iterator: AsyncIterator[dict[str, object] | bytes | str]
+
+
+async def _read_sse_data(response: _SseResponse) -> list[str]:
     """读取 EventSourceResponse 的 data payload。"""
     events: list[str] = []
     async for item in response.body_iterator:
@@ -140,8 +147,10 @@ async def test_chat_stream_uses_segmented_events_and_emits_segment_done_payload(
         def prompt_id(self) -> str:
             return "chat-default@v1"
 
-        def stream_segmented_chat_events(self, _request) -> AsyncIterator[AgentStreamEvent]:
-            async def gen():
+        def stream_segmented_chat_events(
+            self, _request: ChatRequestVO
+        ) -> AsyncIterator[AgentStreamEvent]:
+            async def gen() -> AsyncIterator[AgentStreamEvent]:
                 yield AgentStreamEvent(kind="assistant_delta", content="hi")
                 yield AgentStreamEvent(
                     kind="assistant_done",

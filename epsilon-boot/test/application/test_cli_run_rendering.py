@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime
 
-from application.cli.commands import _format_run_snapshot
+from application.cli.commands import format_run_snapshot
 from application.cli.tui import render_run_snapshot
 from domain.run.value_objects import RunKind, RunPayload, RunSnapshot, RunStatus
 
@@ -55,7 +55,7 @@ def _snapshot(*, collaboration_summary: dict[str, object]) -> RunSnapshot:
 def test_cli_command_rendering_reads_latest_steps_not_recent_steps() -> None:
     """Slash command 输出应以 latest_steps 为唯一规范协作步骤来源。"""
 
-    rendered = _format_run_snapshot(
+    rendered = format_run_snapshot(
         _snapshot(
             collaboration_summary={
                 "latest_steps": [
@@ -127,7 +127,7 @@ def test_cli_and_tui_rendering_fallback_to_historical_recent_steps() -> None:
         }
     )
 
-    command_rendered = _format_run_snapshot(legacy_snapshot)
+    command_rendered = format_run_snapshot(legacy_snapshot)
     tui_rendered = render_run_snapshot(legacy_snapshot)
 
     assert "delegation / legacy-reviewer / fallback step" in command_rendered
@@ -148,7 +148,7 @@ def test_cli_and_tui_rendering_use_counter_fallback_from_canonical_summary() -> 
         }
     )
 
-    command_rendered = _format_run_snapshot(snapshot)
+    command_rendered = format_run_snapshot(snapshot)
     tui_rendered = render_run_snapshot(snapshot)
 
     assert "delegation_count=2" in command_rendered
@@ -172,7 +172,7 @@ def test_guardrail_and_workflow_snapshot_fields_remain_rendered() -> None:
         workflow_run_state={"workflow_name": "code_change", "current_phase": "review"},
     )
 
-    command_rendered = _format_run_snapshot(snapshot)
+    command_rendered = format_run_snapshot(snapshot)
     tui_rendered = render_run_snapshot(snapshot)
 
     assert "guardrail_summary:" in command_rendered

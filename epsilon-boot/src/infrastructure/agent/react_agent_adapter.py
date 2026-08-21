@@ -13,7 +13,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator, Mapping
-from typing import Any
+from typing import Any, cast
 
 from opentelemetry import trace as _otel_trace
 from opentelemetry.trace import Status, StatusCode
@@ -98,7 +98,9 @@ from infrastructure.agent.react_approval_resume_coordinator import (
 from infrastructure.agent.react_final_round_streamer import ReactFinalRoundStreamer
 from infrastructure.agent.react_tool_execution_coordinator import ReactToolExecutionCoordinator
 from infrastructure.agent.react_trace_recorder import ReActTraceRecorder
-from infrastructure.agent.round_stream_accumulator import _RoundStreamAccumulator
+from infrastructure.agent.round_stream_accumulator import (
+    RoundStreamAccumulator as _RoundStreamAccumulator,
+)
 from infrastructure.agent.tool_abuse_detector import ToolAbuseDetector, ToolAbuseVerdict
 from infrastructure.agent.workflow_capability_runtime import (
     enforce_workflow_capability_before_action,
@@ -182,7 +184,8 @@ def _agent_name_from_arguments(arguments: str | None) -> str | None:
         parsed = json.loads(raw)
     except (TypeError, ValueError, json.JSONDecodeError):
         return None
-    value = parsed.get("agent_name") if isinstance(parsed, dict) else None
+    payload = cast(dict[str, object], parsed) if isinstance(parsed, dict) else {}
+    value = payload.get("agent_name")
     return str(value).strip() if isinstance(value, str) and value.strip() else None
 
 
@@ -196,18 +199,21 @@ def _delegation_targets_from_arguments(arguments: str | None) -> tuple[str | Non
         return (None,)
     if not isinstance(parsed, dict):
         return (None,)
-    direct = parsed.get("agent_name")
+    payload = cast(dict[str, object], parsed)
+    direct = payload.get("agent_name")
     if isinstance(direct, str) and direct.strip():
         return (direct.strip(),)
-    requests = parsed.get("requests")
+    requests = payload.get("requests")
     if isinstance(requests, list):
-        cleaned = tuple(
-            item["agent_name"].strip()
-            for item in requests
-            if isinstance(item, dict)
-            and isinstance(item.get("agent_name"), str)
-            and item["agent_name"].strip()
-        )
+        cleaned_items: list[str] = []
+        for item in cast(list[object], requests):
+            if not isinstance(item, dict):
+                continue
+            request = cast(dict[str, object], item)
+            agent_name = request.get("agent_name")
+            if isinstance(agent_name, str) and agent_name.strip():
+                cleaned_items.append(agent_name.strip())
+        cleaned = tuple(cleaned_items)
         return cleaned or (None,)
     return (None,)
 
@@ -237,7 +243,7 @@ def _tool_arguments_mapping(arguments: str | None) -> dict[str, Any]:
         parsed = json.loads(raw)
     except (TypeError, ValueError, json.JSONDecodeError):
         return {}
-    return parsed if isinstance(parsed, dict) else {}
+    return cast(dict[str, Any], parsed) if isinstance(parsed, dict) else {}
 
 
 class ReActAgentAdapter(AgentPort):
@@ -327,7 +333,7 @@ class ReActAgentAdapter(AgentPort):
 
         policy = getattr(self._guardrail_policy, "policy", None)
         pricing = getattr(policy, "model_pricing", None)
-        return pricing if isinstance(pricing, Mapping) else {}
+        return cast(Mapping[str, Any], pricing) if isinstance(pricing, Mapping) else {}
 
     def _tool_risk_level(self, tool_name: str) -> ToolRiskLevel:
         """解析工具注册表中的风险等级，缺失时按高风险保守处理。"""
@@ -392,6 +398,26 @@ class ReActAgentAdapter(AgentPort):
         """记录单个工具调用追踪（委托 ``ReActTraceRecorder``）。"""
         await self._trace_recorder.record_tool_call_trace(
             session_id, round_num, tool_call, result, is_error, elapsed_ms
+        )
+
+    async def record_tool_call_trace(
+        self,
+        session_id: str | None,
+        round_num: int,
+        tool_call: ToolCallRequest,
+        result: ToolExecutionResult,
+        is_error: bool,
+        elapsed_ms: float,
+    ) -> None:
+        """为并发执行协作者公开工具调用追踪入口。"""
+
+        await self._record_tool_call_trace(
+            session_id,
+            round_num,
+            tool_call,
+            result,
+            is_error,
+            elapsed_ms,
         )
 
     @staticmethod
@@ -736,6 +762,7 @@ class ReActAgentAdapter(AgentPort):
                 allowed_decisions=frozenset({"approve", "edit", "reject"}),
                 reason=guardrail_decision.message,  # type: ignore[union-attr]
             )
+            run_context = get_run_execution_context()
             approval_payload = await self._save_interrupt(
                 context,
                 config,
@@ -753,11 +780,7 @@ class ReActAgentAdapter(AgentPort):
                     "source": "guardrail",
                     "guardrail_message": guardrail_decision.message,  # type: ignore[union-attr]
                     "tool_call_ids": [tool_call.id],
-                    "run_id": (
-                        get_run_execution_context().run_id
-                        if get_run_execution_context() is not None
-                        else None
-                    ),
+                    "run_id": run_context.run_id if run_context is not None else None,
                 },
             )
             await self._record_guardrail_observation(
@@ -880,6 +903,27 @@ class ReActAgentAdapter(AgentPort):
             )
         return result, is_error
 
+    async def execute_tool_call_for_concurrency(
+        self,
+        context: ConversationContext,
+        tool_call: ToolCallRequest,
+        config: AgentConfig,
+        *,
+        round_num: int,
+        skip_guardrail_before: bool,
+        record_guardrail_after: bool,
+    ) -> tuple[ToolExecutionResult, bool]:
+        """为并发执行协作者公开单工具执行入口。"""
+
+        return await self._execute_tool_call(
+            context,
+            tool_call,
+            config,
+            round_num=round_num,
+            skip_guardrail_before=skip_guardrail_before,
+            record_guardrail_after=record_guardrail_after,
+        )
+
     def _evaluate_tool_guardrail(
         self,
         tool_call: ToolCallRequest,
@@ -995,6 +1039,25 @@ class ReActAgentAdapter(AgentPort):
             stats=after_stats,
             round_num=round_num,
             tool_call=tool_call,
+        )
+
+    async def record_tool_after_observation(
+        self,
+        *,
+        tool_call: ToolCallRequest,
+        usage: dict[str, int] | None,
+        round_num: int,
+        is_error: bool,
+        elapsed_ms: float,
+    ) -> None:
+        """为并发执行协作者公开工具执行后 guardrail 观测入口。"""
+
+        await self._record_tool_after_observation(
+            tool_call=tool_call,
+            usage=usage,
+            round_num=round_num,
+            is_error=is_error,
+            elapsed_ms=elapsed_ms,
         )
 
     async def _prepare_tool_calls_for_execution(
@@ -1263,7 +1326,10 @@ class ReActAgentAdapter(AgentPort):
             )
             idempotency_fn = getattr(tool, "idempotency_key", None)
             if callable(idempotency_fn):
-                idempotency_key = idempotency_fn(tool_call, execution_key)
+                candidate = idempotency_fn(tool_call, execution_key)
+                if candidate is not None and not isinstance(candidate, str):
+                    raise TypeError("tool.idempotency_key 必须返回 str | None")
+                idempotency_key = candidate
         return replay_policy, side_effect_level, idempotency_key, execution_key
 
     def _get_registered_tool(self, tool_name: str) -> Any | None:
@@ -1321,7 +1387,7 @@ class ReActAgentAdapter(AgentPort):
         )
 
     @staticmethod
-    def _ensure_agent_system_prompt(
+    def ensure_agent_system_prompt(
         context: ConversationContext,
         config: AgentConfig,
     ) -> None:
@@ -1461,7 +1527,7 @@ class ReActAgentAdapter(AgentPort):
                 )
             )
         _CURRENT_TOOL_ABUSE_DETECTOR.set(ToolAbuseDetector())
-        self._ensure_agent_system_prompt(context, config)
+        self.ensure_agent_system_prompt(context, config)
 
     async def perform_model_round(
         self,
@@ -1612,6 +1678,67 @@ class ReActAgentAdapter(AgentPort):
             model=model,
             usage_so_far=usage_so_far,
         )
+
+    async def execute_tool_call_result(
+        self,
+        context: ConversationContext,
+        tool_call: ToolCallRequest,
+        config: AgentConfig,
+        *,
+        round_num: int = 0,
+        usage: dict[str, int] | None = None,
+        skip_guardrail_before: bool = False,
+        record_guardrail_after: bool = True,
+    ) -> tuple[ToolExecutionResult, bool]:
+        """执行一次工具调用，并返回结果与错误标志。"""
+
+        return await self._execute_tool_call(
+            context,
+            tool_call,
+            config,
+            round_num=round_num,
+            usage=usage,
+            skip_guardrail_before=skip_guardrail_before,
+            record_guardrail_after=record_guardrail_after,
+        )
+
+    async def dispatch_concurrent_tool_calls(
+        self,
+        context: ConversationContext,
+        tool_calls: tuple[ToolCallRequest, ...],
+        config: AgentConfig,
+        session_id: str | None = None,
+        round_num: int = 0,
+    ) -> None:
+        """通过并发工具协调器执行已准备的调用批次。"""
+
+        await self._dispatch_concurrent_tool_calls(
+            context,
+            tool_calls,
+            config,
+            session_id=session_id,
+            round_num=round_num,
+        )
+
+    def guardrail_runtime_stats(self) -> GuardrailRuntimeStats:
+        """返回当前累计的护栏运行时统计。"""
+
+        return self._guardrail_runtime_accumulator().snapshot()
+
+    async def iter_rounds(
+        self,
+        context: ConversationContext,
+        config: AgentConfig,
+        model_access: ModelAccessPort,
+        *,
+        terminal_round: int | None = None,
+    ) -> AsyncIterator[RoundOutcome]:
+        """向流式应用适配器提供带类型的轮次迭代器。"""
+
+        async for outcome in self._iter_rounds(
+            context, config, model_access, terminal_round=terminal_round
+        ):
+            yield outcome
 
     async def checkpoint_model_completed(
         self,
@@ -1904,6 +2031,16 @@ class ReActAgentAdapter(AgentPort):
         # 理论上不可达：_iter_rounds 至少会 yield 一个非 tool_calls 的 outcome
         raise RuntimeError("_iter_rounds 未产出终止结果")
 
+    async def apply_approval_decisions(
+        self,
+        context: ConversationContext,
+        config: AgentConfig,
+        interrupt: ApprovalInterrupt,
+        decisions: tuple[ApprovalDecision, ...],
+    ) -> None:
+        """校验并应用审批恢复决策。"""
+        await self._apply_approval_decisions(context, config, interrupt, decisions)
+
     async def _apply_approval_decisions(
         self,
         context: ConversationContext,
@@ -1944,7 +2081,9 @@ class ReActAgentAdapter(AgentPort):
         tool = self._tool_registry.get(tool_name)
         if tool is None:
             return
-        cast_params = tool.cast_params(arguments)
+        if not isinstance(arguments, dict):
+            raise ApprovalEditInvalidArgumentsError(tool_name, "工具参数必须为对象")
+        cast_params = tool.cast_params(cast(dict[str, Any], arguments))
         errors = tool.validate_params(cast_params)
         if errors:
             raise ApprovalEditInvalidArgumentsError(tool_name, "; ".join(errors))
@@ -2180,7 +2319,7 @@ class ReActAgentAdapter(AgentPort):
         if config.max_rounds == 1:
             # 该分支不进 _iter_rounds，需独立保证 system_prompt 幂等注入
             # （Single_System_Prompt_Injection_Site 例外：唯一不经 _iter_rounds 的注入点）
-            self._ensure_agent_system_prompt(context, config)
+            self.ensure_agent_system_prompt(context, config)
             # T3.5：快速路径同样补录 ModelCallTrace，使所有入口 trace 时间线一致。
             fast_path_response: list[LLMResponse] = []
             try:
@@ -2232,6 +2371,9 @@ class ReActAgentAdapter(AgentPort):
                     continue
 
                 if outcome.kind == "approval":
+                    approval = outcome.approval
+                    if approval is None:
+                        raise RuntimeError("approval outcome 缺少审批载荷")
                     await self._record_trace(
                         context.session_id,
                         self._build_approval_trace(outcome),
@@ -2239,11 +2381,11 @@ class ReActAgentAdapter(AgentPort):
                     yield StreamingChunk(
                         delta_content=(
                             "当前会话等待人工审批，"
-                            f"approval_id={outcome.approval.approval_id}"
+                            f"approval_id={approval.approval_id}"
                         ),
                         finished=True,
                         usage=outcome.total_usage,
-                        metadata=approval_payload_to_metadata(outcome.approval),
+                        metadata=approval_payload_to_metadata(approval),
                     )
                     return
 
@@ -2307,7 +2449,7 @@ class ReActAgentAdapter(AgentPort):
         if config.max_rounds == 1:
             # 该分支不进 _iter_rounds，需独立保证 system_prompt 幂等注入
             # （Single_System_Prompt_Injection_Site 例外：唯一不经 _iter_rounds 的注入点）
-            self._ensure_agent_system_prompt(context, config)
+            self.ensure_agent_system_prompt(context, config)
             yield AgentStreamEvent(
                 kind="status",
                 content="Agent round 1",
@@ -2380,6 +2522,9 @@ class ReActAgentAdapter(AgentPort):
                     continue
 
                 if outcome.kind == "approval":
+                    approval = outcome.approval
+                    if approval is None:
+                        raise RuntimeError("approval outcome 缺少审批载荷")
                     await self._record_trace(
                         context.session_id,
                         self._build_approval_trace(outcome),
@@ -2388,7 +2533,7 @@ class ReActAgentAdapter(AgentPort):
                         kind="approval_required",
                         content="当前请求等待人工审批，请通过审批恢复接口提交决策。",
                         usage=outcome.total_usage,
-                        metadata=approval_payload_to_metadata(outcome.approval)
+                        metadata=approval_payload_to_metadata(approval)
                         | {"round": outcome.round_num},
                     )
                     return

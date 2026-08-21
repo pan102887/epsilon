@@ -16,7 +16,7 @@ import pytest
 from hypothesis import given, settings
 
 from domain.agent.exceptions import ToolPermissionDeniedError
-from domain.agent.tools import ScopedToolRegistry, Tool, ToolRegistry
+from domain.agent.tools import ScopedToolRegistry, Tool, ToolExecutionResult, ToolRegistry
 from domain.agent.value_objects import AgentConfig
 from domain.model_access.value_objects import ToolCallRequest
 
@@ -101,8 +101,8 @@ class FakeTool(Tool):
     def parameters(self) -> dict[str, Any]:
         return {"type": "object", "properties": {}}
 
-    async def execute(self, **kwargs: Any) -> str:
-        return "ok"
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
+        return ToolExecutionResult(content="ok")
 
 
 class TestGetSchemasFilteringProperties:
@@ -304,7 +304,7 @@ class TestScopedRegistryExecutePermissionProperties:
         in_scope_name = next(iter(scope_names))
         in_scope_request = ToolCallRequest(id="call-in", name=in_scope_name, arguments="{}")
         result = await scoped.execute(in_scope_request)
-        assert result == "ok"
+        assert result.content == "ok"
 
         # 5. 作用域外工具：execute 应抛出 ToolPermissionDeniedError
         if out_of_scope:
@@ -321,20 +321,28 @@ class TestScopedRegistryExecutePermissionProperties:
 # ── AgentConfig 属性测试用 Hypothesis 策略 ──
 
 # 生成 OpenAI function calling 格式的 tool_schemas 列表
-tool_schema_st = st.lists(
+def _tool_schema(name: str) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": "test",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+
+
+def _tool_schema_name(schema: dict[str, Any]) -> str:
+    return str(schema["function"]["name"])
+
+
+tool_schema_st: st.SearchStrategy[list[dict[str, Any]]] = st.lists(
     st.text(alphabet=string.ascii_lowercase, min_size=1, max_size=8).map(
-        lambda name: {
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": "test",
-                "parameters": {"type": "object", "properties": {}},
-            },
-        }
+        _tool_schema
     ),
     min_size=1,
     max_size=5,
-    unique_by=lambda s: s["function"]["name"],
+    unique_by=_tool_schema_name,
 )
 
 

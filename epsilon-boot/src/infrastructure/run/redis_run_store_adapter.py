@@ -7,11 +7,11 @@ import hashlib
 import json
 import time
 import uuid
-from collections.abc import Callable, Collection
+from collections.abc import AsyncIterator, Callable, Collection
 from dataclasses import fields, is_dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import Any, TypeVar
+from typing import Any, Protocol, TypeVar, cast
 
 import redis.asyncio as aioredis
 
@@ -43,6 +43,35 @@ from domain.run.value_objects import (
 from domain.run.workflow import canonicalize_collaboration_summary
 
 T = TypeVar("T")
+_RedisValue = str | bytes
+
+
+class _RunRedisCommands(Protocol):
+    """Run store 直接使用的 Redis 异步命令最小协议。"""
+
+    async def get(self, name: str | bytes) -> _RedisValue | None: ...
+
+    def scan_iter(self, *, match: str) -> AsyncIterator[_RedisValue]: ...
+
+    def sscan_iter(self, name: str) -> AsyncIterator[_RedisValue]: ...
+
+    async def lrange(self, name: str, start: int, end: int) -> list[_RedisValue]: ...
+
+    async def expire(self, name: str, seconds: int) -> bool: ...
+
+    async def ltrim(self, name: str, start: int, end: int) -> bool: ...
+
+    async def lindex(self, name: str, index: int) -> _RedisValue | None: ...
+
+
+class _WatchedListPipeline(Protocol):
+    """Redis WATCH 阶段所需的列表读取与事务排队协议。"""
+
+    async def lindex(self, name: str, index: int) -> _RedisValue | None: ...
+
+    async def lrange(self, name: str, start: int, end: int) -> list[_RedisValue]: ...
+
+    def lpop(self, name: str) -> object: ...
 
 
 class RedisRunStoreAdapter(RunStorePort, RunEventStorePort, RunObservationStorePort):
@@ -56,9 +85,15 @@ class RedisRunStoreAdapter(RunStorePort, RunEventStorePort, RunObservationStoreP
         conflict_retry_max: int | None = None,
     ) -> None:
         self._redis = redis_client
+        self._commands = cast(_RunRedisCommands, redis_client)
         self._key_prefix = key_prefix.rstrip(":")
         self._conflict_retry_max = conflict_retry_max if conflict_retry_max is not None else 5
         self._state_machine = RunStateMachine()
+
+    @property
+    def redis_client(self) -> aioredis.Redis:
+        """返回适配器使用的 Redis 客户端，供生命周期与迁移操作使用。"""
+        return self._redis
 
     async def create_run(self, request: RunCreateRequest) -> RunSnapshot:
         """创建 queued Run，或按 client_request_id 返回既有 Run。"""
@@ -128,8 +163,8 @@ class RedisRunStoreAdapter(RunStorePort, RunEventStorePort, RunObservationStoreP
 
     async def count_by_status(self, statuses: Collection[RunStatus]) -> int:
         count = 0
-        async for key in self._redis.scan_iter(match=self._snapshot_match()):
-            raw = await self._redis.get(key)
+        async for key in self._commands.scan_iter(match=self._snapshot_match()):
+            raw = await self._commands.get(key)
             if raw is None:
                 continue
             snapshot = _snapshot_from_dict(json.loads(raw))
@@ -145,7 +180,8 @@ class RedisRunStoreAdapter(RunStorePort, RunEventStorePort, RunObservationStoreP
             try:
                 async with self._redis.pipeline(transaction=True) as pipe:
                     await pipe.watch(queue_key)
-                    run_id = await pipe.lindex(queue_key, 0)
+                    list_pipe = cast(_WatchedListPipeline, pipe)
+                    run_id = await list_pipe.lindex(queue_key, 0)
                     if run_id is None:
                         return None
                     run_id = self._decode_text(run_id)
@@ -154,13 +190,13 @@ class RedisRunStoreAdapter(RunStorePort, RunEventStorePort, RunObservationStoreP
                     raw = await pipe.get(snapshot_key)
                     if raw is None:
                         pipe.multi()
-                        pipe.lpop(queue_key)
+                        list_pipe.lpop(queue_key)
                         await pipe.execute()
                         continue
                     snapshot = _snapshot_from_dict(json.loads(raw))
                     if not self._state_machine.can_claim(snapshot.status):
                         pipe.multi()
-                        pipe.lpop(queue_key)
+                        list_pipe.lpop(queue_key)
                         await pipe.execute()
                         continue
                     now = self._now()
@@ -178,7 +214,7 @@ class RedisRunStoreAdapter(RunStorePort, RunEventStorePort, RunObservationStoreP
                         version=snapshot.version + 1,
                     )
                     pipe.multi()
-                    pipe.lpop(queue_key)
+                    list_pipe.lpop(queue_key)
                     pipe.set(snapshot_key, self._encode(updated))
                     pipe.sadd(self._running_key(), run_id)
                     await pipe.execute()
@@ -622,7 +658,8 @@ class RedisRunStoreAdapter(RunStorePort, RunEventStorePort, RunObservationStoreP
     async def mark_lost_expired_leases(self, *, now: datetime) -> list[RunSnapshot]:
         lost: list[RunSnapshot] = []
         run_ids = [
-            self._decode_text(item) async for item in self._redis.sscan_iter(self._running_key())
+            self._decode_text(item)
+            async for item in self._commands.sscan_iter(self._running_key())
         ]
         for run_id in sorted(run_ids):
 
@@ -657,7 +694,8 @@ class RedisRunStoreAdapter(RunStorePort, RunEventStorePort, RunObservationStoreP
     async def list_expired_leased_runs(self, *, now: datetime) -> list[RunSnapshot]:
         expired: list[RunSnapshot] = []
         run_ids = [
-            self._decode_text(item) async for item in self._redis.sscan_iter(self._running_key())
+            self._decode_text(item)
+            async for item in self._commands.sscan_iter(self._running_key())
         ]
         for run_id in sorted(run_ids):
             snapshot = await self.get_run(run_id)
@@ -788,7 +826,8 @@ class RedisRunStoreAdapter(RunStorePort, RunEventStorePort, RunObservationStoreP
                     snapshot = _snapshot_from_dict(json.loads(raw_snapshot))
                     now = self._now()
                     self._assert_fresh_owner_lease(snapshot, owner_id, now)
-                    raw_events = await pipe.lrange(events_key, -1, -1)
+                    list_pipe = cast(_WatchedListPipeline, pipe)
+                    raw_events = await list_pipe.lrange(events_key, -1, -1)
                     latest_cursor = 0
                     if raw_events:
                         latest_cursor = _event_from_dict(json.loads(raw_events[0])).cursor
@@ -842,7 +881,8 @@ class RedisRunStoreAdapter(RunStorePort, RunEventStorePort, RunObservationStoreP
                     raw_snapshot = await pipe.get(snapshot_key)
                     if raw_snapshot is not None:
                         snapshot = _snapshot_from_dict(json.loads(raw_snapshot))
-                    raw_events = await pipe.lrange(events_key, -1, -1)
+                    list_pipe = cast(_WatchedListPipeline, pipe)
+                    raw_events = await list_pipe.lrange(events_key, -1, -1)
                     latest_cursor = 0
                     if raw_events:
                         latest_cursor = _event_from_dict(json.loads(raw_events[0])).cursor
@@ -879,7 +919,7 @@ class RedisRunStoreAdapter(RunStorePort, RunEventStorePort, RunObservationStoreP
     async def list_events(
         self, run_id: str, after_cursor: int | None, limit: int
     ) -> list[RunEvent]:
-        raw_events = await self._redis.lrange(self._events_key(run_id), 0, -1)
+        raw_events = await self._commands.lrange(self._events_key(run_id), 0, -1)
         events = [_event_from_dict(json.loads(raw)) for raw in raw_events]
         filtered = [
             event for event in events if after_cursor is None or event.cursor > after_cursor
@@ -899,12 +939,12 @@ class RedisRunStoreAdapter(RunStorePort, RunEventStorePort, RunObservationStoreP
     async def trim_events(self, run_id: str, policy: EventRetentionPolicy) -> None:
         events_key = self._events_key(run_id)
         if policy.ttl_seconds > 0:
-            await self._redis.expire(events_key, policy.ttl_seconds)
+            await self._commands.expire(events_key, policy.ttl_seconds)
         if policy.max_event_count > 0:
-            await self._redis.ltrim(events_key, -policy.max_event_count, -1)
+            await self._commands.ltrim(events_key, -policy.max_event_count, -1)
 
     async def first_cursor(self, run_id: str) -> int | None:
-        raw = await self._redis.lindex(self._events_key(run_id), 0)
+        raw = await self._commands.lindex(self._events_key(run_id), 0)
         if raw is None:
             return None
         return _event_from_dict(json.loads(raw)).cursor
@@ -1050,6 +1090,10 @@ class RedisRunStoreAdapter(RunStorePort, RunEventStorePort, RunObservationStoreP
     def _snapshot_key(self, run_id: str) -> str:
         return self._key(f"run:{run_id}:snapshot")
 
+    def snapshot_key(self, run_id: str) -> str:
+        """返回指定 Run 的快照键。"""
+        return self._snapshot_key(run_id)
+
     def _events_key(self, run_id: str) -> str:
         return self._key(f"run:{run_id}:events")
 
@@ -1100,9 +1144,11 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
+        mapping = cast(dict[object, object], value)
+        return {str(key): _json_safe(item) for key, item in mapping.items()}
     if isinstance(value, (list, tuple)):
-        return [_json_safe(item) for item in value]
+        items = cast(list[object] | tuple[object, ...], value)
+        return [_json_safe(item) for item in items]
     return value
 
 
@@ -1181,7 +1227,7 @@ def _next_observation_guardrail_summary(
     if not isinstance(next_summary, dict):
         return current
     next_summary["last_event_cursor"] = event_cursor
-    return next_summary
+    return cast(dict[str, Any], next_summary)
 
 
 def _next_collaboration_summary(

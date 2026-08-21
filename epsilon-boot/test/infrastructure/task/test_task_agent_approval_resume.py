@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Set as AbstractSet
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -15,6 +17,7 @@ from domain.agent.value_objects import (
     PendingActionRequest,
 )
 from domain.chat.context import ConversationContext, SystemMessage, ToolMessage, UserMessage
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import ToolCallRequest
 from domain.prompt.value_objects import LoadedPrompt
 from domain.task.value_objects import TaskApprovalResumeRequest, TaskContinueRequest, TaskStatus
@@ -23,7 +26,7 @@ from infrastructure.agent.approval_state_store import approval_interrupt_to_dict
 from infrastructure.task.task_agent_adapter import TaskAgentAdapter
 
 
-def _schema(name: str) -> dict:
+def _schema(name: str) -> dict[str, Any]:
     """构造测试工具 schema。"""
     return {
         "type": "function",
@@ -57,11 +60,17 @@ def _adapter(
 ) -> tuple[TaskAgentAdapter, MagicMock]:
     """构造测试用任务适配器。"""
     tool_registry = MagicMock()
-    tool_registry.get_schemas.side_effect = lambda tool_names=None: [
-        schema
-        for schema in [_schema("search"), _schema("write")]
-        if tool_names is None or schema["function"]["name"] in set(tool_names)
-    ]
+
+    def get_schemas(
+        tool_names: AbstractSet[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        return [
+            schema
+            for schema in [_schema("search"), _schema("write")]
+            if tool_names is None or schema["function"]["name"] in set(tool_names)
+        ]
+
+    tool_registry.get_schemas.side_effect = get_schemas
     model_registry = MagicMock()
     model_registry.get_default_model.return_value = "test-model"
     model_registry.get_adapter_for_model.return_value = MagicMock()
@@ -113,7 +122,13 @@ async def test_resume_approval_preserves_tool_boundary_and_no_duplicate_goal() -
     approval_store.consume = AsyncMock(return_value=interrupt)
     captured_configs: list[AgentConfig] = []
 
-    async def resume(ctx, config, _model_access, consumed, decisions):
+    async def resume(
+        ctx: ConversationContext,
+        config: AgentConfig,
+        _model_access: ModelAccessPort,
+        consumed: ApprovalInterrupt,
+        decisions: tuple[ApprovalDecision, ...],
+    ) -> AgentResult:
         captured_configs.append(config)
         assert consumed.approval_id == "approval-1"
         assert decisions == (ApprovalDecision(type="approve", tool_call_id="call-1"),)
@@ -168,7 +183,13 @@ async def test_resume_approval_marks_guardrail_approval_as_risk_gate_required() 
     approval_store.load = AsyncMock(return_value=interrupt)
     approval_store.consume = AsyncMock(return_value=interrupt)
 
-    async def resume(ctx, _config, _model_access, _consumed, _decisions):
+    async def resume(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+        _consumed: ApprovalInterrupt,
+        _decisions: tuple[ApprovalDecision, ...],
+    ) -> AgentResult:
         ctx.add_assistant_message_with_tool_calls(
             "",
             [ToolCallRequest(id="call-2", name="search", arguments='{"query":"danger"}')],
@@ -254,7 +275,13 @@ async def test_resume_approval_observe_metadata_does_not_force_risk_gate() -> No
     approval_store.load = AsyncMock(return_value=interrupt)
     approval_store.consume = AsyncMock(return_value=interrupt)
 
-    async def resume(ctx, _config, _model_access, _consumed, _decisions):
+    async def resume(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+        _consumed: ApprovalInterrupt,
+        _decisions: tuple[ApprovalDecision, ...],
+    ) -> AgentResult:
         ctx.add_assistant_message_with_tool_calls(
             "",
             [ToolCallRequest(id="call-2", name="search", arguments='{"query":"observe"}')],
@@ -301,7 +328,11 @@ async def test_continue_task_reads_risk_gate_required_from_tool_metadata() -> No
     """任务 continue 应从稳定 ToolMessage.metadata 推导风险门禁。"""
     context = _valid_context(boundary=["search"])
 
-    async def run(ctx, _config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         ctx.add_assistant_message_with_tool_calls(
             "",
             [ToolCallRequest(id="call-2", name="search", arguments='{"query":"danger"}')],

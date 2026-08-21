@@ -31,8 +31,8 @@ from domain.workspace.exceptions import (
 )
 from domain.workspace.ports import Workspace
 from infrastructure.tools.filesystem._context import (
-    _current_agent_id_or_none,
-    _current_trace_id_or_none,
+    current_agent_id_or_none,
+    current_trace_id_or_none,
 )
 
 
@@ -160,10 +160,10 @@ class ListDirTool(Tool):
         directory_path = "/" if raw_path in ("", ".", "/") else raw_path
 
         context: dict[str, Any] = {"tool_name": self.name}
-        trace_id = _current_trace_id_or_none()
+        trace_id = current_trace_id_or_none()
         if trace_id is not None:
             context["trace_id"] = trace_id
-        agent_id = _current_agent_id_or_none()
+        agent_id = current_agent_id_or_none()
         if agent_id is not None:
             context["agent_id"] = agent_id
 

@@ -10,12 +10,13 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from domain.chat.context import UserMessage
-from domain.model_access.value_objects import ChatRequest
+from domain.model_access.value_objects import ChatRequest, StreamingChunk
 from infrastructure.model_access.openai_compatible_adapter import OpenAICompatibleAdapter
 
 
@@ -84,7 +85,7 @@ class _MockAsyncStream:
             yield chunk
 
 
-async def _consume(adapter: OpenAICompatibleAdapter) -> list:
+async def _consume(adapter: OpenAICompatibleAdapter) -> list[StreamingChunk]:
     """消费 adapter.stream(...) 并返回所有 StreamingChunk。"""
     return [
         chunk async for chunk in adapter.stream(ChatRequest(messages=[UserMessage(content="x")]))
@@ -104,7 +105,7 @@ async def test_finished_missing_none_id_recovers_with_metadata_and_log(
         _sdk_chunk(tool_calls=[_tool_delta(index=0, id=None, name=None, arguments='"hi"}')]),
         _sdk_chunk(finish_reason="tool_calls"),
     ]
-    adapter._client.chat.completions.create = AsyncMock(return_value=_MockAsyncStream(chunks))
+    adapter.client.chat.completions.create = AsyncMock(return_value=_MockAsyncStream(chunks))
     caplog.set_level(
         logging.WARNING, logger="infrastructure.model_access.openai_compatible_adapter"
     )
@@ -125,14 +126,15 @@ async def test_finished_missing_none_id_recovers_with_metadata_and_log(
     }
 
     record = next(r for r in caplog.records if "已生成本地合成 id" in r.getMessage())
-    assert record.source == "stream_finished"
-    assert record.provider == "test-provider"
-    assert record.model == "test-model"
-    assert record.tool_name == "web_search"
-    assert record.tool_call_index == 0
-    assert record.raw_id_value is None
-    assert record.synthetic_id == recovered_id
-    assert record.recovery_strategy == "recover"
+    extra = cast(dict[str, object], record.__dict__)
+    assert extra["source"] == "stream_finished"
+    assert extra["provider"] == "test-provider"
+    assert extra["model"] == "test-model"
+    assert extra["tool_name"] == "web_search"
+    assert extra["tool_call_index"] == 0
+    assert extra["raw_id_value"] is None
+    assert extra["synthetic_id"] == recovered_id
+    assert extra["recovery_strategy"] == "recover"
     assert '{"q"' not in record.getMessage()
 
 
@@ -144,7 +146,7 @@ async def test_finished_empty_string_id_recovers() -> None:
         _sdk_chunk(tool_calls=[_tool_delta(index=0, id="", name="calculator", arguments="{}")]),
         _sdk_chunk(finish_reason="tool_calls"),
     ]
-    adapter._client.chat.completions.create = AsyncMock(return_value=_MockAsyncStream(chunks))
+    adapter.client.chat.completions.create = AsyncMock(return_value=_MockAsyncStream(chunks))
 
     out = await _consume(adapter)
     final = out[-1]
@@ -164,7 +166,7 @@ async def test_usage_only_reuses_same_recovered_id() -> None:
         _sdk_chunk(finish_reason="tool_calls"),
         _usage_chunk(),
     ]
-    adapter._client.chat.completions.create = AsyncMock(return_value=_MockAsyncStream(chunks))
+    adapter.client.chat.completions.create = AsyncMock(return_value=_MockAsyncStream(chunks))
 
     out = await _consume(adapter)
     finished = out[1]

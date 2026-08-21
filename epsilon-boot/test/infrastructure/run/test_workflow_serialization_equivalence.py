@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any, cast
 
 from domain.run.workflow import (
     ChildRunOrchestrationState,
@@ -80,7 +81,7 @@ def test_workflow_phase_record_to_dict_snapshot() -> None:
         status="completed",
         started_at=datetime(2026, 7, 6, 12, 0, 0),
         completed_at=datetime(2026, 7, 6, 12, 5, 0),
-        summary={1: "one", "note": "ok"},
+        summary=cast(dict[str, Any], {1: "one", "note": "ok"}),
         error=None,
         revise_count=2,
     )

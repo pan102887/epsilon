@@ -39,7 +39,7 @@ class TmpFileSweeper:
         self._sessions_root = sessions_root
         self._max_age = max_age_seconds
 
-    def sweep_once(self) -> dict:
+    def sweep_once(self) -> dict[str, int]:
         """启动期一次性扫描；返回 ``{scanned, deleted, errored}`` 摘要。
 
         仅识别并删除文件名含 ``.tmp-`` 的残留；``.json`` 会话文件与

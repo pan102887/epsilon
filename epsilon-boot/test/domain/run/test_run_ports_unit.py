@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from dataclasses import fields
 from typing import get_args, get_type_hints
 
@@ -16,7 +17,7 @@ from domain.run.ports import (
 from domain.task.value_objects import TaskApprovalResumeRequest, TaskResult
 
 
-def _parameter_names(method) -> list[str]:
+def _parameter_names(method: Callable[..., object]) -> list[str]:
     """返回方法签名中的参数名列表。"""
     return list(inspect.signature(method).parameters)
 

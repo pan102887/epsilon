@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import Any, cast
 
 import pytest
 
@@ -13,12 +14,18 @@ from domain.agent.exceptions import (
     ApprovalExpiredError,
     ApprovalNotFoundError,
 )
-from domain.agent.segmented_execution import SegmentBudgetUsage, SegmentRunMetadata
+from domain.agent.segmented_execution import (
+    SegmentBudgetUsage,
+    SegmentRunMetadata,
+    SegmentStopReason,
+)
 from domain.agent.value_objects import ApprovalDecision, PendingActionRequest
+from domain.chat.ports import ChatServicePort
 from domain.chat.value_objects import ApprovalResumeRequestVO, ChatResponseVO
 from domain.run.ports import ApprovalResumeStoreResult
 from domain.run.value_objects import RunKind, RunPayload, RunSnapshot, RunStatus
 from domain.run.workflow import WorkflowPhase
+from domain.task.ports import TaskAgentPort
 from domain.task.value_objects import TaskApprovalResumeRequest, TaskResult, TaskStatus, TraceEntry
 
 pytestmark = pytest.mark.asyncio
@@ -75,7 +82,7 @@ class _FakeTaskAgent:
         return self.response
 
 
-def _segment_metadata(index: int, reason: str) -> SegmentRunMetadata:
+def _segment_metadata(index: int, reason: SegmentStopReason) -> SegmentRunMetadata:
     """构造测试用分段元数据。"""
 
     return SegmentRunMetadata(
@@ -89,7 +96,7 @@ def _segment_metadata(index: int, reason: str) -> SegmentRunMetadata:
 def _chat_snapshot(
     *,
     approval_id: str = "approval-1",
-    workflow_run_state: dict | None = None,
+    workflow_run_state: dict[str, Any] | None = None,
 ) -> RunSnapshot:
     """构造聊天 awaiting_approval 快照。"""
 
@@ -162,12 +169,19 @@ def _decision() -> ApprovalDecision:
     return ApprovalDecision(type="approve", tool_call_id="call-1")
 
 
+def _resumer(chat_service: _FakeChatService, task_agent: _FakeTaskAgent) -> RunApprovalResumer:
+    return RunApprovalResumer(
+        chat_service=cast(ChatServicePort, chat_service),
+        task_agent=cast(TaskAgentPort, task_agent),
+    )
+
+
 async def test_chat_resume_dispatches_to_chat_service() -> None:
     """聊天 Run 应分派到 ChatServicePort.resume_approval。"""
 
     chat_service = _FakeChatService()
     task_agent = _FakeTaskAgent()
-    resumer = RunApprovalResumer(chat_service=chat_service, task_agent=task_agent)
+    resumer = _resumer(chat_service, task_agent)
 
     result = await resumer(_chat_snapshot(), [_decision()], model="model-override")
 
@@ -205,7 +219,7 @@ async def test_chat_completed_with_workflow_next_phase_maps_to_queued() -> None:
 
     chat_service = _FakeChatService()
     task_agent = _FakeTaskAgent()
-    resumer = RunApprovalResumer(chat_service=chat_service, task_agent=task_agent)
+    resumer = _resumer(chat_service, task_agent)
     snapshot = _chat_snapshot(workflow_run_state={"current_phase": WorkflowPhase.EXECUTE.value})
 
     result = await resumer(snapshot, [_decision()])
@@ -250,7 +264,7 @@ async def test_chat_approval_required_maps_to_awaiting_approval_with_new_id() ->
         ),
         segment_metadata=_segment_metadata(2, "approval_required"),
     )
-    resumer = RunApprovalResumer(chat_service=chat_service, task_agent=_FakeTaskAgent())
+    resumer = _resumer(chat_service, _FakeTaskAgent())
 
     result = await resumer(_chat_snapshot(), [_decision()])
 
@@ -282,7 +296,7 @@ async def test_task_status_mapping_covers_queued_awaiting_approval_succeeded_and
 
     chat_service = _FakeChatService()
     task_agent = _FakeTaskAgent()
-    resumer = RunApprovalResumer(chat_service=chat_service, task_agent=task_agent)
+    resumer = _resumer(chat_service, task_agent)
     snapshot = _task_snapshot()
 
     task_agent.response = replace(
@@ -290,7 +304,7 @@ async def test_task_status_mapping_covers_queued_awaiting_approval_succeeded_and
         content="paused",
         status=TaskStatus.PAUSED,
         terminated_reason="max_rounds",
-        segment_metadata=_segment_metadata(2, "max_rounds"),
+        segment_metadata=_segment_metadata(2, "max_continuations_reached"),
     )
     queued = await resumer(snapshot, [_decision()])
     assert chat_service.requests == []
@@ -351,7 +365,7 @@ async def test_task_status_mapping_covers_queued_awaiting_approval_succeeded_and
         status=TaskStatus.FAILED,
         terminated_reason="completed",
         approval_id=None,
-        segment_metadata=_segment_metadata(5, "failed"),
+        segment_metadata=_segment_metadata(5, "completed"),
     )
     failed = await resumer(snapshot, [_decision()])
     assert failed == ApprovalResumeStoreResult(
@@ -388,7 +402,7 @@ async def test_chat_resume_preserves_existing_guardrail_waiting_state_fields() -
     existing_guardrail_summary = snapshot.guardrail_summary
     existing_workflow_state = snapshot.workflow_run_state
     existing_collaboration_summary = snapshot.collaboration_summary
-    resumer = RunApprovalResumer(chat_service=chat_service, task_agent=_FakeTaskAgent())
+    resumer = _resumer(chat_service, _FakeTaskAgent())
 
     result = await resumer(snapshot, [_decision()])
 
@@ -415,7 +429,7 @@ async def test_resumer_preserves_existing_approval_exceptions(error: Exception) 
 
     chat_service = _FakeChatService()
     chat_service.error = error
-    resumer = RunApprovalResumer(chat_service=chat_service, task_agent=_FakeTaskAgent())
+    resumer = _resumer(chat_service, _FakeTaskAgent())
 
     with pytest.raises(type(error)):
         await resumer(_chat_snapshot(), [_decision()])

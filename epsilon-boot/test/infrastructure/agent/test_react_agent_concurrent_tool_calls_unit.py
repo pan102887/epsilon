@@ -11,8 +11,9 @@ import pytest
 
 from domain.agent.tools import ToolExecutionResult
 from domain.agent.value_objects import AgentConfig
-from domain.chat.context import ConversationContext, ToolMessage
+from domain.chat.context import BaseMessage, ConversationContext, ToolMessage
 from domain.chat.value_objects import ContextBuilderResult
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import (
     ChatRequest,
     LLMResponse,
@@ -24,7 +25,14 @@ from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 
 
 class _FakeContextBuilder:
-    async def build(self, messages, **kwargs) -> ContextBuilderResult:
+    async def build(
+        self,
+        messages: list[BaseMessage],
+        *,
+        model_access: ModelAccessPort | None = None,
+        model: str | None = None,
+    ) -> ContextBuilderResult:
+        del model_access, model
         return ContextBuilderResult(
             messages=messages,
             usage={},
@@ -63,8 +71,11 @@ class _FakeModel:
             return
         yield StreamingChunk(delta_content="done", finished=True, usage={"total_tokens": 5})
 
+    def count_tokens(self, messages: list[BaseMessage]) -> int:
+        return len(messages)
 
-def _config(max_rounds=3) -> AgentConfig:
+
+def _config(max_rounds: int = 3) -> AgentConfig:
     return AgentConfig(
         system_prompt="你是助手",
         tool_schemas=[{"type": "function", "function": {"name": "slow_tool"}}],
@@ -74,18 +85,18 @@ def _config(max_rounds=3) -> AgentConfig:
     )
 
 
-def _adapter_with_slow_tool(sleep_time=0.5):
+def _adapter_with_slow_tool(sleep_time: float = 0.5) -> ReActAgentAdapter:
     """创建带延迟执行工具的适配器。"""
     tool_registry = MagicMock()
 
-    async def slow_execute(tool_call):
+    async def slow_execute(tool_call: ToolCallRequest) -> ToolExecutionResult:
         await asyncio.sleep(sleep_time)
         return ToolExecutionResult(content=f"result-{tool_call.id}")
 
     tool_registry.execute = AsyncMock(side_effect=slow_execute)
     return ReActAgentAdapter(
         tool_registry=tool_registry,
-        context_builder=_FakeContextBuilder(),  # type: ignore[arg-type]
+        context_builder=_FakeContextBuilder(),
     )
 
 
@@ -96,7 +107,7 @@ async def test_single_tool_call_fast_path_equivalence():
     tool_registry.execute = AsyncMock(return_value=ToolExecutionResult(content="single-result"))
     adapter = ReActAgentAdapter(
         tool_registry=tool_registry,
-        context_builder=_FakeContextBuilder(),  # type: ignore[arg-type]
+        context_builder=_FakeContextBuilder(),
     )
 
     responses = [
@@ -112,7 +123,7 @@ async def test_single_tool_call_fast_path_equivalence():
     context = ConversationContext()
     context.add_user_message("hi")
 
-    result = await adapter.run(context, _config(max_rounds=3), model)  # type: ignore[arg-type]
+    result = await adapter.run(context, _config(max_rounds=3), model)
     assert result.content == "answer"
     tool_msgs = [m for m in context.get_messages() if isinstance(m, ToolMessage)]
     assert len(tool_msgs) == 1
@@ -142,7 +153,7 @@ async def test_run_three_concurrent_tools_total_elapsed_under_threshold():
     context.add_user_message("go")
 
     start = time.monotonic()
-    result = await adapter.run(context, _config(max_rounds=3), model)  # type: ignore[arg-type]
+    result = await adapter.run(context, _config(max_rounds=3), model)
     elapsed = time.monotonic() - start
 
     assert result.content == "done"
@@ -157,14 +168,14 @@ async def test_run_partial_failure_does_not_affect_others():
     from domain.agent.exceptions import ToolPermissionDeniedError
 
     call_results = {
-        "tc-deny": ToolPermissionDeniedError("slow_tool", "deny"),
+        "tc-deny": ToolPermissionDeniedError("slow_tool", frozenset({"allowed_tool"})),
         "tc-raise": RuntimeError("boom"),
         "tc-ok": ToolExecutionResult(content="success"),
     }
 
     tool_registry = MagicMock()
 
-    async def execute_tool(tool_call):
+    async def execute_tool(tool_call: ToolCallRequest) -> ToolExecutionResult:
         r = call_results[tool_call.id]
         if isinstance(r, Exception):
             raise r
@@ -173,7 +184,7 @@ async def test_run_partial_failure_does_not_affect_others():
     tool_registry.execute = AsyncMock(side_effect=execute_tool)
     adapter = ReActAgentAdapter(
         tool_registry=tool_registry,
-        context_builder=_FakeContextBuilder(),  # type: ignore[arg-type]
+        context_builder=_FakeContextBuilder(),
     )
 
     responses = [
@@ -193,7 +204,7 @@ async def test_run_partial_failure_does_not_affect_others():
     context = ConversationContext()
     context.add_user_message("go")
 
-    result = await adapter.run(context, _config(max_rounds=3), model)  # type: ignore[arg-type]
+    result = await adapter.run(context, _config(max_rounds=3), model)
     assert result.content == "recovered"
 
     tool_msgs = [m for m in context.get_messages() if isinstance(m, ToolMessage)]
@@ -230,7 +241,7 @@ async def test_run_streaming_tool_progress_pair_adjacency_three_tools():
     context.add_user_message("go")
 
     chunks: list[StreamingChunk] = []
-    async for chunk in adapter.run_streaming(context, _config(max_rounds=2), model):  # type: ignore[arg-type]
+    async for chunk in adapter.run_streaming(context, _config(max_rounds=2), model):
         chunks.append(chunk)
 
     progress_chunks = [
@@ -274,7 +285,7 @@ async def test_run_events_tool_start_result_pair_adjacency_three_tools():
     context.add_user_message("go")
 
     events: list[AgentStreamEvent] = []
-    async for ev in adapter.run_events(context, _config(max_rounds=2), model):  # type: ignore[arg-type]
+    async for ev in adapter.run_events(context, _config(max_rounds=2), model):
         events.append(ev)
 
     tool_events = [e for e in events if e.kind in ("tool_start", "tool_result", "tool_error")]
@@ -297,9 +308,9 @@ async def test_concurrent_timeout_keeps_pair_semantics():
     """Property 7: 1 超时 + 2 正常，事件配对语义不变。"""
     from domain.agent.value_objects import AgentStreamEvent
 
-    call_counts = {}
+    call_counts: dict[str, bool] = {}
 
-    async def tool_execute(tool_call):
+    async def tool_execute(tool_call: ToolCallRequest) -> ToolExecutionResult:
         call_counts[tool_call.id] = True
         if tool_call.id == "tc-timeout":
             await asyncio.sleep(10)
@@ -311,7 +322,7 @@ async def test_concurrent_timeout_keeps_pair_semantics():
     tool_registry.execute = AsyncMock(side_effect=tool_execute)
     adapter = ReActAgentAdapter(
         tool_registry=tool_registry,
-        context_builder=_FakeContextBuilder(),  # type: ignore[arg-type]
+        context_builder=_FakeContextBuilder(),
     )
 
     responses = [
@@ -340,7 +351,7 @@ async def test_concurrent_timeout_keeps_pair_semantics():
     )
 
     events: list[AgentStreamEvent] = []
-    async for ev in adapter.run_events(context, config, model):  # type: ignore[arg-type]
+    async for ev in adapter.run_events(context, config, model):
         events.append(ev)
 
     tool_events = [e for e in events if e.kind in ("tool_start", "tool_result", "tool_error")]
@@ -367,9 +378,9 @@ async def test_concurrent_timeout_keeps_pair_semantics():
 @pytest.mark.asyncio
 async def test_concurrent_tools_dont_share_arguments_state():
     """R1.9: 每个 task 收到的 tool_call.arguments 引用唯一。"""
-    received_args = []
+    received_args: list[str] = []
 
-    async def tool_execute(tool_call):
+    async def tool_execute(tool_call: ToolCallRequest) -> ToolExecutionResult:
         received_args.append(tool_call.arguments)
         await asyncio.sleep(0.01)
         return ToolExecutionResult(content="ok")
@@ -378,7 +389,7 @@ async def test_concurrent_tools_dont_share_arguments_state():
     tool_registry.execute = AsyncMock(side_effect=tool_execute)
     adapter = ReActAgentAdapter(
         tool_registry=tool_registry,
-        context_builder=_FakeContextBuilder(),  # type: ignore[arg-type]
+        context_builder=_FakeContextBuilder(),
     )
 
     responses = [
@@ -398,7 +409,7 @@ async def test_concurrent_tools_dont_share_arguments_state():
     context = ConversationContext()
     context.add_user_message("go")
 
-    await adapter.run(context, _config(max_rounds=3), model)  # type: ignore[arg-type]
+    await adapter.run(context, _config(max_rounds=3), model)
 
     # 每个 tool_call 的 arguments 应该不同
     assert len(received_args) == 3

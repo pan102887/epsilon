@@ -14,19 +14,14 @@
 import json
 import logging
 import time
-from collections.abc import Callable, MutableMapping
-from typing import Any
+from typing import Any, cast
+
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .logging_config import request_logging_config, response_logging_config
 
 logger = logging.getLogger(__name__)
 SENSITIVE_REPLACEMENT = "***"
-
-# ASGI 类型别名
-Scope = MutableMapping[str, Any]
-Receive = Callable[..., Any]
-Send = Callable[..., Any]
-
 
 def _truncate_body_text(text: str) -> str:
     """按配置阈值截断日志报文文本。
@@ -54,6 +49,7 @@ def _redact_json_value(value: Any, sensitive_fields: frozenset[str]) -> Any:
         已脱敏的 JSON 值；命中敏感字段的 dict value 会被替换为固定占位符。
     """
     if isinstance(value, dict):
+        value = cast(dict[Any, Any], value)
         return {
             key: (
                 SENSITIVE_REPLACEMENT
@@ -63,6 +59,7 @@ def _redact_json_value(value: Any, sensitive_fields: frozenset[str]) -> Any:
             for key, item in value.items()
         }
     if isinstance(value, list):
+        value = cast(list[Any], value)
         return [_redact_json_value(item, sensitive_fields) for item in value]
     return value
 
@@ -96,6 +93,11 @@ def _safe_decode_body(raw: bytes) -> str:
     return _truncate_body_text(json.dumps(redacted, ensure_ascii=False))
 
 
+def safe_decode_body(raw: bytes) -> str:
+    """安全解码并脱敏请求体。"""
+    return _safe_decode_body(raw)
+
+
 def _format_body_for_log(chunks: list[bytes], enabled: bool) -> str:
     """按开关格式化请求体或响应体日志内容。
 
@@ -126,7 +128,7 @@ def _format_headers(raw_headers: list[tuple[bytes, bytes]]) -> str:
     if not raw_headers:
         return "{}"
     sensitive = request_logging_config.get_sensitive_headers_set()
-    parts = []
+    parts: list[str] = []
     for name_bytes, value_bytes in raw_headers:
         name = name_bytes.decode("latin-1")
         value = value_bytes.decode("latin-1")
@@ -148,7 +150,7 @@ class RequestLoggingMiddleware:
     敏感头信息（Authorization、Cookie 等）会自动脱敏处理。
     """
 
-    def __init__(self, app: Any) -> None:
+    def __init__(self, app: ASGIApp) -> None:
         """初始化中间件。
 
         Args:
@@ -180,7 +182,7 @@ class RequestLoggingMiddleware:
         # 收集请求体
         request_body_chunks: list[bytes] = []
 
-        async def receive_wrapper() -> dict:
+        async def receive_wrapper() -> Message:
             """包装 receive 回调，拦截请求体数据块。"""
             message = await receive()
             if message.get("type") == "http.request":
@@ -194,7 +196,7 @@ class RequestLoggingMiddleware:
         response_headers_raw: list[tuple[bytes, bytes]] = []
         response_body_chunks: list[bytes] = []
 
-        async def send_wrapper(message: dict) -> None:
+        async def send_wrapper(message: Message) -> None:
             """包装 send 回调，拦截响应状态码、响应头和响应体数据块。"""
             nonlocal status_code
             if message["type"] == "http.response.start":

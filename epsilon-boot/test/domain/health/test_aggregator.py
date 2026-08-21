@@ -4,11 +4,13 @@
 覆盖空检查列表、全部 UP、存在 DOWN 三种典型场景。
 """
 
+from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
 
 from domain.health.aggregator import ReadinessAggregator
+from domain.health.ports import HealthCheckPort
 from domain.health.value_objects import HealthCheckResult, HealthStatus
 
 
@@ -51,7 +53,7 @@ async def test_all_up_returns_up() -> None:
     redis_result = HealthCheckResult(name="redis", status=HealthStatus.UP)
     db_result = HealthCheckResult(name="database", status=HealthStatus.UP)
     ports = [_make_mock_port(redis_result), _make_mock_port(db_result)]
-    aggregator = ReadinessAggregator(checks=ports)
+    aggregator = ReadinessAggregator(checks=cast(list[HealthCheckPort], ports))
 
     result = await aggregator.check_readiness()
 
@@ -75,7 +77,7 @@ async def test_any_down_returns_down() -> None:
         name="database", status=HealthStatus.DOWN, reason="Connection refused"
     )
     ports = [_make_mock_port(redis_result), _make_mock_port(db_result)]
-    aggregator = ReadinessAggregator(checks=ports)
+    aggregator = ReadinessAggregator(checks=cast(list[HealthCheckPort], ports))
 
     result = await aggregator.check_readiness()
 

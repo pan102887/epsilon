@@ -16,8 +16,9 @@ import pytest
 
 from domain.agent.tools import ToolExecutionResult
 from domain.agent.value_objects import AgentConfig
-from domain.chat.context import AssistantMessage, ConversationContext, ToolMessage
+from domain.chat.context import AssistantMessage, BaseMessage, ConversationContext, ToolMessage
 from domain.chat.value_objects import ContextBuilderResult
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import StreamingChunk, ToolCallRequest
 from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 from infrastructure.model_access.openai_compatible_adapter import OpenAICompatibleAdapter
@@ -26,7 +27,14 @@ from infrastructure.model_access.openai_compatible_adapter import OpenAICompatib
 class _FakeContextBuilder:
     """测试用上下文构建器，直接透传当前消息列表。"""
 
-    async def build(self, messages, **kwargs) -> ContextBuilderResult:
+    async def build(
+        self,
+        messages: list[BaseMessage],
+        *,
+        model_access: ModelAccessPort | None = None,
+        model: str | None = None,
+    ) -> ContextBuilderResult:
+        del model_access, model
         return ContextBuilderResult(messages=messages, usage={})
 
 
@@ -140,7 +148,7 @@ def _text_stream() -> _MockAsyncStream:
 async def test_run_keeps_recovered_tool_call_id_consistent() -> None:
     """run(...) 中 assistant/tool/tool registry 三处使用同一个合成 id。"""
     model_access = _make_model_access()
-    model_access._client.chat.completions.create = AsyncMock(
+    model_access.client.chat.completions.create = AsyncMock(
         side_effect=[_tool_call_stream(), _text_stream()]
     )
     registry = _RecordingToolRegistry()
@@ -174,7 +182,7 @@ async def test_run_keeps_recovered_tool_call_id_consistent() -> None:
 async def test_run_streaming_tool_progress_uses_recovered_id() -> None:
     """run_streaming(...) 的工具进度 metadata 使用恢复后的合成 id。"""
     model_access = _make_model_access()
-    model_access._client.chat.completions.create = AsyncMock(
+    model_access.client.chat.completions.create = AsyncMock(
         side_effect=[_tool_call_stream(), _text_stream()]
     )
     registry = _RecordingToolRegistry()
@@ -206,7 +214,7 @@ async def test_run_streaming_tool_progress_uses_recovered_id() -> None:
 async def test_run_streaming_final_round_propagates_recovery_metadata() -> None:
     """max_rounds=1 直接流式最终轮时透传适配器恢复 metadata。"""
     model_access = _make_model_access()
-    model_access._client.chat.completions.create = AsyncMock(return_value=_tool_call_stream())
+    model_access.client.chat.completions.create = AsyncMock(return_value=_tool_call_stream())
     registry = _RecordingToolRegistry()
     adapter = ReActAgentAdapter(
         tool_registry=registry,  # type: ignore[arg-type]

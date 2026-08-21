@@ -9,9 +9,9 @@ from __future__ import annotations
 import contextlib
 import json
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, cast
 
 import redis.asyncio as aioredis
 
@@ -25,6 +25,10 @@ from infrastructure.agent.approval_serialization import approval_actions_to_dict
 from infrastructure.persistence.local_file.atomic_writer import TempFileAtomicWriter
 from infrastructure.persistence.local_file.file_lock import CrossPlatformFileLock, LockMode
 from infrastructure.persistence.local_file.path_policy import CrossPlatformPathPolicy
+
+
+class _RedisScanner(Protocol):
+    def scan_iter(self, *, match: str) -> AsyncIterator[bytes | str]: ...
 
 
 def approval_interrupt_to_dict(interrupt: ApprovalInterrupt) -> dict[str, Any]:
@@ -287,7 +291,8 @@ class RedisApprovalStateStore(ApprovalStateStorePort):
     async def delete_session(self, session_id: str) -> None:
         """按 session 前缀删除 Redis 审批状态。"""
         pattern = f"{self._key_prefix}{session_id}:*"
-        keys = [key async for key in self._redis.scan_iter(match=pattern)]
+        scan = cast(_RedisScanner, self._redis).scan_iter(match=pattern)
+        keys: list[bytes | str] = [key async for key in scan]
         if keys:
             await self._redis.delete(*keys)
 
@@ -299,7 +304,8 @@ class RedisApprovalStateStore(ApprovalStateStorePort):
         pattern = f"{self._key_prefix}{session_id}:*"
         now = time.time()
         summaries: list[ApprovalInterruptSummary] = []
-        async for key in self._redis.scan_iter(match=pattern):
+        scan = cast(_RedisScanner, self._redis).scan_iter(match=pattern)
+        async for key in scan:
             raw = await self._redis.get(key)
             if raw is None:
                 continue

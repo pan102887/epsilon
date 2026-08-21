@@ -18,16 +18,24 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from domain.agent.tools import ToolExecutionResult
-from domain.agent.value_objects import AgentConfig
-from domain.chat.context import ConversationContext
+from domain.agent.value_objects import AgentConfig, AgentStreamEvent
+from domain.chat.context import BaseMessage, ConversationContext
 from domain.chat.value_objects import ContextBuilderResult
-from domain.model_access.value_objects import LLMResponse, ToolCallRequest
+from domain.model_access.ports import ModelAccessPort
+from domain.model_access.value_objects import LLMResponse, StreamingChunk, ToolCallRequest
 from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 from test.infrastructure.agent._v3_stream_helpers import install_stream_mock
 
 
 class _FakeContextBuilder:
-    async def build(self, messages, **kwargs) -> ContextBuilderResult:
+    async def build(
+        self,
+        messages: list[BaseMessage],
+        *,
+        model_access: ModelAccessPort | None = None,
+        model: str | None = None,
+    ) -> ContextBuilderResult:
+        del model_access, model
         return ContextBuilderResult(
             messages=messages,
             usage={},
@@ -39,7 +47,7 @@ def _adapter() -> ReActAgentAdapter:
     tool_registry.execute = AsyncMock(return_value=ToolExecutionResult(content="tool result"))
     return ReActAgentAdapter(
         tool_registry=tool_registry,
-        context_builder=_FakeContextBuilder(),  # type: ignore[arg-type]
+        context_builder=_FakeContextBuilder(),
     )
 
 
@@ -135,7 +143,7 @@ async def test_intermediate_round_emits_no_chunks_during_stream_accumulation() -
     context = ConversationContext()
     context.add_user_message("ask")
 
-    chunks = []
+    chunks: list[StreamingChunk] = []
     async for chunk in adapter.run_streaming(context, _config(max_rounds=3), model_access):
         chunks.append(chunk)
 
@@ -165,7 +173,7 @@ async def test_run_events_intermediate_round_no_extra_events() -> None:
     context = ConversationContext()
     context.add_user_message("ask")
 
-    events = []
+    events: list[AgentStreamEvent] = []
     async for ev in adapter.run_events(context, _config(max_rounds=3), model_access):
         events.append(ev)
 

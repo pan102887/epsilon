@@ -23,6 +23,7 @@ import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -143,9 +144,9 @@ class TestIdentityGuard:
 
         # 用 monkeypatch 把 os.stat 替换为在 target 上返回不同 st_dev。
         real_stat = os.stat
-        fake_dev = guard._root_dev + 999
+        fake_dev = guard.root_dev + 999
 
-        def _fake_stat(path, *args, **kwargs):  # type: ignore[no-untyped-def]
+        def _fake_stat(path: Any, *args: Any, **kwargs: Any) -> os.stat_result | SimpleNamespace:
             st = real_stat(path, *args, **kwargs)
             if str(path) == str(target):
                 return SimpleNamespace(
@@ -177,4 +178,4 @@ class TestIdentityGuardRootCapture:
     def test_root_dev_captured_on_init(self, tmp_path: Path) -> None:
         """``__init__`` 时立即读取 ``st_dev`` 并缓存为 ``_root_dev``。"""
         guard = IdentityGuard(root=tmp_path)
-        assert guard._root_dev == os.stat(tmp_path).st_dev
+        assert guard.root_dev == os.stat(tmp_path).st_dev

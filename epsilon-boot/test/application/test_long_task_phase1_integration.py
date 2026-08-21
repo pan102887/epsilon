@@ -1,21 +1,32 @@
 """Long Task Continuation Phase 1 集成测试。"""
 
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Any, TypeVar
 from unittest.mock import MagicMock
 
 import pytest
 
-from domain.agent.value_objects import AgentResult
+from domain.agent.value_objects import (
+    AgentConfig,
+    AgentResult,
+    AgentStreamEvent,
+    ApprovalDecision,
+    ApprovalInterrupt,
+)
 from domain.chat.context import AssistantMessage, ConversationContext, ToolMessage
 from domain.chat.value_objects import ChatContinueRequestVO, ChatRequestVO
-from domain.model_access.value_objects import ToolCallRequest
+from domain.model_access.ports import ModelAccessPort
+from domain.model_access.value_objects import StreamingChunk, ToolCallRequest
 from domain.prompt.value_objects import LoadedPrompt
 from domain.task.value_objects import Task, TaskContinueRequest, TaskStatus
 from infrastructure.chat.chat_service_adapter import ChatServiceAdapter
 from infrastructure.task.task_agent_adapter import TaskAgentAdapter
 from test.infrastructure.chat.chat_adapter_test_utils import make_chat_adapter_dependencies
 
+T = TypeVar("T")
 
-def _schema(name: str) -> dict:
+
+def _schema(name: str) -> dict[str, Any]:
     """构造工具 schema。"""
     return {
         "type": "function",
@@ -41,7 +52,11 @@ class MemorySessionStore:
     async def exists(self, session_id: str) -> bool:
         return session_id in self.contexts
 
-    async def compare_and_swap(self, session_id, mutator):
+    async def compare_and_swap(
+        self,
+        session_id: str,
+        mutator: Callable[[ConversationContext], Awaitable[T]],
+    ) -> T:
         context = await self.load(session_id)
         result = await mutator(context)
         await self.save(session_id, context)
@@ -55,7 +70,13 @@ class QueueAgent:
         self.results = results
         self.user_counts: list[int] = []
 
-    async def run(self, context, _config, _model_access):
+    async def run(
+        self,
+        context: ConversationContext,
+        config: AgentConfig,
+        model_access: ModelAccessPort,
+    ) -> AgentResult:
+        del config, model_access
         self.user_counts.append(
             sum(1 for message in context.get_messages() if message.role == "user")
         )
@@ -67,6 +88,39 @@ class QueueAgent:
             )
             context.add_tool_result("search", "result", "call-1")
         return result
+
+    async def run_streaming(
+        self,
+        context: ConversationContext,
+        config: AgentConfig,
+        model_access: ModelAccessPort,
+    ) -> AsyncIterator[StreamingChunk]:
+        del context, config, model_access
+        if False:
+            yield StreamingChunk()
+        raise AssertionError("本测试不调用流式接口")
+
+    async def run_events(
+        self,
+        context: ConversationContext,
+        config: AgentConfig,
+        model_access: ModelAccessPort,
+    ) -> AsyncIterator[AgentStreamEvent]:
+        del context, config, model_access
+        if False:
+            yield AgentStreamEvent(kind="assistant_done")
+        raise AssertionError("本测试不调用事件流接口")
+
+    async def resume(
+        self,
+        context: ConversationContext,
+        config: AgentConfig,
+        model_access: ModelAccessPort,
+        interrupt: ApprovalInterrupt,
+        decisions: tuple[ApprovalDecision, ...],
+    ) -> AgentResult:
+        del context, config, model_access, interrupt, decisions
+        raise AssertionError("本测试不调用审批恢复接口")
 
 
 def _model_registry() -> MagicMock:
@@ -108,7 +162,7 @@ async def test_chat_pause_then_continue_without_empty_assistant_tail() -> None:
     model_registry = _model_registry()
     loaded_prompt = _prompt_registry("chat-default@v1", "chat-default").get.return_value
     prompt_registry = MagicMock(get=MagicMock(return_value=loaded_prompt))
-    tool_schemas = [_schema("search")]
+    tool_schemas: list[dict[str, Any]] = [_schema("search")]
     adapter = ChatServiceAdapter(
         session_store=store,
         model_registry=model_registry,

@@ -18,9 +18,9 @@ from hypothesis import given, settings
 
 from infrastructure.tools.shell_exec import shell_exec_tool
 from infrastructure.tools.shell_exec.shell_exec_tool import (
-    _SENSITIVE_KEYWORDS,
-    _UNIX_PRESERVED_VARS,
-    _WIN_PRESERVED_VARS,
+    SENSITIVE_KEYWORDS,
+    UNIX_PRESERVED_VARS,
+    WIN_PRESERVED_VARS,
     sanitize_env,
 )
 
@@ -51,7 +51,7 @@ def _is_sensitive(name: str) -> bool:
         如果名称中包含任一敏感关键词则返回 True。
     """
     name_upper = name.upper()
-    return any(kw in name_upper for kw in _SENSITIVE_KEYWORDS)
+    return any(kw in name_upper for kw in SENSITIVE_KEYWORDS)
 
 
 def _get_preserved(platform: str) -> set[str]:
@@ -63,7 +63,7 @@ def _get_preserved(platform: str) -> set[str]:
     Returns:
         对应平台的保留环境变量名称集合。
     """
-    return _WIN_PRESERVED_VARS if platform == "win32" else _UNIX_PRESERVED_VARS
+    return WIN_PRESERVED_VARS if platform == "win32" else UNIX_PRESERVED_VARS
 
 
 # Feature: shell-exec-tool, Property 4: 环境变量清理正确性

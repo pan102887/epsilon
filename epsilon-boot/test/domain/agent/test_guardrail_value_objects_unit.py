@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import cast
 
 from domain.agent.guardrails import (
     GuardrailAction,
@@ -63,7 +65,8 @@ def test_guardrail_policy_defaults_to_observe() -> None:
 
 
 def test_guardrail_policy_normalizes_legacy_and_object_model_pricing() -> None:
-    policy = GuardrailPolicy(
+    constructor = cast(Callable[..., GuardrailPolicy], GuardrailPolicy)
+    policy = constructor(
         model_pricing={
             "legacy": 1.5,
             "split": {"prompt_per_1m": 0.8, "completion_per_1m": 2.0},

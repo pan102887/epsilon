@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from application.run.workflow_orchestrator import WorkflowRunOrchestrator
 from domain.run.outcome import RunExecutionOutcome
+from domain.run.ports import RunEventStorePort, WorkflowRegistryPort
 from domain.run.value_objects import (
     RunEvent,
     RunEventType,
@@ -88,8 +89,8 @@ def _orchestrator(
     """构造测试编排器。"""
 
     return WorkflowRunOrchestrator(
-        event_store=event_store,
-        workflow_registry=_Registry(workflow or _workflow()),
+        event_store=cast(RunEventStorePort, event_store),
+        workflow_registry=cast(WorkflowRegistryPort, _Registry(workflow or _workflow())),
         workflow_serializer=WorkflowSerializerAdapter(),
         now=_Clock(),
     )
@@ -136,7 +137,11 @@ def _snapshot(
         updated_at=_NOW,
         version=1,
         workflow_name="code_change" if workflow_state is not None else None,
-        workflow_run_state=workflow_state if isinstance(workflow_state, dict) else None,
+        workflow_run_state=(
+            cast(dict[str, Any], workflow_state)
+            if isinstance(workflow_state, dict)
+            else None
+        ),
     )
 
 

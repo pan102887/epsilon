@@ -82,7 +82,7 @@ class TestOpenToHalfOpen:
             pass  # 成功
 
         # 成功后应回到 CLOSED
-        bs = breaker._get_state("t")
+        bs = breaker.state_for("t")
         assert bs.state == "CLOSED"
         assert bs.failure_count == 0
 
@@ -105,7 +105,7 @@ class TestHalfOpenSuccess:
             pass
 
         # CLOSED, counter reset
-        bs = breaker._get_state("s")
+        bs = breaker.state_for("s")
         assert bs.state == "CLOSED"
         assert bs.failure_count == 0
 
@@ -128,7 +128,7 @@ class TestHalfOpenFailure:
             async with breaker.guard("f"):
                 raise RuntimeError("probe fail")
 
-        bs = breaker._get_state("f")
+        bs = breaker.state_for("f")
         assert bs.state == "OPEN"
         assert bs.opened_at == 6.0  # 重新计时
 
@@ -177,7 +177,7 @@ class TestNonFailureExceptions:
                     raise ToolNotFoundError(tool_name="n")
 
         # 仍是 CLOSED（未累积失败）
-        bs = breaker._get_state("n")
+        bs = breaker.state_for("n")
         assert bs.state == "CLOSED"
         assert bs.failure_count == 0
 
@@ -190,5 +190,5 @@ class TestNonFailureExceptions:
                 async with breaker.guard("p"):
                     raise ToolParameterValidationError(tool_name="p", errors=["bad"])
 
-        bs = breaker._get_state("p")
+        bs = breaker.state_for("p")
         assert bs.state == "CLOSED"

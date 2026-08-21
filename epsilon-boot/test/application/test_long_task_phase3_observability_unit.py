@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -17,6 +17,7 @@ from application.run.run_application_service import (
 )
 from domain.run.exceptions import RunEventReplayExpiredError, RunQueueFullError
 from domain.run.outcome import RunExecutionOutcome
+from domain.run.ports import RunProgressSink, RunStorePort
 from domain.run.value_objects import (
     EventRetentionPolicy,
     RunCapacityPolicy,
@@ -38,6 +39,17 @@ pytestmark = pytest.mark.asyncio
 
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 _SECRET = "SECRET_USER_MESSAGE_SHOULD_NOT_BE_LOGGED"
+
+
+class _StructuredLogRecord(logging.LogRecord):
+    run_id: str
+    run_kind: str
+    run_status: str
+    worker_id: str | None
+    client_request_id: str | None
+    event_type: str
+    limit_name: str
+    after_cursor: int
 
 
 class _MemoryRunStore:
@@ -170,7 +182,9 @@ class _MemoryRunStore:
         self.snapshots[run_id] = updated
         return updated
 
-    async def mark_cancelled(self, *, run_id: str, owner_id: str, reason: str) -> RunSnapshot:
+    async def mark_cancelled(
+        self, *, run_id: str, owner_id: str, reason: str, **_: Any
+    ) -> RunSnapshot:
         return self._worker_transition(
             run_id,
             RunStatus.CANCELLED,
@@ -179,10 +193,14 @@ class _MemoryRunStore:
             terminal_reason=reason,
         )
 
-    async def resolve_approval_resume(self, *, run_id: str, owner_id: str, result):
+    async def resolve_approval_resume(
+        self, *, run_id: str, owner_id: str, result: dict[str, Any]
+    ) -> RunSnapshot:
         raise NotImplementedError
 
-    async def enqueue_continue(self, *, run_id: str, model: str | None = None):
+    async def enqueue_continue(
+        self, *, run_id: str, model: str | None = None
+    ) -> RunSnapshot:
         raise NotImplementedError
 
     async def mark_lost_expired_leases(self, *, now: datetime) -> list[RunSnapshot]:
@@ -273,12 +291,16 @@ class _MemoryEventStore:
 
 
 class _FailingCoordinator:
-    async def execute(self, snapshot: RunSnapshot, progress) -> RunExecutionOutcome:
+    async def execute(
+        self, snapshot: RunSnapshot, progress: RunProgressSink
+    ) -> RunExecutionOutcome:
         await progress.segment_started(snapshot.run_id, 1)
         raise RuntimeError("coordinator exploded")
 
 
-async def test_run_service_logs_structured_fields_and_redacts_payload(caplog) -> None:
+async def test_run_service_logs_structured_fields_and_redacts_payload(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """应用服务日志包含 run 字段，且不泄露用户消息。"""
 
     metrics = RunRuntimeMetrics()
@@ -302,7 +324,9 @@ async def test_run_service_logs_structured_fields_and_redacts_payload(caplog) ->
     assert metrics.snapshot().cancel_request_count == 1
 
 
-async def test_queue_saturation_has_distinct_log_and_metric(caplog) -> None:
+async def test_queue_saturation_has_distinct_log_and_metric(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """队列饱和与执行失败使用不同日志与计数。"""
 
     metrics = RunRuntimeMetrics()
@@ -322,7 +346,9 @@ async def test_queue_saturation_has_distinct_log_and_metric(caplog) -> None:
     assert _SECRET not in "\n".join(item.getMessage() for item in caplog.records)
 
 
-async def test_worker_failure_logs_structured_fields_without_payload(caplog) -> None:
+async def test_worker_failure_logs_structured_fields_without_payload(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """worker 执行失败日志可与容量拒绝区分，且不记录 payload。"""
 
     metrics = RunRuntimeMetrics()
@@ -331,7 +357,7 @@ async def test_worker_failure_logs_structured_fields_without_payload(caplog) -> 
     snapshot = _snapshot("run-1", client_request_id="client-1")
     store.snapshots[snapshot.run_id] = snapshot
     worker = RunWorker(
-        run_store=store,
+        run_store=cast(RunStorePort, store),
         event_store=events,
         executor=_FailingCoordinator(),  # type: ignore[arg-type]
         lease_seconds=30,
@@ -356,7 +382,9 @@ async def test_worker_failure_logs_structured_fields_without_payload(caplog) -> 
     assert _SECRET not in "\n".join(record.getMessage() for record in caplog.records)
 
 
-async def test_replay_expired_increments_metric_and_logs_signal(caplog) -> None:
+async def test_replay_expired_increments_metric_and_logs_signal(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """事件 replay 过期有独立日志和计数。"""
 
     metrics = RunRuntimeMetrics()
@@ -382,7 +410,9 @@ async def test_replay_expired_increments_metric_and_logs_signal(caplog) -> None:
     assert metrics.snapshot().replay_expired_count == 1
 
 
-async def test_lost_sweep_exposes_event_log_and_metrics(caplog) -> None:
+async def test_lost_sweep_exposes_event_log_and_metrics(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """lost sweep 通过事件、日志和 metrics 暴露 lease 过期信号。"""
 
     metrics = RunRuntimeMetrics()
@@ -398,7 +428,7 @@ async def test_lost_sweep_exposes_event_log_and_metrics(caplog) -> None:
     )
     store.snapshots[expired.run_id] = expired
     manager = RunWorkerManager(
-        run_store=store,
+        run_store=cast(RunStorePort, store),
         event_store=events,
         executor=_FailingCoordinator(),  # type: ignore[arg-type]
         config=RunRuntimeConfig(
@@ -438,7 +468,7 @@ def _service(
     max_event_count: int = 100,
 ) -> RunApplicationService:
     return RunApplicationService(
-        run_store=store or _MemoryRunStore(),
+        run_store=cast(RunStorePort, store or _MemoryRunStore()),
         event_store=event_store or _MemoryEventStore(),
         capacity_policy=RunCapacityPolicy(
             max_queued_runs=max_queued_runs,
@@ -495,8 +525,10 @@ def _snapshot(
     )
 
 
-def _record(records, message: str):
+def _record(
+    records: Sequence[logging.LogRecord], message: str
+) -> _StructuredLogRecord:
     for record in records:
         if record.getMessage() == message:
-            return record
+            return cast(_StructuredLogRecord, record)
     raise AssertionError(f"missing log record: {message}")

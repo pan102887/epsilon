@@ -8,12 +8,13 @@ workflow 定义验证 P2 workflow handoff / review / revise 约束可作为运�
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from application.run.workflow_orchestrator import WorkflowRunOrchestrator
 from domain.run.outcome import RunExecutionOutcome
+from domain.run.ports import RunEventStorePort, WorkflowRegistryPort
 from domain.run.value_objects import (
     RunEvent,
     RunEventType,
@@ -91,8 +92,8 @@ async def test_p2_child_run_link_waiting_and_reconciliation_events_are_conservat
     workflow = _workflow(WorkflowExecutionPolicy(child_run_enabled=True))
     events = _EventStore()
     orchestrator = WorkflowRunOrchestrator(
-        event_store=events,
-        workflow_registry=_Registry(workflow),
+        event_store=cast(RunEventStorePort, events),
+        workflow_registry=cast(WorkflowRegistryPort, _Registry(workflow)),
         workflow_serializer=WorkflowSerializerAdapter(),
         now=_Clock(),
     )
@@ -128,8 +129,8 @@ async def test_p2_handoff_event_and_review_revise_policy_state() -> None:
     )
     events = _EventStore()
     orchestrator = WorkflowRunOrchestrator(
-        event_store=events,
-        workflow_registry=_Registry(workflow),
+        event_store=cast(RunEventStorePort, events),
+        workflow_registry=cast(WorkflowRegistryPort, _Registry(workflow)),
         workflow_serializer=WorkflowSerializerAdapter(),
         now=_Clock(),
     )
@@ -199,7 +200,7 @@ def _snapshot(
 ) -> RunSnapshot:
     """构造 workflow Run 快照。"""
 
-    workflow_state = {
+    workflow_state: dict[str, Any] = {
         "workflow_name": "code_change",
         "current_phase": phase,
         "phase_started_at": None,

@@ -6,7 +6,7 @@ import json
 from dataclasses import fields, is_dataclass, replace
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol, cast
 
 import redis.asyncio as aioredis
 
@@ -22,6 +22,30 @@ from domain.run.value_objects import (
     ToolSideEffectLevel,
 )
 
+_RedisValue = str | bytes
+
+
+class _CheckpointRedisCommands(Protocol):
+    """Checkpoint store 使用的 Redis 异步命令最小协议。"""
+
+    async def incr(self, name: str) -> int: ...
+
+    async def rpush(self, name: str, *values: str) -> int: ...
+
+    async def lindex(self, name: str, index: int) -> _RedisValue | None: ...
+
+    async def lrange(self, name: str, start: int, end: int) -> list[_RedisValue]: ...
+
+    async def hsetnx(self, name: str, key: str, value: str) -> bool: ...
+
+    async def hset(self, name: str, key: str, value: str) -> int: ...
+
+    async def hget(self, name: str, key: str) -> _RedisValue | None: ...
+
+    async def hvals(self, name: str) -> list[_RedisValue]: ...
+
+    async def hdel(self, name: str, *keys: str) -> int: ...
+
 
 class RedisRunCheckpointStoreAdapter(RunCheckpointStorePort):
     """Run checkpoint 和工具结果账本的 Redis 实现。"""
@@ -34,21 +58,22 @@ class RedisRunCheckpointStoreAdapter(RunCheckpointStorePort):
         conflict_retry_max: int | None = None,
     ) -> None:
         self._redis = redis_client
+        self._commands = cast(_CheckpointRedisCommands, redis_client)
         self._key_prefix = key_prefix.rstrip(":")
         self._conflict_retry_max = conflict_retry_max if conflict_retry_max is not None else 5
 
     async def save_checkpoint(self, checkpoint: DurableCheckpoint) -> DurableCheckpoint:
-        seq = await self._redis.incr(self._seq_key(checkpoint.run_id))
+        seq = await self._commands.incr(self._seq_key(checkpoint.run_id))
         saved = replace(
             checkpoint,
             sequence=int(seq),
             checkpoint_id=f"chk_{int(seq):06d}",
         )
-        await self._redis.rpush(self._checkpoints_key(checkpoint.run_id), self._encode(saved))
+        await self._commands.rpush(self._checkpoints_key(checkpoint.run_id), self._encode(saved))
         return saved
 
     async def latest_checkpoint(self, run_id: str) -> DurableCheckpoint | None:
-        raw = await self._redis.lindex(self._checkpoints_key(run_id), -1)
+        raw = await self._commands.lindex(self._checkpoints_key(run_id), -1)
         if raw is None:
             return None
         checkpoint = _checkpoint_from_dict(json.loads(self._decode(raw)))
@@ -58,7 +83,7 @@ class RedisRunCheckpointStoreAdapter(RunCheckpointStorePort):
     async def list_checkpoints(
         self, run_id: str, after_sequence: int | None, limit: int
     ) -> list[DurableCheckpoint]:
-        raws = await self._redis.lrange(self._checkpoints_key(run_id), 0, -1)
+        raws = await self._commands.lrange(self._checkpoints_key(run_id), 0, -1)
         checkpoints = [_checkpoint_from_dict(json.loads(self._decode(raw))) for raw in raws]
         for checkpoint in checkpoints:
             self._assert_schema(run_id, checkpoint)
@@ -70,7 +95,7 @@ class RedisRunCheckpointStoreAdapter(RunCheckpointStorePort):
 
     async def put_tool_pending(self, entry: ToolResultLedgerEntry) -> ToolResultLedgerEntry:
         key = self._ledger_key(entry.run_id)
-        created = await self._redis.hsetnx(
+        created = await self._commands.hsetnx(
             key,
             entry.tool_execution_key,
             self._encode(entry),
@@ -102,7 +127,7 @@ class RedisRunCheckpointStoreAdapter(RunCheckpointStorePort):
             metadata=dict(metadata),
             updated_at=datetime.now(existing.updated_at.tzinfo),
         )
-        await self._redis.hset(
+        await self._commands.hset(
             self._ledger_key(run_id),
             tool_execution_key,
             self._encode(completed),
@@ -112,11 +137,11 @@ class RedisRunCheckpointStoreAdapter(RunCheckpointStorePort):
     async def get_tool_result(
         self, run_id: str, tool_execution_key: str
     ) -> ToolResultLedgerEntry | None:
-        raw = await self._redis.hget(self._ledger_key(run_id), tool_execution_key)
+        raw = await self._commands.hget(self._ledger_key(run_id), tool_execution_key)
         return _ledger_from_dict(json.loads(self._decode(raw))) if raw is not None else None
 
     async def list_tool_ledger(self, run_id: str) -> list[ToolResultLedgerEntry]:
-        values = await self._redis.hvals(self._ledger_key(run_id))
+        values = await self._commands.hvals(self._ledger_key(run_id))
         return sorted(
             (_ledger_from_dict(json.loads(self._decode(raw))) for raw in values),
             key=lambda entry: (entry.created_at, entry.tool_execution_key),
@@ -124,7 +149,7 @@ class RedisRunCheckpointStoreAdapter(RunCheckpointStorePort):
 
     async def trim_checkpoints(self, run_id: str, policy: CheckpointRetentionPolicy) -> None:
         checkpoints_key = self._checkpoints_key(run_id)
-        raws = await self._redis.lrange(checkpoints_key, 0, -1)
+        raws = await self._commands.lrange(checkpoints_key, 0, -1)
         checkpoints = [_checkpoint_from_dict(json.loads(self._decode(raw))) for raw in raws]
         if checkpoints:
             newest_created_at = max(checkpoint.created_at for checkpoint in checkpoints)
@@ -150,7 +175,7 @@ class RedisRunCheckpointStoreAdapter(RunCheckpointStorePort):
         }
         for entry in ledger:
             if entry.tool_execution_key not in retained:
-                await self._redis.hdel(self._ledger_key(run_id), entry.tool_execution_key)
+                await self._commands.hdel(self._ledger_key(run_id), entry.tool_execution_key)
 
     def _checkpoints_key(self, run_id: str) -> str:
         return self._key(f"run:{run_id}:checkpoints")
@@ -195,9 +220,11 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
+        mapping = cast(dict[object, object], value)
+        return {str(key): _json_safe(item) for key, item in mapping.items()}
     if isinstance(value, (list, tuple)):
-        return [_json_safe(item) for item in value]
+        items = cast(list[object] | tuple[object, ...], value)
+        return [_json_safe(item) for item in items]
     return value
 
 

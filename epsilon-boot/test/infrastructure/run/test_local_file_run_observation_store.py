@@ -6,6 +6,7 @@ import asyncio
 import json
 import threading
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -13,14 +14,19 @@ from domain.run.exceptions import RunLeaseConflictError
 from domain.run.ports import ApprovalResumeStoreResult
 from domain.run.value_objects import RunCreateRequest, RunEventType, RunKind, RunPayload, RunStatus
 from infrastructure.persistence.local_file.atomic_writer import TempFileAtomicWriter
-from infrastructure.persistence.local_file.file_lock import LockFactory, LockMode
+from infrastructure.persistence.local_file.file_lock import (
+    FileLock,
+    LockFactory,
+    LockHandle,
+    LockMode,
+)
 from infrastructure.persistence.local_file.path_policy import CrossPlatformPathPolicy
 from infrastructure.run.local_file_run_store_adapter import LocalFileRunStoreAdapter
 
 pytestmark = pytest.mark.asyncio
 
 
-def _adapter(tmp_path) -> LocalFileRunStoreAdapter:
+def _adapter(tmp_path: Path) -> LocalFileRunStoreAdapter:
     """使用真实本地文件 helper 构造测试适配器。"""
 
     return LocalFileRunStoreAdapter(
@@ -52,13 +58,13 @@ def _request() -> RunCreateRequest:
 class _SignalingLock:
     """为指定锁获取动作发出信号的测试包装器。"""
 
-    def __init__(self, delegate, *, wait_started: threading.Event) -> None:
+    def __init__(self, delegate: FileLock, *, wait_started: threading.Event) -> None:
         """初始化带信号的锁包装器。"""
 
         self._delegate = delegate
         self._wait_started = wait_started
 
-    def acquire(self, mode: LockMode):
+    def acquire(self, mode: LockMode) -> LockHandle:
         """在获取独占锁前通知测试线程。"""
 
         if mode is LockMode.EXCLUSIVE:
@@ -67,7 +73,7 @@ class _SignalingLock:
 
 
 async def test_record_runtime_observation_updates_event_cursor_and_summary_atomically(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     """观察写入应在同一锁区内追加事件并同步更新 snapshot 摘要。"""
 
@@ -110,6 +116,7 @@ async def test_record_runtime_observation_updates_event_cursor_and_summary_atomi
         "last_event_cursor": 1,
         "metadata": {"tool_name": "shell_exec"},
     }
+    assert loaded.guardrail_summary is not None
     assert (
         event.cursor
         == snapshot.latest_event_cursor
@@ -124,7 +131,7 @@ async def test_record_runtime_observation_updates_event_cursor_and_summary_atomi
 
 
 async def test_record_runtime_observation_preserves_existing_optional_summaries_when_none(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     """观察写入传入 None 时应保留已存在摘要值。"""
 
@@ -161,7 +168,7 @@ async def test_record_runtime_observation_preserves_existing_optional_summaries_
 
 
 async def test_record_runtime_observation_keeps_cursor_monotonic_across_multiple_writes(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     """同一 Run 的多次观察写入应保持 cursor 单调递增且摘要游标同步。"""
 
@@ -198,7 +205,7 @@ async def test_record_runtime_observation_keeps_cursor_monotonic_across_multiple
     assert events == [first_event, second_event]
 
 
-async def test_record_runtime_observation_rejects_owner_mismatch(tmp_path) -> None:
+async def test_record_runtime_observation_rejects_owner_mismatch(tmp_path: Path) -> None:
     """观察写入必须校验当前 Run 租约 owner。"""
 
     store = _adapter(tmp_path)
@@ -215,7 +222,7 @@ async def test_record_runtime_observation_rejects_owner_mismatch(tmp_path) -> No
 
 
 async def test_approval_resume_lease_allows_guardrail_observation_on_awaiting_run(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     """审批恢复短租约应允许 awaiting_approval Run 继续写入 guardrail 观察。"""
 
@@ -249,12 +256,13 @@ async def test_approval_resume_lease_allows_guardrail_observation_on_awaiting_ru
 
     assert leased.lease is not None
     assert leased.lease.owner_id == "approval-resume-a"
+    assert snapshot.guardrail_summary is not None
     assert event.cursor == snapshot.guardrail_summary["last_event_cursor"]
     assert snapshot.guardrail_summary["blocked_count"] == 2
 
 
 async def test_approval_resume_lease_release_only_clears_matching_awaiting_owner(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     """审批恢复异常释放只清理当前 awaiting_approval owner 的短租约。"""
 
@@ -302,7 +310,7 @@ async def test_approval_resume_lease_release_only_clears_matching_awaiting_owner
     assert leased_again.lease.owner_id == "approval-resume-b"
 
 
-async def test_approval_resume_lease_rejects_concurrent_resume_owner(tmp_path) -> None:
+async def test_approval_resume_lease_rejects_concurrent_resume_owner(tmp_path: Path) -> None:
     """审批恢复短租约未过期时应拒绝另一个审批恢复 owner 并发写入。"""
 
     store = _adapter(tmp_path)
@@ -329,7 +337,7 @@ async def test_approval_resume_lease_rejects_concurrent_resume_owner(tmp_path) -
 
 
 async def test_resolve_approval_resume_rejects_stale_resume_owner_after_new_owner_acquires(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     """旧审批恢复 owner 不得在新短租约 owner 建立后完成状态迁移。"""
 
@@ -392,7 +400,7 @@ async def test_resolve_approval_resume_rejects_stale_resume_owner_after_new_owne
     ],
 )
 async def test_record_runtime_observation_rejects_stale_lease_without_appending_event(
-    tmp_path,
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     lease_seconds: int,
     record_now: datetime,
@@ -435,7 +443,7 @@ async def test_record_runtime_observation_rejects_stale_lease_without_appending_
 
 
 async def test_record_runtime_observation_rejects_lease_that_expires_while_waiting_for_lock(
-    tmp_path,
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """方法入口租约未过期、等待锁后过期时必须拒绝写入且不追加事件。"""
@@ -461,11 +469,12 @@ async def test_record_runtime_observation_rejects_lease_that_expires_while_waiti
         staticmethod(lambda: after_wait if wait_started.is_set() else before_wait),
     )
 
-    run_lock_path = store._run_lock_path(created.run_id)
-    blocking_lock = store._lock_factory(run_lock_path)
+    run_lock_path = store.run_lock_path(created.run_id)
+    lock_factory = LockFactory(acquire_timeout_ms=1000)
+    blocking_lock = lock_factory(run_lock_path)
 
-    def signaling_lock_factory(path):
-        lock = store._lock_factory(path)
+    def signaling_lock_factory(path: Path) -> FileLock:
+        lock = lock_factory(path)
         if path == run_lock_path:
             return _SignalingLock(lock, wait_started=wait_started)
         return lock
@@ -514,13 +523,13 @@ async def test_record_runtime_observation_rejects_lease_that_expires_while_waiti
 
 
 async def test_snapshot_deserialization_maps_legacy_recent_steps_without_rewriting_file(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     """历史 snapshot 仅含 recent_steps 时读取结果应归一为 latest_steps。"""
 
     store = _adapter(tmp_path)
     created = await store.create_run(_request())
-    path = store._snapshot_path(created.run_id)
+    path = store.snapshot_path(created.run_id)
     raw = json.loads(path.read_text(encoding="utf-8"))
     raw["collaboration_summary"] = {
         "recent_steps": [{"link_id": "legacy-only", "action": "delegation"}],

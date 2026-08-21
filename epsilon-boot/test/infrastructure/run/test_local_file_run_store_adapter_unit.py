@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime, timedelta
-from typing import TypeVar
+from pathlib import Path
+from typing import Any, TypeVar
 
 import pytest
 
@@ -34,8 +35,8 @@ pytestmark = pytest.mark.asyncio
 T = TypeVar("T")
 
 
-async def _run_in_threads(
-    operations: list[Callable[[], Awaitable[T]]],
+async def _run_in_threads(  # noqa: UP047 - Python 3.11 compatibility
+    operations: list[Callable[[], Coroutine[Any, Any, T]]],
 ) -> list[T]:
     """在线程内用独立 event loop 同时执行 async adapter 操作。"""
 
@@ -43,7 +44,7 @@ async def _run_in_threads(
     results: list[T | None] = [None] * len(operations)
     errors: list[BaseException | None] = [None] * len(operations)
 
-    def run(index: int, operation: Callable[[], Awaitable[T]]) -> None:
+    def run(index: int, operation: Callable[[], Coroutine[Any, Any, T]]) -> None:
         try:
             barrier.wait(timeout=5)
             results[index] = asyncio.run(operation())
@@ -67,7 +68,7 @@ async def _run_in_threads(
     return [result for result in results if result is not None]
 
 
-def _adapter(tmp_path) -> LocalFileRunStoreAdapter:
+def _adapter(tmp_path: Path) -> LocalFileRunStoreAdapter:
     """使用真实本地文件 helper 构造测试适配器。"""
 
     return LocalFileRunStoreAdapter(
@@ -100,7 +101,7 @@ def _request(
     )
 
 
-async def test_create_run_persists_snapshot_and_client_index_atomically(tmp_path) -> None:
+async def test_create_run_persists_snapshot_and_client_index_atomically(tmp_path: Path) -> None:
     """创建 Run 应写入快照和幂等索引，并能完整反序列化。"""
 
     store = _adapter(tmp_path)
@@ -125,7 +126,7 @@ async def test_create_run_persists_snapshot_and_client_index_atomically(tmp_path
 
 
 async def test_create_run_returns_existing_snapshot_for_same_idempotent_payload(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     """相同 client_request_id 与相同 payload_hash 应返回既有 Run。"""
 
@@ -139,7 +140,7 @@ async def test_create_run_returns_existing_snapshot_for_same_idempotent_payload(
 
 
 async def test_concurrent_create_run_with_same_idempotency_key_creates_one_snapshot(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     """并发提交相同幂等键和 payload 时只创建一个 queued Run。"""
 
@@ -162,7 +163,7 @@ async def test_concurrent_create_run_with_same_idempotency_key_creates_one_snaps
 
 
 async def test_create_run_rejects_same_idempotency_key_with_different_payload(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     """相同 client_request_id 但 payload_hash 不同必须抛幂等冲突。"""
 
@@ -175,7 +176,7 @@ async def test_create_run_rejects_same_idempotency_key_with_different_payload(
     assert "second" not in exc_info.value.message
 
 
-async def test_concurrent_claim_next_allows_only_one_owner(tmp_path) -> None:
+async def test_concurrent_claim_next_allows_only_one_owner(tmp_path: Path) -> None:
     """并发 claim_next 同一 queued Run 时只允许一个 worker 成功领取。"""
 
     store = _adapter(tmp_path)
@@ -197,7 +198,7 @@ async def test_concurrent_claim_next_allows_only_one_owner(tmp_path) -> None:
     assert await store.count_by_status({RunStatus.RUNNING}) == 1
 
 
-async def test_owner_mismatch_mark_failed_raises_lease_conflict(tmp_path) -> None:
+async def test_owner_mismatch_mark_failed_raises_lease_conflict(tmp_path: Path) -> None:
     """worker 终态写入必须校验当前 lease owner。"""
 
     store = _adapter(tmp_path)
@@ -212,13 +213,14 @@ async def test_owner_mismatch_mark_failed_raises_lease_conflict(tmp_path) -> Non
         )
 
 
-async def test_mark_lost_expired_leases_marks_running_as_lost(tmp_path) -> None:
+async def test_mark_lost_expired_leases_marks_running_as_lost(tmp_path: Path) -> None:
     """过期 running lease 必须被 sweep 标记为 lost 终态。"""
 
     store = _adapter(tmp_path)
     created = await store.create_run(_request(client_request_id=None))
     claimed = await store.claim_next(owner_id="owner-a", lease_seconds=1)
     assert claimed is not None
+    assert claimed.lease is not None
 
     lost = await store.mark_lost_expired_leases(
         now=claimed.lease.lease_until + timedelta(seconds=1)
@@ -232,7 +234,7 @@ async def test_mark_lost_expired_leases_marks_running_as_lost(tmp_path) -> None:
     assert loaded.terminal_reason == "lease_expired"
 
 
-async def test_event_cursor_is_monotonic_and_updates_snapshot(tmp_path) -> None:
+async def test_event_cursor_is_monotonic_and_updates_snapshot(tmp_path: Path) -> None:
     """追加事件必须分配同一 Run 内单调 cursor 并更新快照 latest_event_cursor。"""
 
     store = _adapter(tmp_path)
@@ -259,7 +261,7 @@ async def test_event_cursor_is_monotonic_and_updates_snapshot(tmp_path) -> None:
     ]
 
 
-async def test_trim_events_exposes_retention_floor_for_replay_expiry(tmp_path) -> None:
+async def test_trim_events_exposes_retention_floor_for_replay_expiry(tmp_path: Path) -> None:
     """max_event_count 裁剪后 first_cursor 暴露 replay 可用窗口起点。"""
 
     store = _adapter(tmp_path)
@@ -283,7 +285,7 @@ async def test_trim_events_exposes_retention_floor_for_replay_expiry(tmp_path) -
     assert await store.list_events(created.run_id, after_cursor=0, limit=10) == retained
 
 
-async def test_resolve_approval_resume_only_allows_awaiting_approval(tmp_path) -> None:
+async def test_resolve_approval_resume_only_allows_awaiting_approval(tmp_path: Path) -> None:
     """审批恢复入口只能从 awaiting_approval 迁移到四类设计结果。"""
 
     store = _adapter(tmp_path)

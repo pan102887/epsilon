@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 
-from domain.agent.tools import Tool
+from domain.agent.tools import Tool, ToolExecutionResult
 from domain.model_access.value_objects import ToolCallRequest
 from domain.run.value_objects import ToolReplayPolicy, ToolSideEffectLevel
 
@@ -26,8 +26,8 @@ class MinimalTool(Tool):
             "required": ["text"],
         }
 
-    async def execute(self, **kwargs: Any) -> str:
-        return f"echo:{kwargs['text']}"
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
+        return ToolExecutionResult(content=f"echo:{kwargs['text']}")
 
 
 def test_tool_default_recovery_metadata_is_conservative() -> None:
@@ -52,4 +52,4 @@ async def test_minimal_tool_subclass_runs_without_overriding_recovery_metadata()
         arguments='{"text":"hello"}',
     )
 
-    assert await tool.run(request) == "echo:hello"
+    assert (await tool.run(request)).content == "echo:hello"

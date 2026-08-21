@@ -22,7 +22,9 @@ from domain.model_access.value_objects import (
     StreamingChunk,
     StreamingToolCallDelta,
 )
-from infrastructure.agent.round_stream_accumulator import _RoundStreamAccumulator
+from infrastructure.agent.round_stream_accumulator import (
+    RoundStreamAccumulator as _RoundStreamAccumulator,
+)
 
 
 async def _async_iter(chunks: list[StreamingChunk]) -> AsyncIterator[StreamingChunk]:

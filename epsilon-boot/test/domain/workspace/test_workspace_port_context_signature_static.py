@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import inspect
 import typing
+from collections.abc import Mapping
 
 from domain.workspace.ports import Workspace
 
@@ -36,8 +37,8 @@ _NON_IO_METHODS: tuple[str, ...] = (
 )
 
 
-def _is_dict_or_optional_dict(annotation: object) -> bool:
-    """判定注解是否等价于 ``dict | None`` / ``Optional[dict]``。
+def _is_mapping_or_optional_mapping(annotation: object) -> bool:
+    """判定注解是否等价于 ``Mapping[str, object] | None``。
 
     覆盖三种等价写法：
 
@@ -63,10 +64,10 @@ def _is_dict_or_optional_dict(annotation: object) -> bool:
         non_none = [a for a in args if a is not type(None)]
         if len(non_none) != 1:
             return False
-        # 成员可能是裸 ``dict`` 或 ``dict[str, Any]`` 之类的泛型。
+        # 成员可能是裸 ``Mapping`` 或 ``Mapping[str, object]`` 泛型。
         member = non_none[0]
         member_origin = typing.get_origin(member)
-        return member is dict or member_origin is dict
+        return member is Mapping or member_origin is Mapping
 
     return False
 
@@ -115,10 +116,10 @@ class TestIoMethodsHaveContextKeyword:
             if annotation is inspect.Parameter.empty:
                 offenders.append(f"{name}（缺失 context 注解）")
                 continue
-            if not _is_dict_or_optional_dict(annotation):
+            if not _is_mapping_or_optional_mapping(annotation):
                 offenders.append(f"{name}(annotation={annotation!r})")
         assert not offenders, (
-            f"以下 I/O 方法的 context 注解非 `dict | None` / `Optional[dict]`：{offenders}"
+            f"以下 I/O 方法的 context 注解非 `Mapping[str, object] | None`：{offenders}"
         )
 
     def test_context_is_last_parameter(self) -> None:

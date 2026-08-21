@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import multiprocessing
 import time
+from multiprocessing.process import BaseProcess
 from pathlib import Path
 
 # 对齐需求 10.3：显式使用 "spawn"，以在 Linux 上与 Windows 行为对齐。
@@ -99,7 +100,7 @@ def _run_save_in_subprocess(
 
 
 def _assert_all_children_succeeded(
-    procs: list[multiprocessing.Process],
+    procs: list[BaseProcess],
 ) -> None:
     """断言所有子进程退出码为 0（无未捕获异常）。"""
     for proc in procs:
@@ -147,7 +148,7 @@ def test_concurrent_saves_converge_to_a_single_winner(tmp_path: Path):
     iterations = 10
     ready_dir = tmp_path / "ready"
 
-    procs: list[multiprocessing.Process] = []
+    procs: list[BaseProcess] = []
     for worker_id in range(num_workers):
         p = _SPAWN_CTX.Process(
             target=_run_save_in_subprocess,
@@ -233,7 +234,7 @@ def test_concurrent_saves_leave_no_partial_written_files(tmp_path: Path):
     iterations = 5
     ready_dir = tmp_path / "ready"
 
-    procs: list[multiprocessing.Process] = []
+    procs: list[BaseProcess] = []
     for worker_id in range(num_workers):
         p = _SPAWN_CTX.Process(
             target=_run_save_in_subprocess,
@@ -314,6 +315,7 @@ def test_concurrent_saves_on_distinct_sessions_do_not_lose_data(tmp_path: Path):
     验证锁粒度为"单会话一把锁"（需求 2.2 分布式一致性的单主机实现：
     不同 session_id 之间零竞争）。
     """
+    from domain.chat.context import ConversationContext
     from infrastructure.persistence.local_file.atomic_writer import (
         TempFileAtomicWriter,
     )
@@ -329,7 +331,7 @@ def test_concurrent_saves_on_distinct_sessions_do_not_lose_data(tmp_path: Path):
     sessions = [f"session-distinct-{i}" for i in range(num_workers)]
     ready_dir = tmp_path / "ready"
 
-    procs: list[multiprocessing.Process] = []
+    procs: list[BaseProcess] = []
     for worker_id in range(num_workers):
         p = _SPAWN_CTX.Process(
             target=_run_distinct_sessions_subprocess,
@@ -358,8 +360,8 @@ def test_concurrent_saves_on_distinct_sessions_do_not_lose_data(tmp_path: Path):
         atomic_writer=TempFileAtomicWriter(fsync_on_write=False),
     )
 
-    async def _load_all() -> list:
-        results = []
+    async def _load_all() -> list[ConversationContext]:
+        results: list[ConversationContext] = []
         for session_id in sessions:
             loaded = await adapter.load(session_id)
             results.append(loaded)

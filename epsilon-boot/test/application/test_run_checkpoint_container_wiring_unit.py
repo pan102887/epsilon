@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+from collections.abc import Iterator
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -11,13 +13,15 @@ import pytest
 pytestmark = pytest.mark.asyncio
 
 
-def _load_container_config_module():
+def _load_container_config_module() -> Any:
     config_path = (
         pathlib.Path(__file__).resolve().parents[2] / "src" / "application" / "container_config.py"
     )
     spec = importlib.util.spec_from_file_location(
         "test_run_checkpoint_container_wiring_module", str(config_path)
     )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"无法加载容器配置模块: {config_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -27,21 +31,15 @@ _config_module = _load_container_config_module()
 
 
 @pytest.fixture(autouse=True)
-def _isolate_container():
+def isolate_container() -> Iterator[None]:
     from common.container import container
 
-    original_registry = container._registry.copy()
-    original_singletons = container._singletons.copy()
-    original_resources = container._async_resources[:]
-    original_initialized = container._initialized_resources[:]
+    original_state = container.capture_state()
     original_run_store = _config_module._run_store_adapter
     original_checkpoint_store = _config_module._run_checkpoint_store_adapter
     original_run_manager = _config_module._run_worker_manager
     yield
-    container._registry = original_registry
-    container._singletons = original_singletons
-    container._async_resources = original_resources
-    container._initialized_resources = original_initialized
+    container.restore_state(original_state)
     _config_module._run_store_adapter = original_run_store
     _config_module._run_checkpoint_store_adapter = original_checkpoint_store
     _config_module._run_worker_manager = original_run_manager
@@ -65,6 +63,9 @@ def _set_run_config(
     checkpoint_auto_recovery_enabled: bool = True,
 ):
     class _RunConfig:
+        worker_enabled: bool
+        checkpoint_enabled: bool
+        checkpoint_auto_recovery_enabled: bool
         worker_count = 1
         lease_seconds = 60
         heartbeat_interval_seconds = 10
@@ -131,7 +132,7 @@ def _prepare_local_persistence(monkeypatch: pytest.MonkeyPatch, tmp_path: pathli
 
 async def test_file_backend_resolves_local_checkpoint_store(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
+    tmp_path: pathlib.Path,
 ) -> None:
     from common.container import container
     from domain.run.ports import RunCheckpointStorePort
@@ -170,7 +171,7 @@ async def test_redis_backend_resolves_redis_checkpoint_store(
 
 async def test_coordinator_receives_checkpoint_dependencies_when_enabled(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
+    tmp_path: pathlib.Path,
 ) -> None:
     from common.container import container
     from common.container_models import Scope
@@ -179,9 +180,9 @@ async def test_coordinator_receives_checkpoint_dependencies_when_enabled(
     from domain.task.ports import TaskAgentPort
 
     class _FakeCoordinator:
-        kwargs: dict | None = None
+        kwargs: dict[str, Any] | None = None
 
-        def __init__(self, **kwargs):
+        def __init__(self, **kwargs: Any) -> None:
             self.__class__.kwargs = kwargs
 
     _set_backend(monkeypatch, "file")
@@ -216,13 +217,13 @@ async def test_checkpoint_disabled_does_not_create_recovery_sweep_for_manager(
     from domain.task.ports import TaskAgentPort
 
     class _FakeCoordinator:
-        def __init__(self, **kwargs):
+        def __init__(self, **kwargs: Any) -> None:
             pass
 
     class _FakeManager:
-        kwargs: dict | None = None
+        kwargs: dict[str, Any] | None = None
 
-        def __init__(self, **kwargs):
+        def __init__(self, **kwargs: Any) -> None:
             self.__class__.kwargs = kwargs
 
     _set_backend(monkeypatch, "redis")

@@ -58,6 +58,7 @@ from domain.chat.ports import (
     SessionIndexPort,
 )
 from domain.health.aggregator import ReadinessAggregator
+from domain.health.ports import HealthCheckPort
 from domain.model_access.ports import ModelAccessPort, ModelRegistryPort
 from domain.prompt.ports import PromptRegistryPort
 from domain.run.ports import (
@@ -80,6 +81,7 @@ from infrastructure.model_access.provider_registry import ProviderRegistry
 from infrastructure.model_access.router_config import router_config
 from infrastructure.persistence.local_file.atomic_writer import TempFileAtomicWriter
 from infrastructure.persistence.local_file.config import (
+    LocalPersistenceConfig,
     SessionStoreBackendKind,
     local_persistence_config,
     session_store_config,
@@ -161,7 +163,10 @@ def _check_legacy_prompt_conflict() -> None:
 
     需求 8.2 / 8.5 / 8.6。
     """
-    from common.configuration.configuration_utils import _PROPERTIES_FILE, _parse_properties_file
+    from common.configuration.configuration_utils import (
+        PROPERTIES_FILE,
+        parse_properties_file,
+    )
 
     legacy_keys: list[str] = []
 
@@ -170,7 +175,7 @@ def _check_legacy_prompt_conflict() -> None:
         legacy_keys.append("CHAT_SYSTEM_PROMPT(env)")
 
     # 检查 config.properties
-    props = _parse_properties_file(_PROPERTIES_FILE)
+    props = parse_properties_file(PROPERTIES_FILE)
     if "CHAT_SYSTEM_PROMPT" in props or "chat.system.prompt" in props:
         legacy_keys.append("CHAT_SYSTEM_PROMPT(config.properties)")
 
@@ -516,7 +521,7 @@ async def _cleanup_gateway() -> None:
         await _gateway_client.stop()
 
 
-def _validate_local_persistence_root(cfg) -> Path:  # type: ignore[no-untyped-def]
+def _validate_local_persistence_root(cfg: LocalPersistenceConfig) -> Path:
     """启动期校验 ``LOCAL_PERSISTENCE_ROOT``（需求 5.4-5.10、4.4）。
 
     模仿 ``_create_local_filesystem_workspace`` 的 7 步校验风格，任一步骤
@@ -1214,7 +1219,7 @@ def _create_readiness_aggregator() -> ReadinessAggregator:
     Returns:
         ``ReadinessAggregator`` 实例，``checks`` 与当前容器状态精确对应。
     """
-    checks: list = []
+    checks: list[HealthCheckPort] = []
 
     if container.has_async_resource("redis"):
         from infrastructure.health.redis_health_check_adapter import (
@@ -1632,7 +1637,7 @@ async def _create_tool_registry() -> ToolRegistry:
                                 tool_name,
                                 suffixed,
                             )
-                            mcp_tool._name = suffixed
+                            mcp_tool.rename(suffixed)
                         registry.register(mcp_tool)
                         total_registered += 1
                 except Exception as e:
@@ -1682,6 +1687,11 @@ def _create_tier_resolver() -> "LocalFileTierResolver":
     project_base = Path(ws) if ws else Path.cwd()
     _tier_resolver = LocalFileTierResolver(project_base=project_base)
     return _tier_resolver
+
+
+def create_tier_resolver() -> "LocalFileTierResolver":
+    """Return the shared local-file tier resolver."""
+    return _create_tier_resolver()
 
 
 def _create_trace_store() -> "TraceStorePort | None":
@@ -1949,9 +1959,7 @@ def configure_container() -> None:
         "delegate_tool_registration",
         "run_worker_manager",
     }
-    container._async_resources = [
-        entry for entry in container._async_resources if entry.name not in managed_resource_names
-    ]
+    container.remove_async_resources(managed_resource_names)
 
     # ── 异步资源 ──
     # Telemetry 最先初始化，确保后续资源的初始化过程也能被追踪

@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from domain.agent.exceptions import DelegationDepthExceededError
 from domain.agent.tools import Tool, ToolExecutionResult
@@ -32,7 +32,7 @@ from infrastructure.agent.workflow_collaboration_recorder import (
 
 if TYPE_CHECKING:
     from domain.agent.ports import AgentRegistryPort, DelegationPort
-    from domain.run.ports import RunEventStorePort
+from domain.run.ports import RunEventAppenderPort
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class DelegateParallelTool(Tool):
         delegation: DelegationPort,
         current_delegation_depth: int = 0,
         max_delegation_depth: int = 3,
-        event_store: RunEventStorePort | None = None,
+        event_store: RunEventAppenderPort | None = None,
         recent_collaboration_summary_limit: int = 5,
     ) -> None:
         """初始化并行委派工具。
@@ -148,17 +148,23 @@ class DelegateParallelTool(Tool):
         requests = params.get("requests")
         if not isinstance(requests, list):
             return errors  # 已由父类 type 校验产生错误
-        if len(requests) < self._MIN_REQUESTS:
-            errors.append(f"requests 至少包含 {self._MIN_REQUESTS} 条，当前 {len(requests)}")
-        if len(requests) > self._MAX_REQUESTS:
-            errors.append(f"requests 最多包含 {self._MAX_REQUESTS} 条，当前 {len(requests)}")
-        for idx, item in enumerate(requests):
+        request_items = cast(list[object], requests)
+        if len(request_items) < self._MIN_REQUESTS:
+            errors.append(f"requests 至少包含 {self._MIN_REQUESTS} 条，当前 {len(request_items)}")
+        if len(request_items) > self._MAX_REQUESTS:
+            errors.append(f"requests 最多包含 {self._MAX_REQUESTS} 条，当前 {len(request_items)}")
+        for idx, item in enumerate(request_items):
             if not isinstance(item, dict):
                 errors.append(f"requests[{idx}] 必须为对象")
                 continue
-            if not item.get("agent_name") or not isinstance(item.get("agent_name"), str):
+            request_item = cast(dict[object, object], item)
+            if not request_item.get("agent_name") or not isinstance(
+                request_item.get("agent_name"), str
+            ):
                 errors.append(f"requests[{idx}].agent_name 必填且必须为字符串")
-            if not item.get("task_goal") or not isinstance(item.get("task_goal"), str):
+            if not request_item.get("task_goal") or not isinstance(
+                request_item.get("task_goal"), str
+            ):
                 errors.append(f"requests[{idx}].task_goal 必填且必须为字符串")
         return errors
 

@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from collections.abc import Callable
 
 import pytest
 from hypothesis import given, settings
@@ -31,18 +31,20 @@ from common.container_models import Scope, default_dependency_name, make_registr
 _type_counter = 0
 
 
-def _make_protocol(label: str = "Proto") -> type:
-    """动态创建唯一的 Protocol 类，避免测试间类型冲突。"""
+def _make_protocol(label: str = "Proto") -> type[object]:
+    """动态创建唯一的测试抽象类型，避免测试间类型冲突。"""
     global _type_counter
     _type_counter += 1
-    return type(f"{label}_{_type_counter}", (Protocol,), {})
+    return type(f"{label}_{_type_counter}", (), {})
 
 
-def _make_provider(value: object | None = None):
+def _make_provider(
+    value: object | None = None,
+) -> tuple[Callable[[], object], object]:
     """创建返回固定值的同步 Provider。"""
     sentinel = value if value is not None else object()
 
-    def provider():
+    def provider() -> object:
         return sentinel
 
     return provider, sentinel
@@ -70,7 +72,7 @@ class TestProperty1UnnamedRoundTrip:
         result = await c.resolve(proto)
 
         assert result is sentinel
-        assert make_registry_key(proto) in c._registry
+        assert make_registry_key(proto) in c.capture_state().registry
         assert make_registry_key(proto) == (proto, default_dependency_name(proto))
 
     def test_default_dependency_name_uses_spring_decapitalize_rules(self):
@@ -145,7 +147,7 @@ class TestProperty3RegistrationIndependence:
         c.register(proto, default_provider)
 
         # 多个命名注册
-        named_sentinels = {}
+        named_sentinels: dict[str, object] = {}
         for n in names:
             provider, sentinel = _make_provider()
             c.register(proto, provider, name=n)
@@ -317,16 +319,14 @@ class TestProperty7FastAPIIntegration:
         provider, sentinel = _make_provider()
 
         # 使用全局 container 实例
-        original_registry = container._registry.copy()
-        original_singletons = container._singletons.copy()
+        original_state = container.capture_state()
         try:
             container.register(proto, provider, name=name)
             dep_fn = inject(proto, name=name)
             result = await dep_fn()
             assert result is sentinel
         finally:
-            container._registry = original_registry
-            container._singletons = original_singletons
+            container.restore_state(original_state)
 
 
 # ── 单元测试：边界条件和集成验证 ──
@@ -345,10 +345,10 @@ class TestBoundaryConditions:
         proto_a = _make_protocol("A")
         proto_b = _make_protocol("B")
 
-        async def provider_a():
+        async def provider_a() -> object:
             return await c.resolve(proto_b, name="b")
 
-        async def provider_b():
+        async def provider_b() -> object:
             return await c.resolve(proto_a, name="a")
 
         c.register(proto_a, provider_a, name="a")
@@ -367,7 +367,7 @@ class TestBoundaryConditions:
         proto = _make_protocol()
         sentinel = object()
 
-        async def async_provider():
+        async def async_provider() -> object:
             return sentinel
 
         c.register(proto, async_provider, name="async_dep")
@@ -402,11 +402,11 @@ class TestBoundaryConditions:
         init_called = False
         cleanup_called = False
 
-        async def init():
+        async def init() -> None:
             nonlocal init_called
             init_called = True
 
-        async def cleanup():
+        async def cleanup() -> None:
             nonlocal cleanup_called
             cleanup_called = True
 
@@ -492,8 +492,7 @@ class TestMultipleDependencyInjection:
         proto = _make_protocol()
         first = object()
         second = object()
-        original_registry = container._registry.copy()
-        original_singletons = container._singletons.copy()
+        original_state = container.capture_state()
         try:
             container.register(proto, lambda: first, name="first")
             container.register(proto, lambda: second, name="second")
@@ -502,5 +501,4 @@ class TestMultipleDependencyInjection:
 
             assert await dependency() == [first, second]
         finally:
-            container._registry = original_registry
-            container._singletons = original_singletons
+            container.restore_state(original_state)

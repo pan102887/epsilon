@@ -20,10 +20,11 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from domain.agent.tools import Tool, ToolRegistry
+from domain.agent.tools import Tool, ToolExecutionResult, ToolRegistry
 from domain.agent.value_objects import AgentConfig
-from domain.chat.context import ConversationContext, ToolMessage, UserMessage
+from domain.chat.context import BaseMessage, ConversationContext, ToolMessage, UserMessage
 from domain.chat.value_objects import ContextBuilderResult
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import (
     ChatRequest,
     LLMResponse,
@@ -54,7 +55,7 @@ class _BoomTool(Tool):
             "required": [],
         }
 
-    async def execute(self, **kwargs: object) -> str:
+    async def execute(self, **kwargs: object) -> ToolExecutionResult:
         raise ValueError("boom")
 
 
@@ -63,9 +64,12 @@ class _FakeContextBuilder:
 
     async def build(
         self,
-        messages,
-        **kwargs,
+        messages: list[BaseMessage],
+        *,
+        model_access: ModelAccessPort | None = None,
+        model: str | None = None,
     ) -> ContextBuilderResult:
+        del messages, model_access, model
         return ContextBuilderResult(
             messages=[UserMessage(content="go")],
             usage={},

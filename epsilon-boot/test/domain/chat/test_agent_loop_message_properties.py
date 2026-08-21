@@ -12,6 +12,7 @@ ToolMessage 的 tool_call_id 扩展字段进行属性测试，
 """
 
 import json
+from typing import Any
 
 import hypothesis.strategies as st
 from hypothesis import given, settings
@@ -173,7 +174,9 @@ def test_assistant_message_tool_calls_roundtrip(msg: AssistantMessage) -> None:
 
 @settings(max_examples=100)
 @given(content=content_st, metadata=metadata_st)
-def test_empty_tool_calls_excluded_from_dict(content: str, metadata: dict) -> None:
+def test_empty_tool_calls_excluded_from_dict(
+    content: str, metadata: dict[str, int]
+) -> None:
     """验证 tool_calls 为空列表时，to_dict() 输出不包含 tool_calls 键。
 
     **Validates: Requirements 1.3**
@@ -293,7 +296,7 @@ def test_tool_message_tool_call_id_roundtrip(msg: ToolMessage) -> None:
 @settings(max_examples=100)
 @given(content=content_st, tool_name=tool_name_st, metadata=metadata_st)
 def test_tool_message_legacy_format_backward_compat(
-    content: str, tool_name: str, metadata: dict
+    content: str, tool_name: str, metadata: dict[str, int]
 ) -> None:
     """验证旧格式字典（不含 tool_call_id 键）反序列化时 tool_call_id 默认为空字符串。
 
@@ -302,7 +305,11 @@ def test_tool_message_legacy_format_backward_compat(
     当反序列化的字典数据来自旧版本（不包含 tool_call_id 键）时，
     from_dict() 应将 tool_call_id 设为空字符串，确保向后兼容已持久化的旧格式数据。
     """
-    legacy_dict: dict = {"role": "tool", "content": content, "tool_name": tool_name}
+    legacy_dict: dict[str, Any] = {
+        "role": "tool",
+        "content": content,
+        "tool_name": tool_name,
+    }
     if metadata:
         legacy_dict["metadata"] = metadata
 
@@ -365,7 +372,7 @@ def test_serialize_assistant_with_tool_calls_openai_format(msg: AssistantMessage
     3. tool_calls 列表中每个元素包含 id、type（值为 "function"）和 function 字典
     4. function 字典包含 name 和 arguments 两个键
     """
-    result = OpenAICompatibleAdapter._to_openai_messages([msg])
+    result = OpenAICompatibleAdapter.to_openai_messages([msg])
     assert len(result) == 1
 
     serialized = result[0]
@@ -396,7 +403,7 @@ def test_serialize_tool_message_includes_tool_call_id(msg: ToolMessage) -> None:
     2. content 字段存在
     3. tool_call_id 字段存在
     """
-    result = OpenAICompatibleAdapter._to_openai_messages([msg])
+    result = OpenAICompatibleAdapter.to_openai_messages([msg])
     assert len(result) == 1
 
     serialized = result[0]
@@ -417,7 +424,7 @@ def test_serialize_system_user_messages_only_role_content(msg: BaseMessage) -> N
     对于任意 SystemMessage 或 UserMessage，经 _to_openai_messages() 序列化后，
     输出字典应仅包含 role 和 content 两个键，不包含 tool_calls、tool_call_id 等扩展字段。
     """
-    result = OpenAICompatibleAdapter._to_openai_messages([msg])
+    result = OpenAICompatibleAdapter.to_openai_messages([msg])
     assert len(result) == 1
 
     serialized = result[0]
@@ -442,7 +449,7 @@ def mixed_message_list_st(draw: st.DrawFn) -> list[BaseMessage]:
     Returns:
         包含 1-10 条随机消息的列表，消息类型从四种子类中随机选取
     """
-    messages = draw(
+    generated_messages = draw(
         st.lists(
             st.one_of(
                 system_message_st(),
@@ -454,6 +461,9 @@ def mixed_message_list_st(draw: st.DrawFn) -> list[BaseMessage]:
             max_size=10,
         )
     )
+    messages: list[BaseMessage] = []
+    for message in generated_messages:
+        messages.append(message)
     return messages
 
 
@@ -475,7 +485,8 @@ def test_conversation_context_agent_loop_roundtrip(messages: list[BaseMessage]) 
     """
     # 构建 ConversationContext 并直接设置消息列表
     ctx = ConversationContext()
-    ctx._messages = list(messages)
+    for message in messages:
+        ctx.append_message(message)
 
     # 序列化 → 反序列化
     serialized = ctx.to_dict()

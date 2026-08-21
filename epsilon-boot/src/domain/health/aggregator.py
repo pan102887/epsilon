@@ -29,6 +29,11 @@ class ReadinessAggregator:
         """
         self._checks = checks
 
+    @property
+    def checks(self) -> tuple[HealthCheckPort, ...]:
+        """返回按执行顺序配置的健康检查。"""
+        return tuple(self._checks)
+
     async def check_readiness(self) -> ReadinessResult:
         """执行所有健康检查并聚合结果。
 

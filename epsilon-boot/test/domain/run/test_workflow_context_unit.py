@@ -79,7 +79,7 @@ def test_workflow_collaboration_context_is_isolated_between_async_tasks() -> Non
             reset_workflow_collaboration_context(token)
 
     async def main() -> list[tuple[str, str | None]]:
-        return await asyncio.gather(worker("run-a"), worker("run-b"))
+        return list(await asyncio.gather(worker("run-a"), worker("run-b")))
 
     assert sorted(asyncio.run(main())) == [("run-a", "run-a"), ("run-b", "run-b")]
     assert get_workflow_collaboration_context() is None

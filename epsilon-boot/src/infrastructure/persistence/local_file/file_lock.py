@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from types import TracebackType
-from typing import IO
+from typing import IO, Protocol
 
 _portalocker_spec = _ilu.find_spec("portalocker")
 if _portalocker_spec is not None:
@@ -92,6 +92,14 @@ class LockHandle:
                 self.fd.close()
 
 
+class FileLock(Protocol):
+    """可注入文件锁的最小结构协议。"""
+
+    def acquire(self, mode: LockMode) -> LockHandle:
+        """获取指定模式的锁句柄。"""
+        ...
+
+
 class CrossPlatformFileLock:
     """跨平台文件锁，支持 ``EXCLUSIVE`` / ``SHARED``、非阻塞轮询 + 超时。
 
@@ -130,7 +138,8 @@ class CrossPlatformFileLock:
         if sys.platform in ("linux", "darwin", "win32"):
             return
         # FreeBSD 等其他 Unix：依赖 fcntl；不可用则 ImportError 冒泡。
-        import fcntl  # noqa: F401
+        if _ilu.find_spec("fcntl") is None:
+            raise ImportError("fcntl is required on this platform")
 
     def acquire(self, mode: LockMode) -> LockHandle:
         """以非阻塞方式轮询获取锁，直到成功或超时。
