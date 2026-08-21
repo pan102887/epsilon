@@ -24,13 +24,13 @@ from domain.agent.tools import Tool, ToolExecutionResult, ToolRegistry
 from domain.agent.value_objects import AgentConfig
 from domain.chat.context import BaseMessage, ConversationContext, ToolMessage, UserMessage
 from domain.chat.value_objects import ContextBuilderResult
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import (
     ChatRequest,
     LLMResponse,
     StreamingChunk,
     ToolCallRequest,
 )
-from domain.model_access.ports import ModelAccessPort
 from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 
 _SECRET_ARGUMENTS = '{"path": "/etc/secret.txt", "api_key": "sk-DO-NOT-LEAK"}'

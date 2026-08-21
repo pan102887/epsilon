@@ -8,8 +8,8 @@ from domain.agent.value_objects import AgentConfig, AgentResult
 from domain.chat.context import ConversationContext, UserMessage
 from domain.chat.exceptions import ContinuationUnavailableError
 from domain.chat.value_objects import ChatContinueRequestVO
-from domain.model_access.value_objects import ToolCallRequest
 from domain.model_access.ports import ModelAccessPort
+from domain.model_access.value_objects import ToolCallRequest
 from domain.prompt.value_objects import LoadedPrompt
 from infrastructure.chat.chat_service_adapter import ChatServiceAdapter
 from test.infrastructure.chat.chat_adapter_test_utils import make_chat_adapter_dependencies

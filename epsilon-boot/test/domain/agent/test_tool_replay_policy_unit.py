@@ -52,4 +52,4 @@ async def test_minimal_tool_subclass_runs_without_overriding_recovery_metadata()
         arguments='{"text":"hello"}',
     )
 
-    assert await tool.run(request) == "echo:hello"
+    assert (await tool.run(request)).content == "echo:hello"

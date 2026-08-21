@@ -365,7 +365,7 @@ class ChatServiceAdapter(ChatServicePort):
         approval_required: bool = False,
         approval_metadata: dict[str, Any] | None = None,
     ) -> tuple[bool, str | None]:
-        """Expose the stable segment risk-gate decision for orchestration checks."""
+        """为编排检查提供稳定的分段风险门禁判定。"""
         return ChatServiceAdapter._segment_risk_gate_required(
             context=context,
             pre_message_count=pre_message_count,

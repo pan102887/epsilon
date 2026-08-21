@@ -228,7 +228,7 @@ class EpsilonTextualApp(App[int]):
         task.add_done_callback(self._background_tasks.discard)
 
     async def request_cancel_active_run(self) -> RunSnapshot | None:
-        """Request cancellation for the active Run without cancelling watch task."""
+        """请求取消当前 Run，同时保留状态监听任务。"""
         if self._active_run_id is None:
             return None
         snapshot = await self._runtime.cancel_run(self._active_run_id)

@@ -699,5 +699,5 @@ def _json_safe(value: Any) -> Any:
 
 
 def json_safe(value: Any) -> Any:
-    """Convert a guardrail metadata value to its JSON-safe representation."""
+    """将护栏元数据转换为可安全写入 JSON 的值。"""
     return _json_safe(value)

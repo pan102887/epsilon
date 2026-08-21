@@ -30,7 +30,7 @@ _LOCAL_PROPERTIES_FILE = LOCAL_PROPERTIES_FILE
 _INTERNAL_ATTRS = frozenset({"_config_class", "_instance", "_lock", "_mtimes", "_source_files"})
 
 
-class ConfigProxy(Generic[T]):
+class ConfigProxy(Generic[T]):  # noqa: UP046 - Python 3.11 compatibility
     """配置代理对象，透明转发属性访问并支持基于 mtime 的热更新。
 
     通过 ``__getattr__`` 将属性访问转发到内部缓存的真实配置实例。
@@ -209,7 +209,7 @@ class ConfigProxy(Generic[T]):
         return self._config_class
 
 
-def create_config(config_class: type[T]) -> T:
+def create_config(config_class: type[T]) -> T:  # noqa: UP047 - Python 3.11 compatibility
     """配置工厂函数，根据 ``hot_reload`` 标志创建配置实例。
 
     统一的配置实例创建入口。根据配置类上声明的 ``hot_reload`` 类变量，

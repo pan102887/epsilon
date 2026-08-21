@@ -6,8 +6,8 @@
 - tool_calling_enabled=True 但无工具时，chat() 直接调用 LLM
 """
 
-from unittest.mock import AsyncMock, MagicMock
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import hypothesis.strategies as st
 import pytest

@@ -485,7 +485,7 @@ container = Container()
 """全局容器实例，模块级单例。"""
 
 
-def inject(
+def inject(  # noqa: UP047 - Python 3.11 compatibility
     abstract_type: type[T], *, name: str | None = None
 ) -> Callable[[], Awaitable[T]]:
     """FastAPI Depends 快捷方式，支持按名称解析。
@@ -516,7 +516,9 @@ def inject(
     return container.get_dependency(abstract_type, name=name)
 
 
-def inject_all(abstract_type: type[T]) -> Callable[[], Awaitable[list[T]]]:
+def inject_all(  # noqa: UP047 - Python 3.11 compatibility
+    abstract_type: type[T],
+) -> Callable[[], Awaitable[list[T]]]:
     """FastAPI 多实例集合注入快捷方式。
 
     Usage::

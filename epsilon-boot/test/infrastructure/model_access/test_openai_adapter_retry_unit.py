@@ -7,9 +7,9 @@
 - stream yield 后中途异常不重试
 """
 
-from unittest.mock import AsyncMock, MagicMock
 from collections.abc import AsyncIterator
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from openai import APITimeoutError

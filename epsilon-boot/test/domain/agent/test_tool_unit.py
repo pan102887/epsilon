@@ -187,7 +187,7 @@ class TestToolRegistryExecuteDelegation:
             arguments=json.dumps({"msg": "hello"}),
         )
         result = await registry.execute(request)
-        assert result == "echo: hello"
+        assert result.content == "echo: hello"
 
     @pytest.mark.asyncio
     async def test_execute_propagates_tool_execution_error(self) -> None:

@@ -18,8 +18,8 @@ from domain.agent.tools import ToolExecutionResult
 from domain.agent.value_objects import AgentConfig
 from domain.chat.context import AssistantMessage, BaseMessage, ConversationContext, ToolMessage
 from domain.chat.value_objects import ContextBuilderResult
-from domain.model_access.value_objects import StreamingChunk, ToolCallRequest
 from domain.model_access.ports import ModelAccessPort
+from domain.model_access.value_objects import StreamingChunk, ToolCallRequest
 from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 from infrastructure.model_access.openai_compatible_adapter import OpenAICompatibleAdapter
 

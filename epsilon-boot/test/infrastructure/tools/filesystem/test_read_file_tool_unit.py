@@ -21,8 +21,8 @@ from __future__ import annotations
 import ast
 import inspect
 from pathlib import Path, PurePosixPath
-from unittest.mock import AsyncMock, MagicMock
 from typing import cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 

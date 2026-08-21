@@ -75,7 +75,7 @@ class TestRegistryWithBreaker:
         # 多次调用不触发熔断
         for _ in range(10):
             result = await registry.execute(req)
-            assert result == "ok"
+            assert result.content == "ok"
 
 
 class TestRegistryWithoutBreaker:
@@ -89,7 +89,7 @@ class TestRegistryWithoutBreaker:
 
         req = _make_request("simple")
         result = await registry.execute(req)
-        assert result == "ok"
+        assert result.content == "ok"
 
     @pytest.mark.asyncio
     async def test_no_breaker_failure_passes_through(self):

@@ -2,7 +2,13 @@
 
 import pytest
 
-from domain.chat.context import BaseMessage, AssistantMessage, SystemMessage, ToolMessage, UserMessage
+from domain.chat.context import (
+    AssistantMessage,
+    BaseMessage,
+    SystemMessage,
+    ToolMessage,
+    UserMessage,
+)
 from domain.model_access.value_objects import ToolCallRequest
 from infrastructure.model_access.openai_compatible_adapter import OpenAICompatibleAdapter
 from infrastructure.model_access.provider_config import ProviderConfig

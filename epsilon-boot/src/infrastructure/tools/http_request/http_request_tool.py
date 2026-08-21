@@ -165,6 +165,11 @@ def host_block_reason(hostname: str) -> str | None:
     return _ip_block_reason(ip_addr)
 
 
+# 保留既有安全策略标记和内部导入兼容性；公开名称供严格类型调用方使用。
+_reject_sensitive_headers = reject_sensitive_headers
+_host_block_reason = host_block_reason
+
+
 def _reject_unsafe_ip(
     *,
     ip_str: str,

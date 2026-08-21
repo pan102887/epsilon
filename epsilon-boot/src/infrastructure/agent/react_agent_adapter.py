@@ -1690,7 +1690,7 @@ class ReActAgentAdapter(AgentPort):
         skip_guardrail_before: bool = False,
         record_guardrail_after: bool = True,
     ) -> tuple[ToolExecutionResult, bool]:
-        """Execute one tool call and return its result plus error flag."""
+        """执行一次工具调用，并返回结果与错误标志。"""
 
         return await self._execute_tool_call(
             context,
@@ -1710,7 +1710,7 @@ class ReActAgentAdapter(AgentPort):
         session_id: str | None = None,
         round_num: int = 0,
     ) -> None:
-        """Execute a prepared batch through the concurrent tool coordinator."""
+        """通过并发工具协调器执行已准备的调用批次。"""
 
         await self._dispatch_concurrent_tool_calls(
             context,
@@ -1721,7 +1721,7 @@ class ReActAgentAdapter(AgentPort):
         )
 
     def guardrail_runtime_stats(self) -> GuardrailRuntimeStats:
-        """Return the current accumulated guardrail runtime statistics."""
+        """返回当前累计的护栏运行时统计。"""
 
         return self._guardrail_runtime_accumulator().snapshot()
 
@@ -1733,7 +1733,7 @@ class ReActAgentAdapter(AgentPort):
         *,
         terminal_round: int | None = None,
     ) -> AsyncIterator[RoundOutcome]:
-        """Expose the typed round iterator used by streaming application adapters."""
+        """向流式应用适配器提供带类型的轮次迭代器。"""
 
         async for outcome in self._iter_rounds(
             context, config, model_access, terminal_round=terminal_round

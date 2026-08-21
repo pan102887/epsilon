@@ -20,8 +20,8 @@ from domain.agent.exceptions import (
     DelegationDepthExceededError,
     HandoffPerformed,
 )
-from domain.agent.tools import ToolExecutionResult
 from domain.agent.ports import DelegationPort
+from domain.agent.tools import ToolExecutionResult
 from domain.agent.value_objects import (
     DelegationResult,
     HandoffResult,

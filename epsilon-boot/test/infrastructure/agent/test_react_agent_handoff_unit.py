@@ -10,8 +10,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -19,17 +19,17 @@ from domain.agent.exceptions import HandoffPerformed
 from domain.agent.tools import Tool, ToolExecutionResult
 from domain.agent.value_objects import AgentConfig, AgentResult, AgentStreamEvent
 from domain.chat.context import (
-    ConversationContext,
     BaseMessage,
+    ConversationContext,
     ToolMessage,
 )
 from domain.chat.value_objects import ContextBuilderResult
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import (
     LLMResponse,
     StreamingChunk,
     ToolCallRequest,
 )
-from domain.model_access.ports import ModelAccessPort
 from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 from test.infrastructure.agent._v3_stream_helpers import install_stream_mock
 

@@ -39,7 +39,7 @@ class SessionProviderAdapter(SessionProviderPort):
         self._session_factory = session_factory
 
     @asynccontextmanager
-    async def session(self) -> AsyncGenerator[AsyncSession, None]:
+    async def session(self) -> AsyncGenerator[AsyncSession]:
         """
         获取数据库会话的异步上下文管理器
 

@@ -77,7 +77,7 @@ class ToolCircuitBreaker:
         return self._get_state(tool_name)
 
     @asynccontextmanager
-    async def guard(self, tool_name: str) -> AsyncGenerator[None, None]:
+    async def guard(self, tool_name: str) -> AsyncGenerator[None]:
         """熔断保护上下文管理器。
 
         进入时检查状态：

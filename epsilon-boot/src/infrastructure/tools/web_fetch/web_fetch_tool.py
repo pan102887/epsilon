@@ -16,8 +16,8 @@ from domain.agent.exceptions import ToolExecutionError
 from domain.agent.guardrails import ToolRiskLevel
 from domain.agent.tools import Tool, ToolExecutionResult
 from infrastructure.tools.http_request.http_request_tool import (
-    summarize_url,
     process_response,
+    summarize_url,
     validate_url_safety,
 )
 

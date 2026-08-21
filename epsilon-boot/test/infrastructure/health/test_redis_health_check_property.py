@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock
 
 import hypothesis.strategies as st
 import pytest
+from hypothesis import given, settings
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
-from hypothesis import given, settings
 
 from domain.health.value_objects import HealthCheckResult, HealthStatus
 from infrastructure.health.redis_health_check_adapter import RedisHealthCheckAdapter

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import hypothesis.strategies as st
-import pytest
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
+
+import hypothesis.strategies as st
+import pytest
 from hypothesis import given, settings
 
 from application.chat.session_context_workflow import ChatSessionContextWorkflow

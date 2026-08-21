@@ -317,8 +317,8 @@ async def test_run_guardrail_recorder_resolves_when_convergence_enabled(
 ) -> None:
     """收敛开关开启时应解析真实 RunGuardrailRecorder。"""
 
-    from common.container import container
     from application.run.run_guardrail_recorder import RunGuardrailRecorder
+    from common.container import container
     from domain.agent.ports import RunGuardrailRecorderPort
 
     _set_backend(monkeypatch, "redis")

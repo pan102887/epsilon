@@ -22,7 +22,6 @@
 
 import importlib
 import logging
-from collections.abc import Callable
 from typing import Any, Protocol, cast
 
 from opentelemetry import trace
@@ -50,6 +49,13 @@ class _Instrumentor(Protocol):
     """可选 OpenTelemetry 自动埋点器的最小接口。"""
 
     def instrument(self, **kwargs: Any) -> None: ...
+
+
+class _FastAPIInstrumentor(Protocol):
+    """FastAPI 自动埋点器的类级调用接口。"""
+
+    @staticmethod
+    def instrument_app(app: Any) -> None: ...
 
 
 def _instrumentor(module_name: str, class_name: str) -> _Instrumentor:
@@ -231,11 +237,10 @@ def instrument_fastapi_app(app: Any) -> None:
 
     try:
         module = importlib.import_module("opentelemetry.instrumentation.fastapi")
-        instrumentor_type = vars(module)["FastAPIInstrumentor"]
-        instrument_app = cast(
-            Callable[[Any], None], vars(instrumentor_type)["instrument_app"]
+        instrumentor_type = cast(
+            type[_FastAPIInstrumentor], vars(module)["FastAPIInstrumentor"]
         )
-        instrument_app(app)
+        instrumentor_type.instrument_app(app)
         logger.info("OpenTelemetry FastAPI 自动埋点已启用")
     except Exception:
         logger.warning("FastAPI 自动埋点失败，跳过", exc_info=True)

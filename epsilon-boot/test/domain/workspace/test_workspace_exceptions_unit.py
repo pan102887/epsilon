@@ -13,10 +13,10 @@ from common.exceptions import BizException
 from domain.workspace.exceptions import (
     ConfinementViolationReason,
     WorkspaceConfinementViolation,
+    WorkspaceError,
     WorkspaceIoError,
     WorkspaceNotFoundError,
     WorkspaceUnsupportedOperationError,
-    WorkspaceError,
 )
 from domain.workspace.value_objects import WorkspacePath
 

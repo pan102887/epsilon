@@ -18,7 +18,7 @@ pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture
-async def store() -> AsyncGenerator[RedisRunStoreAdapter, None]:
+async def store() -> AsyncGenerator[RedisRunStoreAdapter]:
     """构造 fakeredis Run store。"""
 
     client = fakeredis.FakeRedis()

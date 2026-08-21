@@ -70,7 +70,7 @@ class ChatRequest:
         extra_params: 扩展参数字典，用于传递特定模型的自定义参数。
     """
 
-    messages: "list[BaseMessage]"
+    messages: list[BaseMessage]
     model: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None

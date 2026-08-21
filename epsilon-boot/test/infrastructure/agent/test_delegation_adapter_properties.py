@@ -7,8 +7,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from hypothesis import given, settings

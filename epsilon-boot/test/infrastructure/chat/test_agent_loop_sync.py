@@ -8,8 +8,8 @@ Agent Loop 逻辑已从 ChatServiceAdapter 迁移到 ReActAgentAdapter，
 因此 Agent Loop 相关测试直接测试 ReActAgentAdapter.run()。
 """
 
-from unittest.mock import AsyncMock, MagicMock
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 

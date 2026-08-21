@@ -9,8 +9,8 @@ import pytest
 
 from application.task import TaskApplicationService, TaskRunPlan, TaskTraceWorkflow
 from domain.agent.exceptions import ApprovalDecisionCountMismatchError, ApprovalExpiredError
-from domain.agent.segmented_execution import SegmentExecutionPolicy
 from domain.agent.ports import ApprovalStateStorePort
+from domain.agent.segmented_execution import SegmentExecutionPolicy
 from domain.agent.value_objects import (
     AgentConfig,
     AgentResult,

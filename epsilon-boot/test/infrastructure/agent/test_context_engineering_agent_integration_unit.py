@@ -5,9 +5,9 @@
 ``ConversationContext``，同时累计 builder usage 与主模型 usage。
 """
 
-from unittest.mock import AsyncMock, MagicMock
 from collections.abc import AsyncIterator
 from typing import cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 

@@ -20,12 +20,12 @@ from domain.agent.tools import ToolExecutionResult
 from domain.agent.value_objects import AgentConfig
 from domain.chat.context import BaseMessage, ConversationContext
 from domain.chat.value_objects import ContextBuilderResult
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import (
     ChatRequest,
     LLMResponse,
     StreamingChunk,
 )
-from domain.model_access.ports import ModelAccessPort
 from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 
 

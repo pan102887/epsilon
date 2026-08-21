@@ -11,10 +11,11 @@
 因此 file_lock 的导入采用延迟方式，仅在实际访问时触发。
 """
 
+from typing import TYPE_CHECKING, Any
+
 from .atomic_writer import TempFileAtomicWriter
 from .path_policy import CrossPlatformPathPolicy, PathPolicyViolation
 from .tmp_file_sweeper import TmpFileSweeper
-from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .file_lock import CrossPlatformFileLock, LockFactory, LockHandle, LockMode, LockTimeout

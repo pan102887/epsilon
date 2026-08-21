@@ -17,17 +17,17 @@ from domain.agent.exceptions import (
     ApprovalExpiredError,
     ApprovalNotFoundError,
 )
-from domain.agent.segmented_execution import SegmentExecutionPolicy
 from domain.agent.ports import ApprovalStateStorePort
+from domain.agent.segmented_execution import SegmentExecutionPolicy
 from domain.agent.value_objects import (
     AgentConfig,
     AgentResult,
     AgentStreamEvent,
     ApprovalDecision,
+    ApprovalDecisionType,
     ApprovalInterrupt,
     ApprovalRequiredPayload,
     PendingActionRequest,
-    ApprovalDecisionType,
 )
 from domain.chat.context import ConversationContext, ToolMessage, UserMessage
 from domain.chat.exceptions import ContinuationUnavailableError

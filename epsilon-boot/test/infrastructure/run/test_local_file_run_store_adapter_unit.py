@@ -35,7 +35,7 @@ pytestmark = pytest.mark.asyncio
 T = TypeVar("T")
 
 
-async def _run_in_threads(
+async def _run_in_threads(  # noqa: UP047 - Python 3.11 compatibility
     operations: list[Callable[[], Coroutine[Any, Any, T]]],
 ) -> list[T]:
     """在线程内用独立 event loop 同时执行 async adapter 操作。"""

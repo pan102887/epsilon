@@ -8,8 +8,8 @@ from collections.abc import AsyncIterator
 from typing import cast
 
 from application.cli.approval_screen import ApprovalScreen
-from application.cli.session import TuiSessionState
 from application.cli.runtime import CliRuntime
+from application.cli.session import TuiSessionState
 from application.cli.tui import EpsilonTextualApp
 from domain.agent.value_objects import (
     AgentStreamEvent,

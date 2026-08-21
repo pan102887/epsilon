@@ -30,7 +30,7 @@ def _build_server() -> FastMCP:
 
 
 @pytest.fixture
-async def bridge() -> AsyncGenerator[MCPToolBridge, None]:
+async def bridge() -> AsyncGenerator[MCPToolBridge]:
     bridge = MCPToolBridge(transport=_build_server())
     try:
         yield bridge

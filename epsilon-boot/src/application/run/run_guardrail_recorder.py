@@ -43,12 +43,12 @@ class RunGuardrailRecorder(RunGuardrailRecorderPort):
 
     @property
     def run_store(self) -> RunStorePort:
-        """Return the run store used by this recorder."""
+        """返回记录器使用的 Run 存储。"""
         return self._run_store
 
     @property
     def observation_store(self) -> RunObservationStorePort:
-        """Return the observation store used by this recorder."""
+        """返回记录器使用的观测存储。"""
         return self._observation_store
 
     async def record_observation(

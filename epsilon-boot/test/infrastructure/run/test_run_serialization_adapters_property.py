@@ -33,8 +33,8 @@ from domain.run.workflow import (
     WorkflowRunState,
 )
 from infrastructure.agent.guardrail_serialization import (
-    guardrail_runtime_stats_to_dict,
     guardrail_observation_to_event_payload,
+    guardrail_runtime_stats_to_dict,
     guardrail_summary_to_dict,
 )
 from infrastructure.agent.segment_serialization import (

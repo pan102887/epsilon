@@ -1303,7 +1303,12 @@ class LocalFilesystemWorkspace(Workspace, LocallyMaterializable):
         Returns:
             ``self._root / path.to_posix().lstrip("/")``。
         """
-        return self._root / path.to_posix().lstrip("/")
+        relative_path = path.to_posix().lstrip("/")
+        if not relative_path:
+            return self._root
+        # WindowsPath 会把 ``root / "0:"`` 当作盘符相对路径并丢弃 root。
+        # 先拼成完整字符串再构造 Path，确保任何已校验逻辑段都留在工作区内。
+        return Path(f"{self._root}{os.sep}{relative_path}")
 
     def to_host_path(self, path: WorkspacePath) -> Path:
         """将已校验的逻辑路径映射为宿主路径。"""
