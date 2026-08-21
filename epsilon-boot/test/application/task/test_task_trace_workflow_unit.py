@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import pytest
+
 from application.task.task_trace_workflow import TaskTraceWorkflow
-from domain.chat.context import AssistantMessage, ConversationContext, ToolMessage, UserMessage
+from domain.chat.context import (
+    AssistantMessage,
+    BaseMessage,
+    ConversationContext,
+    ToolMessage,
+    UserMessage,
+)
 from domain.model_access.value_objects import ToolCallRequest
 
 
-def _context_with_messages(*messages) -> ConversationContext:
+def _context_with_messages(*messages: BaseMessage) -> ConversationContext:
     context = ConversationContext()
     for message in messages:
         context.append_message(message)
@@ -43,7 +51,9 @@ def test_extract_trace_prefers_event_timestamp_for_message_global_index() -> Non
     assert trace[0].timestamp_ms == 123456
 
 
-def test_extract_trace_falls_back_to_current_time_when_timestamp_missing(monkeypatch) -> None:
+def test_extract_trace_falls_back_to_current_time_when_timestamp_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         "application.task.task_trace_workflow.time.time",
         lambda: 42.125,

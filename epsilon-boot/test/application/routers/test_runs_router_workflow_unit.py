@@ -6,6 +6,7 @@ import ast
 import importlib.util
 import json
 import pathlib
+from typing import Any
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
@@ -24,7 +25,7 @@ from domain.run.value_objects import (
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-def _load_runs_module():
+def _load_runs_module() -> Any:
     """直接加载兼容 Run 路由模块。"""
 
     runs_path = (
@@ -34,6 +35,8 @@ def _load_runs_module():
         "test_runs_router_workflow_module",
         str(runs_path),
     )
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -186,7 +189,7 @@ def test_runs_router_does_not_import_workflow_runtime_components() -> None:
         / "runs.py"
     )
     tree = ast.parse(router_path.read_text(encoding="utf-8"))
-    imports = set()
+    imports: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             imports.update(alias.name for alias in node.names)

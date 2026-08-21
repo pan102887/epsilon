@@ -30,7 +30,9 @@ from domain.model_access.value_objects import (
     StreamingChunk,
     StreamingToolCallDelta,
 )
-from infrastructure.agent.round_stream_accumulator import _RoundStreamAccumulator
+from infrastructure.agent.round_stream_accumulator import (
+    RoundStreamAccumulator as _RoundStreamAccumulator,
+)
 from infrastructure.model_access.openai_compatible_adapter import OpenAICompatibleAdapter
 
 _UNIFIED_KEYS = {
@@ -77,7 +79,7 @@ async def test_chat_sync_log_extra_aligns_with_exception_details(
     """T19/chat_sync：WARN extra 与异常 details 同名键值相等。"""
     adapter = _make_adapter("deepseek")
     completion = _make_completion(tool_call_id="")
-    adapter._chat_completion = AsyncMock(return_value=completion)
+    adapter.set_chat_completion_handler(AsyncMock(return_value=completion))
 
     request = ChatRequest(messages=[UserMessage(content="hi")])
     caplog.set_level(
@@ -131,10 +133,10 @@ async def test_stream_finished_log_extra_keys_complete(
     )
     for key in _UNIFIED_KEYS:
         assert hasattr(record, key), f"missing key {key!r}"
-    assert record.source == "stream_finished"
-    assert record.provider is None  # 不适用字段：键存在 + None
-    assert record.model == "m"
-    assert record.violation_field == "id"
+    assert record.__dict__["source"] == "stream_finished"
+    assert record.__dict__["provider"] is None  # 不适用字段：键存在 + None
+    assert record.__dict__["model"] == "m"
+    assert record.__dict__["violation_field"] == "id"
 
 
 def test_history_restore_filter_drops_invalid_tool_call() -> None:
@@ -151,7 +153,7 @@ def test_history_restore_filter_drops_invalid_tool_call() -> None:
     from domain.chat.context import AssistantMessage
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(ctx_module, "_HISTORY_RESTORE_STRATEGY", "filter")
+        mp.setattr(ctx_module, "history_restore_strategy", "filter")
         data = {
             "role": "assistant",
             "content": "x",

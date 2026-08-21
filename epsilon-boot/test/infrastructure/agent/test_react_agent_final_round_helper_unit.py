@@ -22,9 +22,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from domain.agent.tools import ToolExecutionResult
-from domain.agent.value_objects import AgentConfig
-from domain.chat.context import ConversationContext
+from domain.agent.value_objects import AgentConfig, AgentStreamEvent
+from domain.chat.context import BaseMessage, ConversationContext
 from domain.chat.value_objects import ContextBuilderResult
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import (
     ChatRequest,
     LLMResponse,
@@ -41,7 +42,13 @@ class _FakeContextBuilder:
         self._builder_usage = builder_usage or {}
         self.call_count = 0
 
-    async def build(self, messages, **kwargs) -> ContextBuilderResult:
+    async def build(
+        self,
+        messages: list[BaseMessage],
+        *,
+        model_access: ModelAccessPort | None = None,
+        model: str | None = None,
+    ) -> ContextBuilderResult:
         self.call_count += 1
         return ContextBuilderResult(
             messages=messages,
@@ -82,6 +89,10 @@ class _FakeModel:
         for chunk in self._stream_chunks:
             yield chunk
 
+    def count_tokens(self, messages: list[BaseMessage]) -> int:
+        """返回测试所需的稳定 token 估值。"""
+        return sum(len(message.content) for message in messages)
+
 
 def _config(max_rounds: int = 1) -> AgentConfig:
     return AgentConfig(
@@ -100,7 +111,7 @@ def _adapter() -> ReActAgentAdapter:
     tool_registry.execute = AsyncMock(return_value=ToolExecutionResult(content="tool ok"))
     return ReActAgentAdapter(
         tool_registry=tool_registry,
-        context_builder=_FakeContextBuilder(),  # type: ignore[arg-type]
+        context_builder=_FakeContextBuilder(),
     )
 
 
@@ -114,7 +125,7 @@ class TestRunStreamingMaxRoundsOne:
         model = _FakeModel(chat_responses=[])
         context = ConversationContext()
 
-        chunks = []
+        chunks: list[StreamingChunk] = []
         async for chunk in adapter.run_streaming(context, _config(max_rounds=1), model):
             chunks.append(chunk)
 
@@ -149,7 +160,7 @@ class TestRunStreamingMiddleRoundsExhausted:
         model = _FakeModel(chat_responses=chat_responses)
         context = ConversationContext()
 
-        chunks = []
+        chunks: list[StreamingChunk] = []
         async for chunk in adapter.run_streaming(context, _config(max_rounds=3), model):
             chunks.append(chunk)
 
@@ -186,7 +197,7 @@ class TestRunStreamingMiddleRoundsExhausted:
         model = _FakeModel(chat_responses=chat_responses)
         context = ConversationContext()
 
-        chunks = []
+        chunks: list[StreamingChunk] = []
         async for chunk in adapter.run_streaming(context, _config(max_rounds=3), model):
             chunks.append(chunk)
 
@@ -208,7 +219,7 @@ class TestRunEventsMaxRoundsOne:
         model = _FakeModel(chat_responses=[])
         context = ConversationContext()
 
-        events = []
+        events: list[AgentStreamEvent] = []
         async for ev in adapter.run_events(context, _config(max_rounds=1), model):
             events.append(ev)
 
@@ -242,7 +253,7 @@ class TestRunEventsMiddleRoundsExhausted:
         model = _FakeModel(chat_responses=chat_responses)
         context = ConversationContext()
 
-        events = []
+        events: list[AgentStreamEvent] = []
         async for ev in adapter.run_events(context, _config(max_rounds=3), model):
             events.append(ev)
 
@@ -273,7 +284,7 @@ class TestUsageInvariantBetweenTwoPaths:
         adapter1 = _adapter()
         model1 = _FakeModel(chat_responses=[])
         context1 = ConversationContext()
-        chunks1 = []
+        chunks1: list[StreamingChunk] = []
         async for chunk in adapter1.run_streaming(context1, _config(max_rounds=1), model1):
             chunks1.append(chunk)
         finished1 = next(c for c in chunks1 if c.finished)
@@ -281,10 +292,12 @@ class TestUsageInvariantBetweenTwoPaths:
         adapter2 = _adapter()
         model2 = _FakeModel(chat_responses=[])
         context2 = ConversationContext()
-        chunks2 = []
+        chunks2: list[StreamingChunk] = []
         async for chunk in adapter2.run_streaming(context2, _config(max_rounds=1), model2):
             chunks2.append(chunk)
         finished2 = next(c for c in chunks2 if c.finished)
 
         # 两次 max_rounds==1 调用下 stream 产出的 finished usage 应相等
+        assert finished1.usage is not None
+        assert finished2.usage is not None
         assert finished1.usage.get("total_tokens") == finished2.usage.get("total_tokens")

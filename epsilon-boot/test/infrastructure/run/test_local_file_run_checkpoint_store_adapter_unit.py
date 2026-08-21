@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -28,7 +29,7 @@ pytestmark = pytest.mark.asyncio
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-def _adapter(tmp_path) -> LocalFileRunCheckpointStoreAdapter:
+def _adapter(tmp_path: Path) -> LocalFileRunCheckpointStoreAdapter:
     return LocalFileRunCheckpointStoreAdapter(
         root=tmp_path,
         lock_factory=LockFactory(acquire_timeout_ms=1000),
@@ -76,7 +77,7 @@ def _ledger(run_id: str = "run-1", key: str = "key-1") -> ToolResultLedgerEntry:
     )
 
 
-async def test_save_latest_and_list_checkpoints_are_monotonic(tmp_path) -> None:
+async def test_save_latest_and_list_checkpoints_are_monotonic(tmp_path: Path) -> None:
     store = _adapter(tmp_path)
 
     first = await store.save_checkpoint(_checkpoint())
@@ -92,7 +93,7 @@ async def test_save_latest_and_list_checkpoints_are_monotonic(tmp_path) -> None:
     assert await store.list_checkpoints("run-1", after_sequence=1, limit=10) == [second]
 
 
-async def test_tool_ledger_pending_and_completed_roundtrip(tmp_path) -> None:
+async def test_tool_ledger_pending_and_completed_roundtrip(tmp_path: Path) -> None:
     store = _adapter(tmp_path)
 
     pending = await store.put_tool_pending(_ledger())
@@ -111,7 +112,7 @@ async def test_tool_ledger_pending_and_completed_roundtrip(tmp_path) -> None:
     assert await store.list_tool_ledger("run-1") == [completed]
 
 
-async def test_put_tool_pending_is_idempotent_for_same_key(tmp_path) -> None:
+async def test_put_tool_pending_is_idempotent_for_same_key(tmp_path: Path) -> None:
     store = _adapter(tmp_path)
 
     first = await store.put_tool_pending(_ledger())
@@ -121,7 +122,7 @@ async def test_put_tool_pending_is_idempotent_for_same_key(tmp_path) -> None:
     assert len(await store.list_tool_ledger("run-1")) == 1
 
 
-async def test_latest_checkpoint_rejects_incompatible_schema(tmp_path) -> None:
+async def test_latest_checkpoint_rejects_incompatible_schema(tmp_path: Path) -> None:
     store = _adapter(tmp_path)
     await store.save_checkpoint(_checkpoint())
     path = next((tmp_path / "runs" / "checkpoints").glob("*/*.jsonl"))
@@ -135,7 +136,7 @@ async def test_latest_checkpoint_rejects_incompatible_schema(tmp_path) -> None:
         await store.latest_checkpoint("run-1")
 
 
-async def test_trim_checkpoints_applies_count_ttl_and_ledger_limits(tmp_path) -> None:
+async def test_trim_checkpoints_applies_count_ttl_and_ledger_limits(tmp_path: Path) -> None:
     store = _adapter(tmp_path)
     old = _checkpoint(created_at=_NOW - timedelta(seconds=7200))
     await store.save_checkpoint(old)

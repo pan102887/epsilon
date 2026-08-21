@@ -16,13 +16,13 @@ from infrastructure.session.local_file_session_context_adapter import (
 
 
 @pytest.fixture
-def tmp_root(tmp_path):
+def tmp_root(tmp_path: Path) -> Path:
     """临时持久化根目录。"""
     return tmp_path
 
 
 @pytest.fixture
-def adapter(tmp_root):
+def adapter(tmp_root: Path) -> LocalFileSessionContextAdapter:
     """创建真实本地文件适配器。"""
     policy = CrossPlatformPathPolicy()
     writer = TempFileAtomicWriter(fsync_on_write=False)
@@ -39,10 +39,10 @@ def adapter(tmp_root):
 
 
 @pytest.mark.asyncio
-async def test_cas_single_writer_success(adapter):
+async def test_cas_single_writer_success(adapter: LocalFileSessionContextAdapter) -> None:
     """单写者 CAS 成功。"""
 
-    async def mutator(ctx: ConversationContext):
+    async def mutator(ctx: ConversationContext) -> str:
         ctx.add_user_message("cas-hello")
         return "done"
 
@@ -54,14 +54,16 @@ async def test_cas_single_writer_success(adapter):
 
 
 @pytest.mark.asyncio
-async def test_cas_two_writers_no_lost_update(adapter):
+async def test_cas_two_writers_no_lost_update(
+    adapter: LocalFileSessionContextAdapter,
+) -> None:
     """两次顺序 CAS 不丢更新（文件锁在同一事件循环中串行化）。"""
 
-    async def writer_a(ctx: ConversationContext):
+    async def writer_a(ctx: ConversationContext) -> str:
         ctx.add_user_message("from_a")
         return "a"
 
-    async def writer_b(ctx: ConversationContext):
+    async def writer_b(ctx: ConversationContext) -> str:
         ctx.add_user_message("from_b")
         return "b"
 
@@ -78,10 +80,12 @@ async def test_cas_two_writers_no_lost_update(adapter):
 
 
 @pytest.mark.asyncio
-async def test_cas_does_not_raise_session_conflict_error(adapter):
+async def test_cas_does_not_raise_session_conflict_error(
+    adapter: LocalFileSessionContextAdapter,
+) -> None:
     """文件锁路径不抛 SessionConflictError。"""
 
-    async def mutator(ctx: ConversationContext):
+    async def mutator(ctx: ConversationContext) -> None:
         ctx.add_user_message("no-conflict")
         return None
 
@@ -90,12 +94,12 @@ async def test_cas_does_not_raise_session_conflict_error(adapter):
 
 
 @pytest.mark.asyncio
-async def test_cas_os_error_logged_and_propagated(tmp_root):
+async def test_cas_os_error_logged_and_propagated(tmp_root: Path) -> None:
     """底层 OSError 记录日志后透传。"""
     policy = CrossPlatformPathPolicy()
 
-    class FailingWriter:
-        def write_bytes_atomic(self, path, data):
+    class FailingWriter(TempFileAtomicWriter):
+        def write_bytes_atomic(self, target: Path, payload: bytes) -> None:
             raise PermissionError("no write")
 
     def lock_factory(path: Path) -> CrossPlatformFileLock:
@@ -105,10 +109,10 @@ async def test_cas_os_error_logged_and_propagated(tmp_root):
         root=tmp_root,
         lock_factory=lock_factory,
         path_policy=policy,
-        atomic_writer=FailingWriter(),  # type: ignore[arg-type]
+        atomic_writer=FailingWriter(fsync_on_write=False),
     )
 
-    async def mutator(ctx: ConversationContext):
+    async def mutator(ctx: ConversationContext) -> None:
         ctx.add_user_message("will-fail")
         return None
 

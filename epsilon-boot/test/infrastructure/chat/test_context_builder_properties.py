@@ -14,6 +14,7 @@ from domain.chat.context import (
     UserMessage,
 )
 from domain.chat.value_objects import ContextCompactionResult
+from domain.model_access.ports import ModelAccessPort
 from infrastructure.chat.context_builder_adapter import ContextBuilderAdapter
 
 _ENVIRONMENT_TEXT = "<environment_context>safe</environment_context>"
@@ -25,8 +26,15 @@ class _FakeCompaction:
 
     messages: list[BaseMessage]
 
-    async def compact(self, messages, *, model_access=None, model=None):
+    async def compact(
+        self,
+        messages: list[BaseMessage],
+        *,
+        model_access: ModelAccessPort | None = None,
+        model: str | None = None,
+    ) -> ContextCompactionResult:
         """返回预设压缩结果，不修改调用方传入的消息。"""
+        del model_access, model
         return ContextCompactionResult(
             messages=messages if self.messages is messages else self.messages,
             usage={},
@@ -151,7 +159,7 @@ async def test_environment_context_never_persisted_in_conversation_context_dict(
 ) -> None:
     """Property 3：环境上下文不写入 ConversationContext.to_dict()。"""
     context = ConversationContext()
-    context._messages = list(messages)
+    context.replace_messages(messages)
     adapter = ContextBuilderAdapter(
         compaction=_FakeCompaction(context.get_messages()),
         environment_provider=_FakeEnvironmentProvider(),

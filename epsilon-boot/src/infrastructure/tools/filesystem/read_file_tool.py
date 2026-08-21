@@ -29,10 +29,10 @@ from domain.workspace.exceptions import (
 )
 from domain.workspace.ports import Workspace
 from infrastructure.tools.filesystem._context import (
-    _current_agent_id_or_none,
-    _current_trace_id_or_none,
+    current_agent_id_or_none,
+    current_trace_id_or_none,
 )
-from infrastructure.tools.filesystem._rendering import _render_with_line_numbers
+from infrastructure.tools.filesystem._rendering import render_with_line_numbers
 
 
 class ReadFileTool(Tool):
@@ -176,10 +176,10 @@ class ReadFileTool(Tool):
 
         # 观测上下文白名单字段：tool_name 恒存在；trace_id / agent_id 可选。
         context: dict[str, Any] = {"tool_name": self.name}
-        trace_id = _current_trace_id_or_none()
+        trace_id = current_trace_id_or_none()
         if trace_id is not None:
             context["trace_id"] = trace_id
-        agent_id = _current_agent_id_or_none()
+        agent_id = current_agent_id_or_none()
         if agent_id is not None:
             context["agent_id"] = agent_id
 
@@ -208,7 +208,7 @@ class ReadFileTool(Tool):
             ) from e
 
         text = raw.decode("utf-8", errors="replace")
-        content = _render_with_line_numbers(text, start_line=offset)
+        content = render_with_line_numbers(text, start_line=offset)
         # lines_returned 与 _render_with_line_numbers 的切分口径保持一致：
         # 空内容渲染为空串（0 行），非空按 splitlines() 计行。
         lines_returned = len(text.splitlines()) if text else 0

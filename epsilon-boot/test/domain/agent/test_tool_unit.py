@@ -15,7 +15,7 @@ from domain.agent.exceptions import (
     ToolNotFoundError,
     ToolParameterValidationError,
 )
-from domain.agent.tools import Tool, ToolRegistry
+from domain.agent.tools import Tool, ToolExecutionResult, ToolRegistry
 from domain.model_access.value_objects import ToolCallRequest
 
 # ── 测试用 FakeTool ──
@@ -51,11 +51,11 @@ class FakeTool(Tool):
     def parameters(self) -> dict[str, Any]:
         return self._parameters
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
         """执行工具逻辑，委托给注入的 execute_fn 或返回默认值。"""
         if self._execute_fn is not None:
-            return await self._execute_fn(**kwargs)
-        return "ok"
+            return ToolExecutionResult(content=await self._execute_fn(**kwargs))
+        return ToolExecutionResult(content="ok")
 
 
 # ═══════════════════════════════════════════════════════════════

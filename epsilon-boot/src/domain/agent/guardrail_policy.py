@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from domain.agent.guardrails import (
     GuardrailAction,
@@ -21,7 +21,7 @@ from domain.agent.guardrails import (
     GuardrailReason,
     TaskExecutionClass,
     ToolRiskLevel,
-    _json_safe,
+    json_safe,
 )
 from domain.run import RunKind, RunPayload, RunSnapshot
 
@@ -44,7 +44,7 @@ class StaticAgentGuardrailPolicy:
         if (
             snapshot.latest_checkpoint_id is not None
             or snapshot.can_continue
-            or _segment_count(snapshot.segment_metadata) > 1
+            or segment_count(snapshot.segment_metadata) > 1
         ):
             return TaskExecutionClass.LONG_TASK
         return self.classify_payload(snapshot.payload, has_tools=True)
@@ -58,7 +58,7 @@ class StaticAgentGuardrailPolicy:
         """根据 payload 与工具可用性确定任务类型。"""
 
         data = payload.task if payload.kind is RunKind.TASK else payload.chat
-        if _looks_batch(data or {}):
+        if looks_batch(data or {}):
             return TaskExecutionClass.BATCH_TASK
         if payload.kind is RunKind.TASK:
             return TaskExecutionClass.TOOL_TASK if has_tools else TaskExecutionClass.LONG_TASK
@@ -128,20 +128,20 @@ class StaticAgentGuardrailPolicy:
                 reason=GuardrailReason.TOOL_RISK_GATE_REQUIRED,
                 message=message,
                 mode=self._policy.mode,
-                metadata=_json_safe(metadata),
+                metadata=json_safe(metadata),
             )
         if action is GuardrailAction.REQUIRE_APPROVAL:
             return GuardrailDecision.require_approval(
                 reason=GuardrailReason.TOOL_RISK_GATE_REQUIRED,
                 message=message,
                 mode=self._policy.mode,
-                metadata=_json_safe(metadata),
+                metadata=json_safe(metadata),
             )
         return GuardrailDecision.stop(
             reason=GuardrailReason.TOOL_RISK_GATE_REQUIRED,
             message=message,
             mode=self._policy.mode,
-            metadata=_json_safe(metadata),
+            metadata=json_safe(metadata),
         )
 
     def _budget_decision(
@@ -202,7 +202,7 @@ class StaticAgentGuardrailPolicy:
         return GuardrailDecision.allow()
 
 
-def _looks_batch(data: dict[str, Any]) -> bool:
+def looks_batch(data: dict[str, Any]) -> bool:
     """启发式判定 payload 是否为批量任务。
 
     当 items/batch/targets/inputs 中任一为长度大于 1 的 list，或
@@ -211,18 +211,21 @@ def _looks_batch(data: dict[str, Any]) -> bool:
 
     for key in ("items", "batch", "targets", "inputs"):
         value = data.get(key)
-        if isinstance(value, list) and len(value) > 1:
+        if isinstance(value, list) and len(cast(list[object], value)) > 1:
             return True
     constraints = data.get("constraints")
-    return isinstance(constraints, list) and any("批量" in str(item) for item in constraints)
+    return isinstance(constraints, list) and any(
+        "批量" in str(item) for item in cast(list[object], constraints)
+    )
 
 
-def _segment_count(metadata: dict[str, Any] | None) -> int:
+def segment_count(metadata: object) -> int:
     """从 segment_metadata 容错读取 segment_count（转 int，异常归 0）。"""
 
     if not isinstance(metadata, dict):
         return 0
+    typed_metadata = cast(dict[object, object], metadata)
     try:
-        return int(metadata.get("segment_count", 0))
+        return int(str(typed_metadata.get("segment_count", 0)))
     except (TypeError, ValueError):
         return 0

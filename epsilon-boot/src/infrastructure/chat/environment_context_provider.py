@@ -46,6 +46,11 @@ def _assert_no_host_absolute_path(text: str) -> None:
         raise UnsafeEnvironmentContextError("环境上下文包含不允许暴露的宿主绝对路径")
 
 
+def assert_no_host_absolute_path(text: str) -> None:
+    """校验环境上下文不包含宿主机绝对路径。"""
+    _assert_no_host_absolute_path(text)
+
+
 class StaticEnvironmentContextProvider:
     """生成安全的静态环境上下文。"""
 

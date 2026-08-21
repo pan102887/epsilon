@@ -57,7 +57,10 @@ class AgentRuntimeConfig(PropertiesBaseSettings):
             )
         if "handoff_max_rounds" in values:
             try:
-                if int(values["handoff_max_rounds"]) <= 0:
+                raw_handoff_max_rounds = values["handoff_max_rounds"]
+                if isinstance(raw_handoff_max_rounds, (str, int, float)) and int(
+                    raw_handoff_max_rounds
+                ) <= 0:
                     values["handoff_max_rounds"] = UNLIMITED_HANDOFF_MAX_ROUNDS_SENTINEL
             except (TypeError, ValueError):
                 pass

@@ -18,20 +18,28 @@ from unittest.mock import AsyncMock, MagicMock
 
 from domain.agent.tools import ToolExecutionResult
 from domain.agent.value_objects import AgentConfig
-from domain.chat.context import ConversationContext
+from domain.chat.context import BaseMessage, ConversationContext
 from domain.chat.value_objects import ContextBuilderResult
 from domain.model_access.value_objects import (
     ChatRequest,
     LLMResponse,
     StreamingChunk,
 )
+from domain.model_access.ports import ModelAccessPort
 from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 
 
 class _FakeContextBuilder:
     """测试用上下文构建器。"""
 
-    async def build(self, messages, **kwargs) -> ContextBuilderResult:
+    async def build(
+        self,
+        messages: list[BaseMessage],
+        *,
+        model_access: ModelAccessPort | None = None,
+        model: str | None = None,
+    ) -> ContextBuilderResult:
+        del model_access, model
         return ContextBuilderResult(
             messages=messages,
             usage={},

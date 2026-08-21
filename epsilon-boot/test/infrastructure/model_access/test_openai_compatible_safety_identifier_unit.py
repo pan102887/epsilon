@@ -36,7 +36,7 @@ def test_safety_identifier_nonempty_sets_user() -> None:
     """safety_identifier 非空时 params 包含 user 字段。"""
     adapter = _make_adapter(safety_identifier="app-session-123")
     request = ChatRequest(messages=[UserMessage(content="hi")])
-    params = adapter._build_params(request, stream=False)
+    params = adapter.build_params(request, stream=False)
     assert params["user"] == "app-session-123"
 
 
@@ -44,7 +44,7 @@ def test_safety_identifier_empty_no_user() -> None:
     """safety_identifier 为空时 params 不包含 user 字段。"""
     adapter = _make_adapter(safety_identifier="")
     request = ChatRequest(messages=[UserMessage(content="hi")])
-    params = adapter._build_params(request, stream=False)
+    params = adapter.build_params(request, stream=False)
     assert "user" not in params
 
 
@@ -55,5 +55,5 @@ def test_extra_params_overrides_safety_identifier() -> None:
         messages=[UserMessage(content="hi")],
         extra_params={"user": "override-value"},
     )
-    params = adapter._build_params(request, stream=False)
+    params = adapter.build_params(request, stream=False)
     assert params["user"] == "override-value"

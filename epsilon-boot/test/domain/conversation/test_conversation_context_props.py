@@ -79,7 +79,7 @@ def conversation_context_st(
     """
     msgs = draw(st.lists(message_st(), min_size=min_messages, max_size=max_messages_count))
     ctx = ConversationContext()
-    ctx._messages = msgs
+    ctx.replace_messages(msgs)
     return ctx
 
 
@@ -108,7 +108,9 @@ def test_serialization_roundtrip(ctx: ConversationContext) -> None:
     )
 
     # 逐条消息内容一致
-    for i, (orig, rest) in enumerate(zip(ctx._messages, restored._messages, strict=True)):
+    for i, (orig, rest) in enumerate(
+        zip(ctx.get_messages(), restored.get_messages(), strict=True)
+    ):
         assert orig.role == rest.role, f"消息 {i} role 不一致"
         assert orig.content == rest.content, f"消息 {i} content 不一致"
         if isinstance(orig, ToolMessage):
@@ -137,12 +139,13 @@ def test_get_messages_returns_all_messages(ctx: ConversationContext) -> None:
     result = ctx.get_messages()
 
     # (a) 消息数量一致
-    assert len(result) == len(ctx._messages), (
-        f"消息数量不一致: 内部={len(ctx._messages)}, 返回={len(result)}"
+    original = ctx.get_messages()
+    assert len(result) == len(original), (
+        f"消息数量不一致: 内部={len(original)}, 返回={len(result)}"
     )
 
     # (b) & (c) 每条消息都是 BaseMessage 实例，且字段一致
-    for i, (orig, returned) in enumerate(zip(ctx._messages, result, strict=True)):
+    for i, (orig, returned) in enumerate(zip(original, result, strict=True)):
         assert isinstance(returned, BaseMessage), (
             f"第 {i} 条消息应为 BaseMessage 实例，实际为 {type(returned)}"
         )

@@ -11,18 +11,21 @@
 
 import importlib.util
 import pathlib
+from typing import Any
 
 import pytest
 
 from infrastructure.prompt.exceptions import ConflictingLegacyPromptConfigError
 
 
-def _load_container_config_module():
+def _load_container_config_module() -> Any:
     """直接加载 ``container_config``，绕过 ``application`` 包的 ``__init__``。"""
     config_path = (
         pathlib.Path(__file__).resolve().parents[2] / "src" / "application" / "container_config.py"
     )
     spec = importlib.util.spec_from_file_location("test_prompt_conflict_module", str(config_path))
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -30,6 +33,14 @@ def _load_container_config_module():
 
 _config_module = _load_container_config_module()
 _check_legacy_prompt_conflict = _config_module._check_legacy_prompt_conflict
+
+
+def _legacy_properties(_: pathlib.Path) -> dict[str, str]:
+    return {"CHAT_SYSTEM_PROMPT": "x"}
+
+
+def _empty_properties(_: pathlib.Path) -> dict[str, str]:
+    return {}
 
 
 class TestCheckLegacyPromptConflict:
@@ -53,7 +64,7 @@ class TestCheckLegacyPromptConflict:
 
         import common.configuration.configuration_utils as cu
 
-        monkeypatch.setattr(cu, "_parse_properties_file", lambda _: {"CHAT_SYSTEM_PROMPT": "x"})
+        monkeypatch.setattr(cu, "_parse_properties_file", _legacy_properties)
 
         with pytest.raises(ConflictingLegacyPromptConfigError):
             _check_legacy_prompt_conflict()
@@ -64,7 +75,7 @@ class TestCheckLegacyPromptConflict:
 
         import common.configuration.configuration_utils as cu
 
-        monkeypatch.setattr(cu, "_parse_properties_file", lambda _: {})
+        monkeypatch.setattr(cu, "_parse_properties_file", _empty_properties)
 
         result = _check_legacy_prompt_conflict()
         assert result is None

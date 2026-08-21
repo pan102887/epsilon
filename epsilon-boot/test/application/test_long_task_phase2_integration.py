@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from domain.agent.segmented_execution import SegmentExecutionPolicy
-from domain.agent.value_objects import AgentResult
+from domain.agent.value_objects import AgentConfig, AgentResult
 from domain.chat.context import ConversationContext, UserMessage
 from domain.chat.value_objects import ChatRequestVO
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import ToolCallRequest
 from domain.prompt.value_objects import LoadedPrompt
 from domain.task.value_objects import Task, TaskContinueRequest, TaskStatus
@@ -22,7 +24,7 @@ def _loaded_prompt(name: str) -> LoadedPrompt:
     return LoadedPrompt(prompt_id=f"{name}@v1", name=name, version="v1", content="system")
 
 
-def _tool_schema(name: str = "search") -> dict:
+def _tool_schema(name: str = "search") -> dict[str, Any]:
     return {"type": "function", "function": {"name": name, "parameters": {}}}
 
 
@@ -45,7 +47,7 @@ def _chat_adapter(
     model_registry.get_default_model.return_value = "test-model"
     model_registry.get_adapter_for_model.return_value = MagicMock()
     loaded_prompt = _loaded_prompt("chat-default")
-    tool_schemas = [_tool_schema()]
+    tool_schemas: list[dict[str, Any]] = [_tool_schema()]
     return ChatServiceAdapter(
         session_store=session_store,
         model_registry=model_registry,
@@ -72,7 +74,10 @@ def _task_adapter(
     agent: MagicMock, context: ConversationContext, policy: SegmentExecutionPolicy
 ) -> TaskAgentAdapter:
     tool_registry = MagicMock()
-    tool_registry.get_schemas.side_effect = lambda tool_names=None: [_tool_schema()]
+    def get_schemas(tool_names: frozenset[str] | None = None) -> list[dict[str, Any]]:
+        return [_tool_schema()]
+
+    tool_registry.get_schemas.side_effect = get_schemas
     model_registry = MagicMock()
     model_registry.get_default_model.return_value = "test-model"
     model_registry.get_adapter_for_model.return_value = MagicMock()
@@ -100,7 +105,11 @@ async def test_chat_sync_two_paused_segments_then_completed_preserves_user_and_r
     user_counts: list[int] = []
     round_limits: list[int] = []
 
-    async def run(ctx, config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         user_counts.append(sum(isinstance(message, UserMessage) for message in ctx.get_messages()))
         round_limits.append(config.max_rounds)
         if len(user_counts) <= 2:
@@ -139,7 +148,11 @@ async def test_task_sync_paused_then_completed_merges_usage_and_trace() -> None:
     context = ConversationContext()
     user_counts: list[int] = []
 
-    async def run(ctx, config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         user_counts.append(sum(isinstance(message, UserMessage) for message in ctx.get_messages()))
         assert config.max_rounds == 4
         if len(user_counts) == 1:
@@ -188,7 +201,11 @@ async def test_chat_sync_stop_reasons(policy: SegmentExecutionPolicy, expected_r
     """覆盖自动续跑关闭、最大续跑、token budget 和无进展停止。"""
     context = ConversationContext()
 
-    async def run(ctx, _config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         if expected_reason != "no_progress":
             _append_tool_tail(ctx)
             usage = {"total_tokens": 1}

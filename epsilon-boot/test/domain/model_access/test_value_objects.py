@@ -86,8 +86,10 @@ def test_chat_request_all_new_fields():
     assert request.max_tokens == 2000
     assert request.system == "Custom system prompt"
     assert request.provider == "claude"
-    assert request.thinking.type == "enabled"
-    assert request.thinking.budget_tokens == 5000
+    request_thinking = request.thinking
+    assert request_thinking is not None
+    assert request_thinking.type == "enabled"
+    assert request_thinking.budget_tokens == 5000
     assert request.extra_params == {"top_p": 0.9}
 
 

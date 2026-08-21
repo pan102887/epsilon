@@ -19,10 +19,12 @@ import json
 import pathlib
 import sys
 from collections.abc import AsyncIterator
+from typing import Any, Protocol, cast
 from unittest.mock import MagicMock
 
 import pytest
 
+from domain.chat.value_objects import ChatRequestVO, ChatResponseVO
 from domain.model_access.value_objects import StreamingChunk
 
 # mock prometheus_client，避免 chat 路由模块加载链触发的副作用
@@ -33,7 +35,7 @@ if "prometheus_client" not in sys.modules:
     sys.modules["prometheus_client"] = _mock_prom
 
 
-def _load_chat_module():
+def _load_chat_module() -> Any:
     """绕过 application 包初始化，直接加载 chat 路由模块。"""
     chat_path = (
         pathlib.Path(__file__).resolve().parents[3] / "src" / "application" / "routers" / "chat.py"
@@ -41,6 +43,8 @@ def _load_chat_module():
     spec = importlib.util.spec_from_file_location(
         "test_chat_prompt_id_event_module", str(chat_path)
     )
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -58,11 +62,13 @@ class _FakeChatService:
         self._chunks = chunks
         self._prompt_id = prompt_id
 
-    async def chat(self, request):  # pragma: no cover - 流式路径不会调用
+    async def chat(self, request: ChatRequestVO) -> ChatResponseVO:  # pragma: no cover
         raise AssertionError("同步路径不应被调用")
 
-    def stream_chat(self, request) -> AsyncIterator[StreamingChunk]:
-        async def _gen():
+    def stream_chat(self, request: ChatRequestVO) -> AsyncIterator[StreamingChunk]:
+        del request
+
+        async def _gen() -> AsyncIterator[StreamingChunk]:
             for chunk in self._chunks:
                 yield chunk
 
@@ -76,7 +82,11 @@ class _FakeChatService:
         return None
 
 
-async def _read_sse_events(response) -> list[str]:
+class _SseResponse(Protocol):
+    body_iterator: AsyncIterator[dict[str, object] | bytes | str]
+
+
+async def _read_sse_events(response: _SseResponse) -> list[str]:
     """从 ``EventSourceResponse`` 中按出现顺序提取 ``data`` 事件。"""
     events: list[str] = []
     async for item in response.body_iterator:
@@ -125,7 +135,7 @@ async def test_sse_prompt_id_event_appears_immediately_before_done() -> None:
     # [DONE] 紧邻前一条事件应为 prompt_id 事件
     assert done_index >= 1
     prompt_id_event_text = events[done_index - 1]
-    parsed = json.loads(prompt_id_event_text)
+    parsed = cast(dict[str, object], json.loads(prompt_id_event_text))
     assert parsed == {"prompt_id": "chat-default@v3"}
 
     # 全流程中 prompt_id 事件**有且仅有**一条
@@ -135,11 +145,15 @@ async def test_sse_prompt_id_event_appears_immediately_before_done() -> None:
             payload = json.loads(ev)
         except json.JSONDecodeError:
             continue
-        if isinstance(payload, dict) and "prompt_id" in payload and len(payload) == 1:
+        if isinstance(payload, dict):
+            typed_payload = cast(dict[str, object], payload)
+        else:
+            continue
+        if "prompt_id" in typed_payload and len(typed_payload) == 1:
             prompt_id_count += 1
     assert prompt_id_count == 1
 
     # prompt_id 事件之前的最后一个 content chunk 必须 finished=True
     last_content_event_text = events[done_index - 2]
-    last_content_payload = json.loads(last_content_event_text)
+    last_content_payload = cast(dict[str, object], json.loads(last_content_event_text))
     assert last_content_payload["finished"] is True

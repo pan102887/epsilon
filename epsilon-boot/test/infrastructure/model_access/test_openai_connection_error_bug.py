@@ -29,6 +29,7 @@ from hypothesis import strategies as st
 from openai import APIConnectionError
 
 from domain.chat.context import UserMessage
+from domain.model_access.exceptions import ModelConnectionError
 from domain.model_access.value_objects import ChatRequest
 from infrastructure.model_access.openai_compatible_adapter import OpenAICompatibleAdapter
 
@@ -36,18 +37,6 @@ from infrastructure.model_access.openai_compatible_adapter import OpenAICompatib
 # 尝试导入 ModelConnectionError；若尚未定义则创建占位类以便测试编写。
 # 在未修复代码上，即使导入成功（占位），适配器也不会抛出此异常，测试仍会失败。
 # ---------------------------------------------------------------------------
-try:
-    from domain.model_access.exceptions import ModelConnectionError
-except ImportError:
-    # ModelConnectionError 尚未实现，定义占位类使测试代码可编译运行。
-    # 测试将因适配器未抛出此异常而失败，正确证明 bug 存在。
-    class ModelConnectionError(Exception):  # type: ignore[no-redef]
-        """占位类：ModelConnectionError 尚未在领域层定义。"""
-
-        code: int = -1
-        message: str = ""
-
-
 # ---------------------------------------------------------------------------
 # Hypothesis 策略：生成随机连接错误消息
 # ---------------------------------------------------------------------------
@@ -157,7 +146,7 @@ class TestBugConditionChatConnectionError:
         error = _make_api_connection_error(error_message)
 
         # Mock SDK 的 chat.completions.create 使其抛出 APIConnectionError
-        adapter._client.chat.completions.create = AsyncMock(side_effect=error)
+        adapter.client.chat.completions.create = AsyncMock(side_effect=error)
 
         # 期望：适配器应捕获 APIConnectionError 并抛出 ModelConnectionError
         # 实际（未修复）：抛出 AttributeError（访问 exc.status_code）
@@ -202,7 +191,7 @@ class TestBugConditionStreamConnectionError:
         error = _make_api_connection_error(error_message)
 
         # Mock SDK 的 chat.completions.create 使其抛出 APIConnectionError
-        adapter._client.chat.completions.create = AsyncMock(side_effect=error)
+        adapter.client.chat.completions.create = AsyncMock(side_effect=error)
 
         # 期望：适配器应捕获 APIConnectionError 并抛出 ModelConnectionError
         with pytest.raises(ModelConnectionError) as exc_info:

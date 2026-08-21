@@ -49,6 +49,9 @@ class _WorkspaceError(BizException):
     """
 
 
+WorkspaceError = _WorkspaceError
+
+
 class WorkspaceConfinementViolation(_WorkspaceError):
     """逻辑路径越界或含非法字符。
 

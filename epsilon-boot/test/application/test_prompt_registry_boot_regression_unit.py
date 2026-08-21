@@ -38,6 +38,7 @@ def _load_container_config_module():
         pathlib.Path(__file__).resolve().parents[2] / "src" / "application" / "container_config.py"
     )
     spec = importlib.util.spec_from_file_location("test_prompt_boot_module", str(config_path))
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

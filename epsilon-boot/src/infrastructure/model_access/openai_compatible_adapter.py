@@ -17,13 +17,22 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import httpx
 import tiktoken
-from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, RateLimitError
+from openai import (
+    APIConnectionError,
+    APIError,
+    APIStatusError,
+    APITimeoutError,
+    AsyncOpenAI,
+    AsyncStream,
+    RateLimitError,
+)
+from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 from common.configuration import ConfigurationError
 from domain.chat.context import (
@@ -144,6 +153,17 @@ class OpenAICompatibleAdapter:
             retry_attempts,
         )
 
+    def set_chat_completion_handler(
+        self,
+        handler: Callable[[dict[str, Any]], Awaitable[ChatCompletion]],
+    ) -> None:
+        """Replace the completion handler used by :meth:`chat`.
+
+        This is primarily useful for deterministic transports and tests that
+        exercise response conversion without making a network request.
+        """
+        self._chat_completion = handler
+
     async def chat(self, request: ChatRequest) -> LLMResponse:
         """同步对话接口。
 
@@ -179,8 +199,11 @@ class OpenAICompatibleAdapter:
                 tc_id = getattr(tc, "id", None)
                 tc_function = getattr(tc, "function", None)
                 tc_name = getattr(tc_function, "name", None) if tc_function else None
+                tc_arguments = (
+                    getattr(tc_function, "arguments", None) if tc_function else None
+                )
                 tc_index = getattr(tc, "index", None)
-                if not tc_id:
+                if not isinstance(tc_id, str) or not tc_id:
                     details = {
                         "source": "chat_sync",
                         "provider": self._config.provider_name,
@@ -202,11 +225,19 @@ class OpenAICompatibleAdapter:
                         tool_name=tc_name,
                         tool_call_index=tc_index,
                     )
+                if not isinstance(tc_name, str) or not isinstance(tc_arguments, str):
+                    raise ModelAccessError(
+                        message="模型返回了不支持的非函数工具调用",
+                        details={
+                            "model": completion.model,
+                            "tool_call_id": tc_id,
+                        },
+                    )
                 tool_calls.append(
                     ToolCallRequest(
                         id=tc_id,
-                        name=tc.function.name,
-                        arguments=tc.function.arguments,
+                        name=tc_name,
+                        arguments=tc_arguments,
                     )
                 )
 
@@ -392,7 +423,7 @@ class OpenAICompatibleAdapter:
                 },
             ) from exc
 
-    async def _chat_completion_once(self, params: dict[str, Any]) -> Any:
+    async def _chat_completion_once(self, params: dict[str, Any]) -> ChatCompletion:
         """单次同步对话的 SDK 调用，含 SDK→领域异常映射。
 
         被 :func:`build_retry` 装饰后，瞬时网络/服务错误（``ModelTimeoutError``
@@ -411,7 +442,10 @@ class OpenAICompatibleAdapter:
                 ModelAccessError: 与原 ``chat`` 实现一致的领域异常映射。
         """
         try:
-            return await self._client.chat.completions.create(**params)
+            return cast(
+                ChatCompletion,
+                await self._client.chat.completions.create(**params),
+            )
         except APITimeoutError as exc:
             raise ModelTimeoutError(
                 timeout_seconds=self._config.timeout,
@@ -429,12 +463,16 @@ class OpenAICompatibleAdapter:
                 request_info={"model": params.get("model")},
             ) from exc
         except APIError as exc:
+            status_code = exc.status_code if isinstance(exc, APIStatusError) else None
             raise ModelAccessError(
                 message=f"模型调用失败: {exc.message}",
-                details={"model": params.get("model"), "status_code": exc.status_code},
+                details={"model": params.get("model"), "status_code": status_code},
             ) from exc
 
-    async def _stream_open_once(self, params: dict[str, Any]) -> Any:
+    async def _stream_open_once(
+        self,
+        params: dict[str, Any],
+    ) -> AsyncStream[ChatCompletionChunk]:
         """单次流式对话的"首次握手"——发起 SDK 调用并等待返回 stream 对象。
 
         与 :meth:`_chat_completion_once` 共享异常翻译。返回的对象是
@@ -445,7 +483,10 @@ class OpenAICompatibleAdapter:
             同 :meth:`_chat_completion_once`。
         """
         try:
-            return await self._client.chat.completions.create(**params)
+            return cast(
+                AsyncStream[ChatCompletionChunk],
+                await self._client.chat.completions.create(**params),
+            )
         except APITimeoutError as exc:
             raise ModelTimeoutError(
                 timeout_seconds=self._config.timeout,
@@ -463,9 +504,10 @@ class OpenAICompatibleAdapter:
                 request_info={"model": params.get("model")},
             ) from exc
         except APIError as exc:
+            status_code = exc.status_code if isinstance(exc, APIStatusError) else None
             raise ModelAccessError(
                 message=f"模型调用失败: {exc.message}",
-                details={"model": params.get("model"), "status_code": exc.status_code},
+                details={"model": params.get("model"), "status_code": status_code},
             ) from exc
 
     def _stream_tool_call_id_strategy(self) -> StreamToolCallIdRecoveryMode:
@@ -595,6 +637,18 @@ class OpenAICompatibleAdapter:
         )
         return result, recovery
 
+    def materialize_full_tool_calls(
+        self,
+        acc: dict[int, dict[str, Any]],
+        params: dict[str, Any],
+        *,
+        request_nonce: str,
+    ) -> tuple[list[StreamingToolCallDelta] | None, _StreamToolCallIdRecovery]:
+        """Materialize accumulated streaming tool calls into complete deltas."""
+        return self._materialize_full_tool_calls(
+            acc, params, request_nonce=request_nonce
+        )
+
     def count_tokens(self, messages: list[BaseMessage]) -> int:
         """估算给定领域消息列表的 token 数量。
 
@@ -625,8 +679,19 @@ class OpenAICompatibleAdapter:
         return total
 
     @staticmethod
+    def to_openai_messages(
+        messages: Sequence[BaseMessage],
+        *,
+        system_role: str = "system",
+    ) -> list[dict[str, Any]]:
+        """把领域消息转换为 OpenAI Chat Completions 消息。"""
+        return OpenAICompatibleAdapter._to_openai_messages(
+            messages, system_role=system_role
+        )
+
+    @staticmethod
     def _to_openai_messages(
-        messages: list[BaseMessage],
+        messages: Sequence[BaseMessage],
         *,
         system_role: str = "system",
     ) -> list[dict[str, Any]]:
@@ -742,6 +807,10 @@ class OpenAICompatibleAdapter:
             normalized.setdefault("max_completion_tokens", max_tokens)
         return normalized
 
+    def build_params(self, request: ChatRequest, *, stream: bool) -> dict[str, Any]:
+        """构建 SDK 请求参数，供集成诊断与契约测试使用。"""
+        return self._build_params(request, stream=stream)
+
     def _build_params(self, request: ChatRequest, *, stream: bool) -> dict[str, Any]:
         """构建 OpenAI SDK 调用参数。
 
@@ -794,3 +863,8 @@ class OpenAICompatibleAdapter:
             params.update(extra_params)
 
         return params
+
+    @property
+    def client(self) -> AsyncOpenAI:
+        """返回底层异步客户端，供生命周期管理与受控测试替换调用端点。"""
+        return self._client

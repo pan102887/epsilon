@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import contextlib
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 
 from application.run.serialization_ports import GuardrailSerializerPort
 from domain.agent.guardrails import (
@@ -40,6 +40,16 @@ class RunGuardrailRecorder(RunGuardrailRecorderPort):
         self._run_store = run_store
         self._observation_store = observation_store
         self._guardrail_serializer = guardrail_serializer
+
+    @property
+    def run_store(self) -> RunStorePort:
+        """Return the run store used by this recorder."""
+        return self._run_store
+
+    @property
+    def observation_store(self) -> RunObservationStorePort:
+        """Return the observation store used by this recorder."""
+        return self._observation_store
 
     async def record_observation(
         self,
@@ -97,6 +107,7 @@ def _observation_with_payload_stats(
     payload_stats = payload.get("stats")
     if not isinstance(payload_stats, dict):
         return observation
+    payload_stats = cast(dict[str, Any], payload_stats)
     return replace(
         observation,
         stats=GuardrailRuntimeStats(**payload_stats),

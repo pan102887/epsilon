@@ -130,7 +130,7 @@ def test_summary_with_reason_and_metadata_snapshot() -> None:
         approval_request_count=0,
         last_event_cursor=7,
         updated_at="2026-07-06T00:00:00+00:00",
-        runtime_stats=stats,
+        runtime_stats=guardrail_runtime_stats_to_dict(stats),
         stale=True,
         stale_reason="checkpoint_recovery",
     )

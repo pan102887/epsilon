@@ -1,5 +1,7 @@
 """TaskAgentAdapter 暂停与继续单元测试。"""
 
+from collections.abc import Set as AbstractSet
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -8,6 +10,7 @@ from domain.agent.exceptions import ApprovalDecisionCountMismatchError
 from domain.agent.value_objects import (
     AgentConfig,
     AgentResult,
+    AgentTerminationReason,
     ApprovalDecision,
     ApprovalInterrupt,
     ApprovalRequiredPayload,
@@ -15,6 +18,7 @@ from domain.agent.value_objects import (
 )
 from domain.chat.context import ConversationContext, SystemMessage, ToolMessage, UserMessage
 from domain.chat.exceptions import ContinuationUnavailableError
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import ToolCallRequest
 from domain.prompt.value_objects import LoadedPrompt
 from domain.task.value_objects import (
@@ -26,7 +30,7 @@ from domain.task.value_objects import (
 from infrastructure.task.task_agent_adapter import TaskAgentAdapter
 
 
-def _schema(name: str) -> dict:
+def _schema(name: str) -> dict[str, Any]:
     """构造测试工具 schema。"""
     return {
         "type": "function",
@@ -56,7 +60,7 @@ def _adapter(
     *,
     agent: MagicMock,
     context: ConversationContext | None = None,
-    schemas: list[dict] | None = None,
+    schemas: list[dict[str, Any]] | None = None,
     max_rounds: int = 5,
     approval_store: MagicMock | None = None,
 ) -> tuple[TaskAgentAdapter, MagicMock, MagicMock]:
@@ -64,7 +68,9 @@ def _adapter(
     all_schemas = schemas or [_schema("search"), _schema("write")]
     tool_registry = MagicMock()
 
-    def get_schemas(tool_names=None):
+    def get_schemas(
+        tool_names: AbstractSet[str] | None = None,
+    ) -> list[dict[str, Any]]:
         if tool_names is None:
             return list(all_schemas)
         return [schema for schema in all_schemas if schema["function"]["name"] in set(tool_names)]
@@ -100,11 +106,17 @@ def _adapter(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminated_reason", ["max_rounds", "token_budget_exceeded"])
-async def test_execute_returns_paused_and_saves_context(terminated_reason: str) -> None:
+async def test_execute_returns_paused_and_saves_context(
+    terminated_reason: AgentTerminationReason,
+) -> None:
     """验证 execute 对阶段边界返回 PAUSED 并保存上下文。"""
     context = ConversationContext()
 
-    async def run(ctx, _config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         ctx.add_assistant_message_with_tool_calls(
             "",
             [ToolCallRequest(id="call-1", name="search", arguments="{}")],
@@ -150,7 +162,11 @@ async def test_execute_backfills_missing_tool_boundary_metadata_for_legacy_syste
     context = ConversationContext()
     context.add_system_message("legacy system")
 
-    async def run(ctx, _config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         ctx.add_assistant_message_with_tool_calls(
             "",
             [ToolCallRequest(id="call-1", name="search", arguments="{}")],
@@ -188,7 +204,11 @@ async def test_execute_paused_can_continue_false_when_tool_boundary_cannot_rebui
         )
     )
 
-    async def run(ctx, _config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         ctx.add_assistant_message_with_tool_calls(
             "",
             [ToolCallRequest(id="call-1", name="search", arguments="{}")],
@@ -216,7 +236,11 @@ async def test_continue_task_does_not_append_user_and_preserves_config() -> None
     context = _valid_context(boundary=["search"])
     captured_configs: list[AgentConfig] = []
 
-    async def run(ctx, config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         captured_configs.append(config)
         assert sum(1 for message in ctx.get_messages() if isinstance(message, UserMessage)) == 1
         return AgentResult(content="done", model="test-model")
@@ -278,8 +302,6 @@ async def test_continue_task_rejects_missing_tool_boundary() -> None:
 )
 async def test_continue_task_rejects_invalid_context(context: ConversationContext) -> None:
     """验证空会话、缺少 system、尾部非 ToolMessage 时拒绝继续。"""
-    if context is not None and context.message_count == 0:
-        pass
     agent = MagicMock()
     adapter, _, _ = _adapter(agent=agent, context=context)
 
@@ -312,7 +334,13 @@ async def test_resume_approval_restores_context_boundary_and_returns_new_approva
     approval_store.consume = AsyncMock(return_value=approval_store.load.return_value)
     captured_configs: list[AgentConfig] = []
 
-    async def resume(ctx, config, _model_access, interrupt, decisions):
+    async def resume(
+        ctx: ConversationContext,
+        config: AgentConfig,
+        _model_access: ModelAccessPort,
+        interrupt: ApprovalInterrupt,
+        decisions: tuple[ApprovalDecision, ...],
+    ) -> AgentResult:
         captured_configs.append(config)
         assert ctx.session_id == "s1"
         assert interrupt.approval_id == "approval-1"
@@ -388,7 +416,13 @@ async def test_resume_approval_pauses_without_appending_original_goal_and_saves_
     approval_store.consume = AsyncMock(return_value=interrupt)
     captured_configs: list[AgentConfig] = []
 
-    async def resume(ctx, config, _model_access, consumed, decisions):
+    async def resume(
+        ctx: ConversationContext,
+        config: AgentConfig,
+        _model_access: ModelAccessPort,
+        consumed: ApprovalInterrupt,
+        decisions: tuple[ApprovalDecision, ...],
+    ) -> AgentResult:
         captured_configs.append(config)
         assert consumed.approval_id == "approval-1"
         assert decisions == (ApprovalDecision(type="approve", tool_call_id="call-1"),)

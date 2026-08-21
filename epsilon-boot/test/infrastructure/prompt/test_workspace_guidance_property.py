@@ -19,7 +19,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from infrastructure.prompt.workspace_guidance import (
-    _WORKSPACE_PATH_GUIDANCE,
+    WORKSPACE_PATH_GUIDANCE,
     append_workspace_path_guidance,
 )
 
@@ -36,4 +36,4 @@ def test_append_workspace_path_guidance_is_idempotent(s: str) -> None:
 def test_result_ends_with_workspace_path_guidance_stripped(s: str) -> None:
     """返回值的 ``rstrip()`` 必以 ``_WORKSPACE_PATH_GUIDANCE.strip()`` 结尾（需求 6.3）。"""
     result = append_workspace_path_guidance(s)
-    assert result.rstrip().endswith(_WORKSPACE_PATH_GUIDANCE.strip())
+    assert result.rstrip().endswith(WORKSPACE_PATH_GUIDANCE.strip())

@@ -7,10 +7,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import fields, is_dataclass
 from datetime import date, datetime
 from enum import Enum, StrEnum
-from typing import Any
+from typing import Any, cast
 
 from domain.agent.value_objects import ApprovalDecision
 from domain.chat.ports import ChatServicePort
@@ -228,7 +229,8 @@ def _json_safe(value: Any) -> Any:
     if not isinstance(value, type) and is_dataclass(value):
         return _json_safe({field.name: getattr(value, field.name) for field in fields(value)})
     if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
+        mapping = cast(dict[object, object], value)
+        return {str(key): _json_safe(item) for key, item in mapping.items()}
     if isinstance(value, (list, tuple, set, frozenset)):
-        return [_json_safe(item) for item in value]
+        return [_json_safe(item) for item in cast(Iterable[object], value)]
     return str(value)

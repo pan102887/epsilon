@@ -5,10 +5,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from domain.agent.value_objects import AgentStreamEvent
+from domain.agent.value_objects import AgentConfig, AgentStreamEvent
 from domain.chat.context import AssistantMessage, ConversationContext, ToolMessage
 from domain.chat.exceptions import ContinuationUnavailableError
 from domain.chat.value_objects import ChatContinueRequestVO, ChatRequestVO
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import StreamingChunk, ToolCallRequest
 from domain.prompt.value_objects import LoadedPrompt
 from infrastructure.chat.chat_service_adapter import ChatServiceAdapter
@@ -77,7 +78,12 @@ async def test_stream_chat_events_paused_done_metadata_and_save() -> None:
     """验证结构化流 assistant_done 暂停 metadata 与保存规则。"""
     context = ConversationContext()
 
-    async def run_events(_ctx, _config, _model_access) -> AsyncIterator[AgentStreamEvent]:
+    async def run_events(
+        ctx: ConversationContext,
+        config: AgentConfig,
+        model_access: ModelAccessPort,
+    ) -> AsyncIterator[AgentStreamEvent]:
+        del ctx, config, model_access
         context.add_assistant_message_with_tool_calls(
             "",
             [ToolCallRequest(id="call-1", name="search", arguments="{}")],
@@ -113,7 +119,12 @@ async def test_stream_continue_chat_events_does_not_append_user() -> None:
     """验证继续结构化流不追加 user message，并保存 completed final。"""
     context = _valid_context()
 
-    async def run_events(ctx, _config, _model_access) -> AsyncIterator[AgentStreamEvent]:
+    async def run_events(
+        ctx: ConversationContext,
+        config: AgentConfig,
+        model_access: ModelAccessPort,
+    ) -> AsyncIterator[AgentStreamEvent]:
+        del config, model_access
         user_count = sum(1 for message in ctx.get_messages() if message.role == "user")
         assert user_count == 1
         yield AgentStreamEvent(kind="assistant_delta", content="done")
@@ -150,7 +161,12 @@ async def test_stream_chat_paused_chunk_does_not_append_empty_assistant() -> Non
     """验证兼容文本流暂停 final chunk 不追加空助手消息。"""
     context = ConversationContext()
 
-    async def run_streaming(_ctx, _config, _model_access) -> AsyncIterator[StreamingChunk]:
+    async def run_streaming(
+        ctx: ConversationContext,
+        config: AgentConfig,
+        model_access: ModelAccessPort,
+    ) -> AsyncIterator[StreamingChunk]:
+        del ctx, config, model_access
         context.add_assistant_message_with_tool_calls(
             "",
             [ToolCallRequest(id="call-1", name="search", arguments="{}")],

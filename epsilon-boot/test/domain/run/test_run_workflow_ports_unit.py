@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from typing import get_type_hints
 
 from domain.run.ports import (
@@ -14,13 +15,13 @@ from domain.run.ports import (
 from domain.run.workflow import WorkflowDefinition
 
 
-def _signature(method) -> inspect.Signature:
+def _signature(method: Callable[..., object]) -> inspect.Signature:
     """返回方法签名对象。"""
 
     return inspect.signature(method)
 
 
-def _parameter_names(method) -> list[str]:
+def _parameter_names(method: Callable[..., object]) -> list[str]:
     """返回方法签名中的参数名列表。"""
 
     return list(_signature(method).parameters)

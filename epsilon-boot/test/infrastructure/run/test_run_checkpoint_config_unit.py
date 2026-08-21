@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 from common.configuration import ConfigurationError, PropertiesFileSettingsSource
 from infrastructure.run.run_config import RunRuntimeConfig
@@ -49,13 +50,14 @@ def test_checkpoint_config_loads_from_config_properties(tmp_path: Path) -> None:
     class _ConfigFromProperties(RunRuntimeConfig):
         @classmethod
         def settings_customise_sources(
-            cls,
-            settings_cls,
-            init_settings,
-            env_settings,
-            dotenv_settings,
-            file_secret_settings,
-        ):
+            cls: type[BaseSettings],
+            settings_cls: type[BaseSettings],
+            init_settings: PydanticBaseSettingsSource,
+            env_settings: PydanticBaseSettingsSource,
+            dotenv_settings: PydanticBaseSettingsSource,
+            file_secret_settings: PydanticBaseSettingsSource,
+        ) -> tuple[PydanticBaseSettingsSource, ...]:
+            del cls, init_settings, env_settings, dotenv_settings, file_secret_settings
             return (
                 PropertiesFileSettingsSource(
                     settings_cls,
@@ -90,7 +92,7 @@ def test_checkpoint_config_rejects_invalid_values(
     config_key: str,
 ) -> None:
     with pytest.raises(ConfigurationError, match=config_key):
-        RunRuntimeConfig(**{field_name: value})
+        RunRuntimeConfig.model_validate({field_name: value})
 
 
 def test_config_properties_declares_checkpoint_keys() -> None:

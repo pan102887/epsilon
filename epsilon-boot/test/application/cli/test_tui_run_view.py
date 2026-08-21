@@ -7,13 +7,16 @@ from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime
 from io import StringIO
+from typing import cast
 
+import pytest
 from rich.console import Console
 from rich.text import Text
 
+from application.cli.runtime import CliRuntime
 from application.cli.tui import (
+    EpsilonTextualApp,
     TuiApp,
-    _EpsilonTextualApp,
     render_run_event,
     render_run_event_log,
     render_run_snapshot,
@@ -206,10 +209,11 @@ def test_render_run_event_log_includes_cursor_and_type() -> None:
 
 
 def test_message_renderable_omits_box_drawing_separators() -> None:
-    console = Console(file=StringIO(), width=120)
+    buffer = StringIO()
+    console = Console(file=buffer, width=120)
 
-    console.print(_EpsilonTextualApp._message_renderable("Tool", Text("read_file"), "yellow"))
-    rendered = console.file.getvalue()
+    console.print(EpsilonTextualApp.message_renderable("Tool", Text("read_file"), "yellow"))
+    rendered = buffer.getvalue()
 
     assert "Tool" in rendered
     assert "read_file" in rendered
@@ -218,31 +222,30 @@ def test_message_renderable_omits_box_drawing_separators() -> None:
 
 async def test_watch_replay_expired_falls_back_to_snapshot() -> None:
     runtime = FakeRunRuntime(replay_expired=True)
-    app = _EpsilonTextualApp(runtime)  # type: ignore[arg-type]
+    app = EpsilonTextualApp(cast(CliRuntime, runtime))
 
     async with app.run_test(size=(100, 30)) as pilot:
-        app._current_task = asyncio.create_task(app._watch_run("run-1"))
+        app.start_run_watch("run-1")
         for _ in range(20):
             await pilot.pause(0.01)
-            if app._current_task is None:
+            if app.current_task is None:
                 break
 
         assert runtime.watch_calls == [("run-1", 3)]
         assert runtime.get_calls == ["run-1", "run-1"]
-        assert app._active_run_id is None
+        assert app.active_run_id is None
 
 
 async def test_ctrl_c_active_run_requests_cancel_without_cancelling_watch_task() -> None:
     runtime = FakeRunRuntime()
-    app = _EpsilonTextualApp(runtime)  # type: ignore[arg-type]
+    app = EpsilonTextualApp(cast(CliRuntime, runtime))
 
     async def wait_forever() -> None:
         await asyncio.Event().wait()
 
     async with app.run_test(size=(100, 30)) as pilot:
         task = asyncio.create_task(wait_forever())
-        app._current_task = task
-        app._active_run_id = "run-1"
+        app.attach_active_run_task("run-1", task)
 
         app.action_cancel()
         for _ in range(20):
@@ -255,35 +258,37 @@ async def test_ctrl_c_active_run_requests_cancel_without_cancelling_watch_task()
         task.cancel()
 
 
-async def test_tui_wrapper_keeps_textual_mouse_capture_for_scrolling(monkeypatch) -> None:
+async def test_tui_wrapper_keeps_textual_mouse_capture_for_scrolling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, object] = {}
 
-    async def fake_run_async(self: _EpsilonTextualApp, **kwargs: object) -> int:
+    async def fake_run_async(self: EpsilonTextualApp, **kwargs: object) -> int:
         captured.update(kwargs)
         return 0
 
-    monkeypatch.setattr(_EpsilonTextualApp, "run_async", fake_run_async)
+    monkeypatch.setattr(EpsilonTextualApp, "run_async", fake_run_async)
 
-    result = await TuiApp(FakeRunRuntime()).run()  # type: ignore[arg-type]
+    result = await TuiApp(cast(CliRuntime, FakeRunRuntime())).run()
 
     assert result == 0
     assert captured["mouse"] is True
 
 
 async def test_copy_last_assistant_uses_textual_clipboard() -> None:
-    app = _EpsilonTextualApp(FakeRunRuntime())  # type: ignore[arg-type]
-    app._last_assistant_text = "final answer"
+    app = EpsilonTextualApp(cast(CliRuntime, FakeRunRuntime()))
+    app.set_last_assistant_text("final answer")
 
     await app.action_copy_last_assistant()
 
-    assert app._clipboard == "final answer"
+    assert app.clipboard_text == "final answer"
 
 
 async def test_copy_transcript_includes_active_assistant_text() -> None:
-    app = _EpsilonTextualApp(FakeRunRuntime())  # type: ignore[arg-type]
-    app._record_transcript("You", "hello")
-    app._active_assistant_text = "streaming answer"
+    app = EpsilonTextualApp(cast(CliRuntime, FakeRunRuntime()))
+    app.record_transcript("You", "hello")
+    app.set_active_assistant_text("streaming answer")
 
     await app.action_copy_transcript()
 
-    assert app._clipboard == "You:\nhello\n\nAssistant:\nstreaming answer"
+    assert app.clipboard_text == "You:\nhello\n\nAssistant:\nstreaming answer"

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -21,7 +21,7 @@ from domain.agent.guardrails import (
     GuardrailPolicy,
     ToolRiskLevel,
 )
-from domain.agent.tools import Tool, ToolRegistry
+from domain.agent.tools import Tool, ToolExecutionResult, ToolRegistry
 from domain.agent.value_objects import AgentConfig
 from domain.chat.context import ConversationContext
 from domain.chat.value_objects import ContextBuilderResult
@@ -31,6 +31,7 @@ from domain.model_access.value_objects import (
     StreamingChunk,
     ToolCallRequest,
 )
+from domain.model_access.ports import ModelAccessPort
 from domain.run.runtime_context import (
     RunExecutionContext,
     reset_run_execution_context,
@@ -76,7 +77,7 @@ class _FailingTool(Tool):
 
         return ToolRiskLevel.LOW
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
         """抛出固定异常以模拟真实工具失败。"""
 
         raise RuntimeError("boom")
@@ -206,7 +207,7 @@ async def test_p1_runtime_stats_and_cost_are_persisted_in_event_and_summary(
         result = await adapter.run(
             context,
             _config(),
-            _QueueModel(
+            cast(ModelAccessPort, _QueueModel(
                 [
                     LLMResponse(
                         content="",
@@ -223,7 +224,7 @@ async def test_p1_runtime_stats_and_cost_are_persisted_in_event_and_summary(
                         usage={"prompt_tokens": 200, "completion_tokens": 100},
                     ),
                 ]
-            ),
+            )),
         )
     finally:
         reset_run_execution_context(token)
@@ -322,7 +323,7 @@ async def test_p1_recovery_uses_persisted_summary_without_double_counting(tmp_pa
         result = await adapter.run(
             context,
             _config(),
-            _QueueModel(
+            cast(ModelAccessPort, _QueueModel(
                 [
                     LLMResponse(
                         content="done",
@@ -330,7 +331,7 @@ async def test_p1_recovery_uses_persisted_summary_without_double_counting(tmp_pa
                         usage={"prompt_tokens": 10, "completion_tokens": 5},
                     )
                 ]
-            ),
+            )),
         )
     finally:
         reset_run_execution_context(token)

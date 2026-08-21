@@ -33,6 +33,7 @@ from domain.run.workflow import (
     WorkflowRunState,
 )
 from infrastructure.agent.guardrail_serialization import (
+    guardrail_runtime_stats_to_dict,
     guardrail_observation_to_event_payload,
     guardrail_summary_to_dict,
 )
@@ -128,7 +129,7 @@ def test_guardrail_summary_adapter_delegates() -> None:
         approval_request_count=0,
         last_event_cursor=7,
         updated_at="2026-07-06T00:00:00+00:00",
-        runtime_stats=stats,
+        runtime_stats=guardrail_runtime_stats_to_dict(stats),
         stale=True,
         stale_reason="checkpoint_recovery",
     )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -38,12 +39,10 @@ class _MemoryCheckpointStore:
         self.fail_pending = False
 
     async def save_checkpoint(self, checkpoint: DurableCheckpoint) -> DurableCheckpoint:
-        saved = DurableCheckpoint(
-            **{
-                **checkpoint.__dict__,
-                "sequence": len(self.checkpoints) + 1,
-                "checkpoint_id": f"chk_{len(self.checkpoints) + 1:06d}",
-            }
+        saved = replace(
+            checkpoint,
+            sequence=len(self.checkpoints) + 1,
+            checkpoint_id=f"chk_{len(self.checkpoints) + 1:06d}",
         )
         self.checkpoints.append(saved)
         return saved
@@ -80,15 +79,13 @@ class _MemoryCheckpointStore:
         metadata: dict[str, Any],
     ) -> ToolResultLedgerEntry:
         existing = self.ledger[tool_execution_key]
-        completed = ToolResultLedgerEntry(
-            **{
-                **existing.__dict__,
-                "status": ToolLedgerStatus.ERROR if is_error else ToolLedgerStatus.COMPLETED,
-                "result": result,
-                "is_error": is_error,
-                "metadata": metadata,
-                "updated_at": _NOW,
-            }
+        completed = replace(
+            existing,
+            status=ToolLedgerStatus.ERROR if is_error else ToolLedgerStatus.COMPLETED,
+            result=result,
+            is_error=is_error,
+            metadata=metadata,
+            updated_at=_NOW,
         )
         self.ledger[tool_execution_key] = completed
         return completed
@@ -348,8 +345,9 @@ async def test_after_tool_call_records_truncated_tool_result() -> None:
         reset_run_checkpoint_context(token)
 
     assert "tool_result" in checkpoint.truncated_fields
-    assert store.ledger[key].result is not None
-    assert len(store.ledger[key].result) < 1000
+    stored_result = store.ledger[key].result
+    assert stored_result is not None
+    assert len(stored_result) < 1000
 
 
 @pytest.mark.asyncio

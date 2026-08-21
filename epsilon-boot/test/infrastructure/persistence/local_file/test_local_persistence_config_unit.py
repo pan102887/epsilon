@@ -5,6 +5,7 @@
 """
 
 import pytest
+from pathlib import Path
 from pydantic import ValidationError
 
 from infrastructure.persistence.local_file.config.backend_config import (
@@ -39,7 +40,10 @@ def test_local_persistence_config_env_override(monkeypatch: pytest.MonkeyPatch):
     assert cfg.fsync_on_write is False
 
 
-def test_local_persistence_config_root_env_override(monkeypatch: pytest.MonkeyPatch, tmp_path):
+def test_local_persistence_config_root_env_override(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     """``LOCAL_PERSISTENCE_ROOT`` 支持从环境变量注入绝对路径。"""
     monkeypatch.setenv("LOCAL_PERSISTENCE_ROOT", str(tmp_path))
     cfg = LocalPersistenceConfig()

@@ -17,7 +17,7 @@ from domain.model_access.exceptions import InvalidToolCallIdError
 @pytest.fixture(autouse=True)
 def force_raise_strategy(monkeypatch: pytest.MonkeyPatch) -> None:
     """模块级 _HISTORY_RESTORE_STRATEGY 强制为 'raise'。"""
-    monkeypatch.setattr(ctx_module, "_HISTORY_RESTORE_STRATEGY", "raise")
+    monkeypatch.setattr(ctx_module, "history_restore_strategy", "raise")
 
 
 def test_t10_raise_strategy_raises_invalid_tool_call_id_error() -> None:

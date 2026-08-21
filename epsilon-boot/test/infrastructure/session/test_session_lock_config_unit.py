@@ -5,7 +5,7 @@ import pytest
 from common.configuration import ConfigurationError
 
 
-def test_default_value_is_three():
+def test_default_value_is_three() -> None:
     """默认 conflict_retry_max 为 3。"""
     from infrastructure.session.session_lock_config import SessionLockConfig
 
@@ -13,7 +13,7 @@ def test_default_value_is_three():
     assert config.conflict_retry_max == 3
 
 
-def test_negative_value_raises_configuration_error(monkeypatch):
+def test_negative_value_raises_configuration_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """conflict_retry_max < 0 时启动校验失败。"""
     monkeypatch.setenv("SESSION_REDIS_CONFLICT_RETRY_MAX", "-1")
     from infrastructure.session.session_lock_config import SessionLockConfig
@@ -22,7 +22,7 @@ def test_negative_value_raises_configuration_error(monkeypatch):
         SessionLockConfig()
 
 
-def test_zero_value_is_valid(monkeypatch):
+def test_zero_value_is_valid(monkeypatch: pytest.MonkeyPatch) -> None:
     """conflict_retry_max == 0 合法（表示不重试）。"""
     monkeypatch.setenv("SESSION_REDIS_CONFLICT_RETRY_MAX", "0")
     from infrastructure.session.session_lock_config import SessionLockConfig
@@ -31,7 +31,7 @@ def test_zero_value_is_valid(monkeypatch):
     assert config.conflict_retry_max == 0
 
 
-def test_custom_value_loaded(monkeypatch):
+def test_custom_value_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
     """可通过环境变量自定义值。"""
     monkeypatch.setenv("SESSION_REDIS_CONFLICT_RETRY_MAX", "5")
     from infrastructure.session.session_lock_config import SessionLockConfig

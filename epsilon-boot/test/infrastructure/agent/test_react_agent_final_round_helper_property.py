@@ -18,9 +18,10 @@ import pytest
 from hypothesis import given, settings
 
 from domain.agent.tools import ToolExecutionResult
-from domain.agent.value_objects import AgentConfig
-from domain.chat.context import ConversationContext
+from domain.agent.value_objects import AgentConfig, AgentStreamEvent
+from domain.chat.context import BaseMessage, ConversationContext
 from domain.chat.value_objects import ContextBuilderResult
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import (
     ChatRequest,
     LLMResponse,
@@ -33,7 +34,13 @@ from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 class _FakeContextBuilder:
     """测试用上下文构建器(空 builder usage,聚焦 stream 路径)。"""
 
-    async def build(self, messages, **kwargs) -> ContextBuilderResult:
+    async def build(
+        self,
+        messages: list[BaseMessage],
+        *,
+        model_access: ModelAccessPort | None = None,
+        model: str | None = None,
+    ) -> ContextBuilderResult:
         return ContextBuilderResult(
             messages=messages,
             usage={},
@@ -69,6 +76,9 @@ class _FakeModel:
         for chunk in self._stream_chunks:
             yield chunk
 
+    def count_tokens(self, messages: list[BaseMessage]) -> int:
+        return 0
+
 
 def _make_adapter() -> ReActAgentAdapter:
     tool_registry = MagicMock()
@@ -102,7 +112,7 @@ final_chunk_usage_st = st.fixed_dictionaries(
 
 
 @st.composite
-def stream_chunk_seq_st(draw) -> list[StreamingChunk]:
+def stream_chunk_seq_st(draw: st.DrawFn) -> list[StreamingChunk]:
     """构造一个非空的 stream 分片序列,最后一个 finished=True。"""
     n = draw(st.integers(min_value=1, max_value=4))
     chunks: list[StreamingChunk] = []
@@ -139,7 +149,7 @@ async def test_run_streaming_max_rounds_one_deterministic(
     model_a = _FakeModel(chat_responses=[], stream_chunks=list(stream_chunks))
     ctx_a = ConversationContext()
     ctx_a.add_user_message("hi")
-    chunks_a = []
+    chunks_a: list[StreamingChunk] = []
     async for chunk in adapter_a.run_streaming(ctx_a, _make_config(max_rounds=1), model_a):
         chunks_a.append(chunk)
 
@@ -147,7 +157,7 @@ async def test_run_streaming_max_rounds_one_deterministic(
     model_b = _FakeModel(chat_responses=[], stream_chunks=list(stream_chunks))
     ctx_b = ConversationContext()
     ctx_b.add_user_message("hi")
-    chunks_b = []
+    chunks_b: list[StreamingChunk] = []
     async for chunk in adapter_b.run_streaming(ctx_b, _make_config(max_rounds=1), model_b):
         chunks_b.append(chunk)
 
@@ -161,7 +171,7 @@ async def test_run_streaming_max_rounds_one_deterministic(
 
     assert fa.delta_content == fb.delta_content
     assert dict(fa.metadata) == dict(fb.metadata)
-    assert dict(fa.usage) == dict(fb.usage)
+    assert dict(fa.usage or {}) == dict(fb.usage or {})
 
 
 @settings(max_examples=20, deadline=None)
@@ -175,7 +185,7 @@ async def test_run_events_max_rounds_one_deterministic(
     model_a = _FakeModel(chat_responses=[], stream_chunks=list(stream_chunks))
     ctx_a = ConversationContext()
     ctx_a.add_user_message("hi")
-    events_a = []
+    events_a: list[AgentStreamEvent] = []
     async for ev in adapter_a.run_events(ctx_a, _make_config(max_rounds=1), model_a):
         events_a.append(ev)
 
@@ -183,7 +193,7 @@ async def test_run_events_max_rounds_one_deterministic(
     model_b = _FakeModel(chat_responses=[], stream_chunks=list(stream_chunks))
     ctx_b = ConversationContext()
     ctx_b.add_user_message("hi")
-    events_b = []
+    events_b: list[AgentStreamEvent] = []
     async for ev in adapter_b.run_events(ctx_b, _make_config(max_rounds=1), model_b):
         events_b.append(ev)
 
@@ -226,7 +236,7 @@ async def test_run_streaming_max_rounds_hit_skips_stream(
     model = _FakeModel(chat_responses=chat_responses, stream_chunks=list(stream_chunks))
     ctx = ConversationContext()
     ctx.add_user_message("hi")
-    chunks = []
+    chunks: list[StreamingChunk] = []
     async for chunk in adapter.run_streaming(
         ctx, _make_config(max_rounds=middle_rounds + 1), model
     ):

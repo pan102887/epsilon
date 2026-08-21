@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from types import TracebackType
+from typing import Any
 
 import pytest
 import redis.asyncio as aioredis
@@ -27,35 +30,40 @@ pytestmark = pytest.mark.asyncio
 class _ConflictOncePipelineContext:
     """在首次 execute 时注入 WatchError 的 pipeline 包装器。"""
 
-    def __init__(self, delegate, *, conflict_state: dict[str, bool]) -> None:
+    def __init__(self, delegate: Any, *, conflict_state: dict[str, bool]) -> None:
         """初始化冲突注入包装器。"""
 
         self._delegate = delegate
         self._conflict_state = conflict_state
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Any:
         """进入底层 pipeline 上下文并包装 execute。"""
 
         pipe = await self._delegate.__aenter__()
         original_execute = pipe.execute
 
-        async def execute(*args, **kwargs):
+        async def execute(*args: Any, **kwargs: Any) -> Any:
             if not self._conflict_state["raised"]:
                 self._conflict_state["raised"] = True
                 raise aioredis.WatchError("conflict")
             return await original_execute(*args, **kwargs)
 
-        pipe.execute = execute  # type: ignore[method-assign]
+        pipe.execute = execute
         return pipe
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool | None:
         """退出底层 pipeline 上下文。"""
 
         return await self._delegate.__aexit__(exc_type, exc, tb)
 
 
 @pytest.fixture
-async def store() -> RedisRunStoreAdapter:
+async def store() -> AsyncIterator[RedisRunStoreAdapter]:
     """构造 fakeredis Run store。"""
 
     client = fakeredis.FakeRedis()
@@ -126,6 +134,7 @@ async def test_record_runtime_observation_updates_event_cursor_and_summary_atomi
         "last_event_cursor": 1,
         "metadata": {"tool_name": "shell_exec"},
     }
+    assert loaded.guardrail_summary is not None
     assert (
         event.cursor
         == snapshot.latest_event_cursor
@@ -263,6 +272,7 @@ async def test_approval_resume_lease_allows_guardrail_observation_on_awaiting_ru
 
     assert leased.lease is not None
     assert leased.lease.owner_id == "approval-resume-a"
+    assert snapshot.guardrail_summary is not None
     assert event.cursor == snapshot.guardrail_summary["last_event_cursor"]
     assert snapshot.guardrail_summary["blocked_count"] == 2
 
@@ -456,16 +466,16 @@ async def test_record_runtime_observation_retries_after_watch_conflict(
     claimed = await store.claim_next(owner_id="owner-a", lease_seconds=60)
     assert claimed is not None
 
-    original_pipeline = store._redis.pipeline
+    original_pipeline = store.redis_client.pipeline
     conflict_state = {"raised": False}
 
-    def pipeline_with_conflict(*args, **kwargs):
+    def pipeline_with_conflict(*args: Any, **kwargs: Any) -> _ConflictOncePipelineContext:
         return _ConflictOncePipelineContext(
             original_pipeline(*args, **kwargs),
             conflict_state=conflict_state,
         )
 
-    monkeypatch.setattr(store._redis, "pipeline", pipeline_with_conflict)
+    monkeypatch.setattr(store.redis_client, "pipeline", pipeline_with_conflict)
 
     snapshot, event = await store.record_runtime_observation(
         run_id=created.run_id,
@@ -475,7 +485,7 @@ async def test_record_runtime_observation_retries_after_watch_conflict(
         guardrail_summary={"action": "observe", "last_event_cursor": 999},
     )
 
-    monkeypatch.setattr(store._redis, "pipeline", original_pipeline)
+    monkeypatch.setattr(store.redis_client, "pipeline", original_pipeline)
     loaded = await store.get_run(created.run_id)
     events = await store.list_events(created.run_id, after_cursor=None, limit=10)
 
@@ -494,17 +504,20 @@ async def test_snapshot_deserialization_maps_legacy_recent_steps_without_rewriti
     """历史 snapshot 仅含 recent_steps 时读取结果应归一为 latest_steps。"""
 
     created = await store.create_run(_request())
-    key = store._snapshot_key(created.run_id)
-    raw = await store._redis.get(key)
+    key = store.snapshot_key(created.run_id)
+    raw = await store.redis_client.get(key)
+    assert raw is not None
     data = json.loads(raw)
     data["collaboration_summary"] = {
         "recent_steps": [{"link_id": "legacy-only", "action": "delegation"}],
         "delegation_count": 1,
     }
-    await store._redis.set(key, json.dumps(data))
+    await store.redis_client.set(key, json.dumps(data))
 
     loaded = await store.get_run(created.run_id)
-    persisted = json.loads(await store._redis.get(key))  # type: ignore[arg-type]
+    persisted_raw = await store.redis_client.get(key)
+    assert persisted_raw is not None
+    persisted = json.loads(persisted_raw)
 
     assert loaded is not None
     assert loaded.status is RunStatus.QUEUED

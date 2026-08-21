@@ -6,6 +6,7 @@
 """
 
 from dataclasses import FrozenInstanceError
+from typing import Any
 
 import hypothesis.strategies as st
 import pytest
@@ -17,7 +18,9 @@ from domain.agent.value_objects import AgentConfig, AgentResult
 
 # AgentConfig 策略
 system_prompt_st = st.text()
-tool_schemas_st = st.lists(st.fixed_dictionaries({"name": st.text(min_size=1, max_size=10)}))
+tool_schemas_st: st.SearchStrategy[list[dict[str, Any]]] = st.lists(
+    st.fixed_dictionaries({"name": st.text(min_size=1, max_size=10)})
+)
 model_st = st.none() | st.text(min_size=1)
 max_rounds_st = st.integers(min_value=1, max_value=100)
 
@@ -44,7 +47,7 @@ latency_ms_st = st.floats(min_value=0.0, max_value=100000.0, allow_nan=False, al
 )
 def test_agent_config_construction_preserves_fields(
     system_prompt: str,
-    tool_schemas: list[dict],
+    tool_schemas: list[dict[str, Any]],
     model: str | None,
     max_rounds: int,
 ) -> None:
@@ -79,7 +82,7 @@ def test_agent_config_construction_preserves_fields(
 )
 def test_agent_config_is_frozen(
     system_prompt: str,
-    tool_schemas: list[dict],
+    tool_schemas: list[dict[str, Any]],
     model: str | None,
     max_rounds: int,
 ) -> None:

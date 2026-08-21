@@ -17,6 +17,7 @@ import io
 import logging
 import logging.config
 import re
+from typing import Any
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -41,7 +42,7 @@ exception_messages = st.text(
 # ---------------------------------------------------------------------------
 
 
-def _build_custom_uvicorn_log_config() -> dict:
+def _build_custom_uvicorn_log_config() -> dict[str, Any]:
     """构建与 main.py 中 UVICORN_LOG_CONFIG 一致的自定义日志配置字典。
 
     此函数返回的配置字典与 main.py 的 main() 函数中定义的
@@ -126,7 +127,7 @@ def _setup_uvicorn_worker_logging_env() -> tuple[logging.Logger, io.StringIO]:
     # 2) 注入 OTel record factory（模拟 application 模块导入时的副作用）
     original_factory = logging.getLogRecordFactory()
 
-    def _otel_record_factory(*args, **kwargs):
+    def _otel_record_factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
         """创建带有 OTel 默认字段的 LogRecord。"""
         record = original_factory(*args, **kwargs)
         if not hasattr(record, "otelTraceID"):

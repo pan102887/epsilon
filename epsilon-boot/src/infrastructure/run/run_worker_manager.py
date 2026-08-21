@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from domain.run.ports import RunEventStorePort, RunStorePort
 from domain.run.value_objects import RunEventType, RunStatus
 from infrastructure.run.run_config import RunRuntimeConfig
-from infrastructure.run.run_worker import RunWorker, _run_log_extra
+from infrastructure.run.run_worker import RunWorker, run_log_extra
 from infrastructure.run.worker_contracts import (
     RunRecoverySweep,
     RunRuntimeMetricsSink,
@@ -162,7 +162,7 @@ class RunWorkerManager:
             )
             logger.warning(
                 "Run marked lost by lease sweep",
-                extra=_run_log_extra(
+                extra=run_log_extra(
                     snapshot,
                     worker_id=self._owner_prefix,
                     terminal_reason=snapshot.terminal_reason or "lease_expired",

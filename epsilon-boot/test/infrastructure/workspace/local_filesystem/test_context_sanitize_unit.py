@@ -28,8 +28,8 @@ from domain.workspace.exceptions import (
 )
 from domain.workspace.value_objects import WorkspacePath
 from infrastructure.workspace.local_filesystem.local_workspace import (
-    _LOG_CONTEXT_WHITELIST,
-    _sanitize_context,
+    LOG_CONTEXT_WHITELIST,
+    sanitize_context,
 )
 
 
@@ -38,24 +38,24 @@ class TestSanitizeContextWhitelist:
 
     def test_none_returns_empty_dict(self) -> None:
         """``None`` → ``{}``（容忍 optional 参数）。"""
-        assert _sanitize_context(None) == {}
+        assert sanitize_context(None) == {}
 
     def test_empty_dict_returns_empty_dict(self) -> None:
         """空 dict → ``{}``。"""
-        assert _sanitize_context({}) == {}
+        assert sanitize_context({}) == {}
 
     def test_single_whitelisted_key_preserved(self) -> None:
         """单个白名单键保留。"""
-        assert _sanitize_context({"tool_name": "read_file"}) == {"tool_name": "read_file"}
+        assert sanitize_context({"tool_name": "read_file"}) == {"tool_name": "read_file"}
 
     def test_all_three_whitelisted_keys_preserved(self) -> None:
         """三个白名单键全保留。"""
         inp = {"tool_name": "read_file", "trace_id": "t1", "agent_id": "a1"}
-        assert _sanitize_context(inp) == inp
+        assert sanitize_context(inp) == inp
 
     def test_unknown_keys_filtered_out(self) -> None:
         """白名单之外的键（含疑似敏感的 ``secret`` / ``password``）全部过滤。"""
-        out = _sanitize_context(
+        out = sanitize_context(
             {
                 "tool_name": "read_file",
                 "secret": "xxx",
@@ -67,11 +67,11 @@ class TestSanitizeContextWhitelist:
 
     def test_only_unknown_keys_returns_empty(self) -> None:
         """只含未知键 → ``{}``。"""
-        assert _sanitize_context({"unknown_key": "value", "foo": "bar"}) == {}
+        assert sanitize_context({"unknown_key": "value", "foo": "bar"}) == {}
 
     def test_whitelist_exact_members(self) -> None:
         """白名单集合与 design §组件与接口 2 / 需求 8.1 声明一致。"""
-        assert frozenset({"tool_name", "trace_id", "agent_id"}) == _LOG_CONTEXT_WHITELIST
+        assert frozenset({"tool_name", "trace_id", "agent_id"}) == LOG_CONTEXT_WHITELIST
 
 
 class TestDomainErrorsHaveNoContextField:

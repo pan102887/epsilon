@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Collection
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -18,7 +18,7 @@ from domain.run.exceptions import (
     RunUnknownWorkflowError,
 )
 from domain.run.outcome import RunExecutionOutcome
-from domain.run.ports import ApprovalResumeStoreResult
+from domain.run.ports import ApprovalResumeStoreResult, RunProgressSink, RunStorePort
 from domain.run.value_objects import (
     EventRetentionPolicy,
     RunCapacityPolicy,
@@ -391,7 +391,11 @@ class _WorkflowCoordinator:
             now=_Clock(),
         )
 
-    async def execute(self, snapshot: RunSnapshot, progress) -> RunExecutionOutcome:
+    async def execute(
+        self,
+        snapshot: RunSnapshot,
+        progress: RunProgressSink,
+    ) -> RunExecutionOutcome:
         self.calls.append(snapshot)
 
         async def execute_existing(current_snapshot: RunSnapshot) -> RunExecutionOutcome:
@@ -426,7 +430,7 @@ def _fixture(outcomes: list[RunExecutionOutcome]):
     store = _MemoryRunStore()
     events = _MemoryEventStore(store)
     service = RunApplicationService(
-        run_store=store,
+        run_store=cast(RunStorePort, store),
         event_store=events,
         capacity_policy=RunCapacityPolicy(max_queued_runs=10, max_running_runs=10),
         event_retention_policy=EventRetentionPolicy(max_event_count=100, ttl_seconds=3600),
@@ -439,7 +443,7 @@ def _fixture(outcomes: list[RunExecutionOutcome]):
         outcomes=outcomes,
     )
     worker = RunWorker(
-        run_store=store,
+        run_store=cast(RunStorePort, store),
         event_store=events,
         executor=coordinator,  # type: ignore[arg-type]
         lease_seconds=60,
@@ -456,7 +460,7 @@ def _service_with_classifier():
     store = _MemoryRunStore()
     events = _MemoryEventStore(store)
     service = RunApplicationService(
-        run_store=store,
+        run_store=cast(RunStorePort, store),
         event_store=events,
         capacity_policy=RunCapacityPolicy(max_queued_runs=10, max_running_runs=10),
         event_retention_policy=EventRetentionPolicy(max_event_count=100, ttl_seconds=3600),
@@ -521,7 +525,11 @@ async def test_create_worker_continue_advances_workflow_phases() -> None:
         "plan",
         "execute",
     ]
-    assert [snapshot.workflow_run_state["current_phase"] for snapshot in coordinator.calls] == [
+    call_phases: list[object] = []
+    for snapshot in coordinator.calls:
+        assert snapshot.workflow_run_state is not None
+        call_phases.append(snapshot.workflow_run_state["current_phase"])
+    assert call_phases == [
         "plan",
         "execute",
     ]

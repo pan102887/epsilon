@@ -8,12 +8,14 @@ import pytest
 
 from domain.agent.segmented_execution import SegmentExecutionPolicy
 from domain.agent.value_objects import (
+    AgentConfig,
     AgentResult,
     ApprovalRequiredPayload,
     PendingActionRequest,
 )
 from domain.chat.context import ConversationContext, ToolMessage, UserMessage
 from domain.chat.value_objects import ChatContinueRequestVO, ChatRequestVO
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import ToolCallRequest
 from domain.prompt.value_objects import LoadedPrompt
 from infrastructure.chat.chat_service_adapter import ChatServiceAdapter
@@ -85,7 +87,11 @@ async def test_segmented_chat_auto_disabled_returns_paused_metadata() -> None:
     """自动续跑关闭时首段暂停，并用 auto_disabled 标记停止原因。"""
     context = ConversationContext()
 
-    async def run(ctx, config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         assert config.max_rounds == 4
         _append_tool_tail(ctx)
         return AgentResult(
@@ -116,7 +122,11 @@ async def test_segmented_chat_auto_continue_completes_without_new_user_message()
     observed_user_counts: list[int] = []
     observed_max_rounds: list[int] = []
 
-    async def run(ctx, config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         observed_user_counts.append(
             sum(isinstance(message, UserMessage) for message in ctx.get_messages())
         )
@@ -166,7 +176,11 @@ async def test_segmented_continue_auto_continue_completes_without_new_user_messa
     _append_tool_tail(context)
     observed_user_counts: list[int] = []
 
-    async def run(ctx, _config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         observed_user_counts.append(
             sum(isinstance(message, UserMessage) for message in ctx.get_messages())
         )
@@ -209,7 +223,11 @@ async def test_segmented_chat_stops_on_max_continuations() -> None:
     """自动续跑次数达到策略上限时返回 max_continuations_reached。"""
     context = ConversationContext()
 
-    async def run(ctx, _config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         _append_tool_tail(ctx, call_id=f"call-{agent.run.await_count + 1}")
         return AgentResult(
             content="",
@@ -240,7 +258,11 @@ async def test_segmented_chat_stops_on_total_token_budget() -> None:
     """累计 token 达到预算时不再自动续跑。"""
     context = ConversationContext()
 
-    async def run(ctx, _config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         _append_tool_tail(ctx)
         return AgentResult(
             content="",
@@ -323,7 +345,11 @@ async def test_segmented_chat_stops_on_guardrail_stop_metadata() -> None:
     """guardrail stop 写入稳定 metadata 时分段门禁应阻止自动续跑。"""
     context = ConversationContext()
 
-    async def run(ctx, _config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         _append_tool_tail(ctx)
         tool_message = ctx.get_messages()[-1]
         assert isinstance(tool_message, ToolMessage)

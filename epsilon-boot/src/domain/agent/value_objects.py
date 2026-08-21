@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from domain.agent.exceptions import InvalidApprovalActionError
 
@@ -25,6 +25,14 @@ _PROMPT_ID_PATTERN = re.compile(r"^[a-z][a-z0-9\-]*@v[1-9]\d*$")
 用于 :class:`AgentConfig` 与 :class:`NamedAgentConfig` 的 ``__post_init__``
 校验，保持与 ``domain/prompt/value_objects.py`` 中同名常量语义一致。
 """
+
+
+def _int_dict() -> dict[str, int]:
+    return {}
+
+
+def _any_dict() -> dict[str, Any]:
+    return {}
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -185,15 +193,18 @@ class ApprovalInterruptSummary:
             raise ValueError("action_count 必须为 int")
         if self.action_count < 0:
             raise ValueError("action_count 必须为非负整数")
-        if isinstance(self.created_at_epoch, bool) or not isinstance(
-            self.created_at_epoch, (int, float)
+        created_at_epoch = cast(object, self.created_at_epoch)
+        if isinstance(created_at_epoch, bool) or not isinstance(
+            created_at_epoch, (int, float)
         ):
             raise ValueError("created_at_epoch 必须为数字")
-        if isinstance(self.expires_at_epoch, bool) or not isinstance(
-            self.expires_at_epoch, (int, float)
+        expires_at_epoch = cast(object, self.expires_at_epoch)
+        if isinstance(expires_at_epoch, bool) or not isinstance(
+            expires_at_epoch, (int, float)
         ):
             raise ValueError("expires_at_epoch 必须为数字")
-        if not isinstance(self.expired, bool):
+        expired = cast(object, self.expired)
+        if not isinstance(expired, bool):
             raise ValueError("expired 必须为 bool")
 
 
@@ -319,10 +330,10 @@ class ApprovalInterrupt:
     context_snapshot: dict[str, Any]
     round_num: int
     model: str
-    usage_so_far: dict[str, int] = field(default_factory=dict)
+    usage_so_far: dict[str, int] = field(default_factory=_int_dict)
     created_at_epoch: float = 0.0
     expires_at_epoch: float = 0.0
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=_any_dict)
 
     def is_expired(self, now_epoch: float) -> bool:
         """判断审批中断在给定时间点是否已过期。
@@ -353,7 +364,7 @@ class ApprovalRequiredPayload:
     approval_id: str
     actions: tuple[PendingActionRequest, ...]
     prompt_id: str
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=_any_dict)
 
 
 @dataclass(frozen=True)
@@ -399,7 +410,7 @@ class AgentResult:
 
     content: str
     model: str
-    usage: dict[str, int] = field(default_factory=dict)
+    usage: dict[str, int] = field(default_factory=_int_dict)
     latency_ms: float = 0.0
     status: AgentRunStatus = "completed"
     approval: ApprovalRequiredPayload | None = None
@@ -444,7 +455,7 @@ class AgentStreamEvent:
     tool_call_id: str | None = None
     arguments: str | None = None
     usage: dict[str, int] | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=_any_dict)
 
 
 @dataclass(frozen=True)
@@ -523,7 +534,7 @@ class DelegationRequest:
 
     agent_name: str
     task_goal: str
-    input_data: dict[str, Any] = field(default_factory=dict)
+    input_data: dict[str, Any] = field(default_factory=_any_dict)
 
 
 @dataclass(frozen=True)
@@ -546,5 +557,5 @@ class HandoffResult:
     target_agent: str
     content: str
     success: bool
-    usage: dict[str, int] = field(default_factory=dict)
+    usage: dict[str, int] = field(default_factory=_int_dict)
     model: str = ""

@@ -20,15 +20,23 @@ import pytest
 
 from domain.agent.tools import ToolExecutionResult
 from domain.agent.value_objects import AgentConfig
-from domain.chat.context import ConversationContext
+from domain.chat.context import BaseMessage, ConversationContext
 from domain.chat.value_objects import ContextBuilderResult
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import LLMResponse, ToolCallRequest
 from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 from test.infrastructure.agent._v3_stream_helpers import install_stream_mock
 
 
 class _FakeContextBuilder:
-    async def build(self, messages, **kwargs) -> ContextBuilderResult:
+    async def build(
+        self,
+        messages: list[BaseMessage],
+        *,
+        model_access: ModelAccessPort | None = None,
+        model: str | None = None,
+    ) -> ContextBuilderResult:
+        del model_access, model
         return ContextBuilderResult(
             messages=messages,
             usage={},
@@ -50,7 +58,7 @@ def _adapter() -> ReActAgentAdapter:
     tool_registry.execute = AsyncMock(return_value=ToolExecutionResult(content="ok"))
     return ReActAgentAdapter(
         tool_registry=tool_registry,
-        context_builder=_FakeContextBuilder(),  # type: ignore[arg-type]
+        context_builder=_FakeContextBuilder(),
     )
 
 
@@ -75,8 +83,8 @@ async def test_terminal_round_zero_returns_without_assert_error() -> None:
     install_stream_mock(model, [])
 
     # 直接消费 _iter_rounds，传 terminal_round=0
-    outcomes = []
-    async for outcome in adapter._iter_rounds(
+    outcomes: list[object] = []
+    async for outcome in adapter.iter_rounds(
         context, _config(max_rounds=1), model, terminal_round=0
     ):
         outcomes.append(outcome)
@@ -120,9 +128,9 @@ async def test_assertion_error_when_caller_skips_tool_writeback() -> None:
     install_stream_mock(model, [_tool_response(), _tool_response()])
 
     context = ConversationContext()
-    gen = adapter._iter_rounds(context, _config(max_rounds=2), model)
+    gen = adapter.iter_rounds(context, _config(max_rounds=2), model)
 
-    outcomes = []
+    outcomes: list[object] = []
     with pytest.raises(AssertionError):
         async for outcome in gen:
             outcomes.append(outcome)

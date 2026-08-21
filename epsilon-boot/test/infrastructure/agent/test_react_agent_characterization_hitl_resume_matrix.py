@@ -41,8 +41,8 @@ from test.infrastructure.agent.test_react_agent_hitl_unit import (
     FakeModel,
     MemoryApprovalStore,
     RecordingTool,
-    _adapter,
-    _config,
+    hitl_adapter,
+    hitl_config,
 )
 
 
@@ -56,11 +56,14 @@ def _seed_context_with_pending_tool_call() -> ConversationContext:
     context = ConversationContext()
     context.add_system_message("system")
     context.add_user_message("write")
-    context._messages.append(
-        AssistantMessage(
-            content="",
-            tool_calls=[ToolCallRequest("call-1", "write_file", '{"path":"a.txt"}')],
-        )
+    context.replace_messages(
+        [
+            *context.get_messages(),
+            AssistantMessage(
+                content="",
+                tool_calls=[ToolCallRequest("call-1", "write_file", '{"path":"a.txt"}')],
+            ),
+        ]
     )
     return context
 
@@ -101,14 +104,14 @@ async def test_resume_edit_executes_with_edited_arguments() -> None:
     """
     store = MemoryApprovalStore()
     tool = RecordingTool()
-    adapter = _adapter(store, tool)
+    adapter = hitl_adapter(store, tool)
     context = _seed_context_with_pending_tool_call()
     interrupt = _interrupt(context)
     model = FakeModel([LLMResponse(content="done", model="gpt-test", usage={"total_tokens": 3})])
 
     result = await adapter.resume(
         context,
-        _config(),
+        hitl_config(),
         model,  # type: ignore[arg-type]
         interrupt,
         (
@@ -135,7 +138,7 @@ async def test_resume_decision_count_mismatch_raises() -> None:
     """
     store = MemoryApprovalStore()
     tool = RecordingTool()
-    adapter = _adapter(store, tool)
+    adapter = hitl_adapter(store, tool)
     context = _seed_context_with_pending_tool_call()
     interrupt = _interrupt(context)
     model = FakeModel([LLMResponse(content="done", model="gpt-test")])
@@ -143,7 +146,7 @@ async def test_resume_decision_count_mismatch_raises() -> None:
     with pytest.raises(ApprovalDecisionCountMismatchError) as exc_info:
         await adapter.resume(
             context,
-            _config(),
+            hitl_config(),
             model,  # type: ignore[arg-type]
             interrupt,
             (),
@@ -165,7 +168,7 @@ async def test_resume_decision_order_mismatch_raises() -> None:
     """
     store = MemoryApprovalStore()
     tool = RecordingTool()
-    adapter = _adapter(store, tool)
+    adapter = hitl_adapter(store, tool)
     context = _seed_context_with_pending_tool_call()
     interrupt = _interrupt(context)
     model = FakeModel([LLMResponse(content="done", model="gpt-test")])
@@ -173,7 +176,7 @@ async def test_resume_decision_order_mismatch_raises() -> None:
     with pytest.raises(ApprovalDecisionOrderMismatchError) as exc_info:
         await adapter.resume(
             context,
-            _config(),
+            hitl_config(),
             model,  # type: ignore[arg-type]
             interrupt,
             (ApprovalDecision("approve", "call-2"),),
@@ -197,7 +200,7 @@ async def test_resume_policy_reapproval_returns_approval_required() -> None:
     """
     store = MemoryApprovalStore()
     tool = RecordingTool()
-    adapter = _adapter(store, tool)
+    adapter = hitl_adapter(store, tool)
     context = _seed_context_with_pending_tool_call()
     interrupt = _interrupt(context)
     model = FakeModel(
@@ -213,7 +216,7 @@ async def test_resume_policy_reapproval_returns_approval_required() -> None:
 
     result = await adapter.resume(
         context,
-        _config(),
+        hitl_config(),
         model,  # type: ignore[arg-type]
         interrupt,
         (ApprovalDecision("approve", "call-1"),),

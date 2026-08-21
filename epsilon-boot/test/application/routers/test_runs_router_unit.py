@@ -9,9 +9,11 @@ import pathlib
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import Any, Protocol, cast
 from unittest.mock import AsyncMock
 
 import pytest
+from starlette.responses import Response
 
 from domain.run.exceptions import (
     RunCancelUnavailableError,
@@ -35,7 +37,7 @@ from domain.run.value_objects import (
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-def _load_runs_module():
+def _load_runs_module() -> Any:
     """直接加载兼容 Run 路由模块。"""
 
     runs_path = (
@@ -45,6 +47,8 @@ def _load_runs_module():
         "test_runs_router_module",
         str(runs_path),
     )
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -99,12 +103,16 @@ def _event(cursor: int, event_type: RunEventType) -> RunEvent:
     )
 
 
-def _json_response_body(response) -> dict[str, object]:
+def _json_response_body(response: Response) -> dict[str, object]:
     """解析 JSONResponse body。"""
-    return json.loads(response.body)
+    return cast(dict[str, object], json.loads(bytes(response.body)))
 
 
-async def _sse_text(response) -> str:
+class _SseResponse(Protocol):
+    body_iterator: AsyncIterator[dict[str, object] | bytes | str]
+
+
+async def _sse_text(response: _SseResponse) -> str:
     """读取 EventSourceResponse 的文本内容。"""
     parts: list[str] = []
     async for item in response.body_iterator:
@@ -407,7 +415,7 @@ def test_runs_router_does_not_import_run_infrastructure() -> None:
         / "runs.py"
     )
     tree = ast.parse(router_path.read_text(encoding="utf-8"))
-    imports = set()
+    imports: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             imports.update(alias.name for alias in node.names)

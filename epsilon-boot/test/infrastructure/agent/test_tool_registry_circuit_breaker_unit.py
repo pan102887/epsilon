@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from domain.agent.exceptions import ToolCircuitOpenError, ToolExecutionError
-from domain.agent.tools import Tool, ToolRegistry
+from domain.agent.tools import Tool, ToolExecutionResult, ToolRegistry
 from domain.model_access.value_objects import ToolCallRequest
 from infrastructure.agent.circuit_breaker import ToolCircuitBreaker
 
@@ -34,10 +34,10 @@ class _FakeTool(Tool):
     def parameters(self) -> dict[str, Any]:
         return {"type": "object", "properties": {}}
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
         if self._fail:
             raise RuntimeError("tool broken")
-        return "ok"
+        return ToolExecutionResult(content="ok")
 
 
 def _make_request(tool_name: str) -> ToolCallRequest:

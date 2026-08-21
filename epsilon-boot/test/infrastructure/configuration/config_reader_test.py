@@ -63,27 +63,27 @@ class TestDefaultValues:
 class TestEnvOverride:
     """环境变量覆盖测试：环境变量应优先于默认值。"""
 
-    def test_env_overrides_string(self, monkeypatch):
+    def test_env_overrides_string(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TEST_SERVER_HOST", "192.168.1.1")
         config = _ServerConfig()
         assert config.host == "192.168.1.1"
 
-    def test_env_overrides_int(self, monkeypatch):
+    def test_env_overrides_int(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TEST_SERVER_PORT", "9090")
         config = _ServerConfig()
         assert config.port == 9090
 
-    def test_env_overrides_bool_true(self, monkeypatch):
+    def test_env_overrides_bool_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TEST_SERVER_DEBUG", "true")
         config = _ServerConfig()
         assert config.debug is True
 
-    def test_env_overrides_bool_false(self, monkeypatch):
+    def test_env_overrides_bool_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TEST_SERVER_DEBUG", "false")
         config = _ServerConfig()
         assert config.debug is False
 
-    def test_env_overrides_float(self, monkeypatch):
+    def test_env_overrides_float(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TEST_SERVER_RATIO", "1.5")
         config = _ServerConfig()
         assert config.ratio == 1.5
@@ -92,25 +92,25 @@ class TestEnvOverride:
 class TestTypeConversion:
     """类型转换测试：验证 pydantic 自动类型转换。"""
 
-    def test_int_from_string(self, monkeypatch):
+    def test_int_from_string(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TEST_SERVER_WORKERS", "16")
         config = _ServerConfig()
         assert config.workers == 16
         assert isinstance(config.workers, int)
 
-    def test_bool_various_true_values(self, monkeypatch):
+    def test_bool_various_true_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
         for val in ("true", "True", "TRUE", "1", "yes", "on"):
             monkeypatch.setenv("TEST_SERVER_DEBUG", val)
             config = _ServerConfig()
             assert config.debug is True, f"'{val}' should be True"
 
-    def test_bool_various_false_values(self, monkeypatch):
+    def test_bool_various_false_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
         for val in ("false", "False", "FALSE", "0", "no", "off"):
             monkeypatch.setenv("TEST_SERVER_DEBUG", val)
             config = _ServerConfig()
             assert config.debug is False, f"'{val}' should be False"
 
-    def test_invalid_int_raises(self, monkeypatch):
+    def test_invalid_int_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TEST_SERVER_PORT", "not_a_number")
         with pytest.raises(ValidationError):
             _ServerConfig()
@@ -119,7 +119,9 @@ class TestTypeConversion:
 class TestPrefixIsolation:
     """前缀隔离测试：不同前缀的配置类互不干扰。"""
 
-    def test_different_prefix_no_interference(self, monkeypatch):
+    def test_different_prefix_no_interference(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("TEST_SERVER_HOST", "10.0.0.1")
         monkeypatch.setenv("TEST_EMPTY_NAME", "custom-app")
 

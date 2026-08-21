@@ -50,8 +50,18 @@ class RedisSessionContextAdapter(SessionContextStorePort):
         self._ttl_seconds = ttl_seconds
         self._conflict_retry_max = conflict_retry_max if conflict_retry_max is not None else 3
 
+    @property
+    def ttl_seconds(self) -> int:
+        """返回会话上下文 TTL 配置。"""
+        return self._ttl_seconds
+
     def _make_key(self, session_id: str) -> str:
         return f"{self._key_prefix}{session_id}"
+
+    def session_key(self, session_id: str) -> str:
+        """Return the Redis key used for a session identifier."""
+
+        return self._make_key(session_id)
 
     async def save(self, session_id: str, context: "ConversationContext") -> None:
         key = self._make_key(session_id)
@@ -152,10 +162,7 @@ class RedisSessionContextAdapter(SessionContextStorePort):
 
                     pipe.multi()
                     pipe.set(key, data, ex=self._ttl_seconds)
-                    exec_result = await pipe.execute()
-
-                    if exec_result is None:
-                        raise aioredis.WatchError("WATCH conflict")
+                    await pipe.execute()
 
                     logger.info(
                         "compare_and_swap session_id=%s retry_count=%d outcome=success",

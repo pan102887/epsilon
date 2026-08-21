@@ -104,6 +104,17 @@ class GatewayClient:
             self._client = None
             logger.info("GatewayClient 已关闭")
 
+    async def replace_client(self, client: httpx.AsyncClient) -> None:
+        """Replace the active HTTP client, closing the previous instance.
+
+        This supports alternate transports (for example an in-memory transport in
+        tests) while preserving the client's lifecycle ownership rules.
+        """
+        if self._client is None:
+            raise RuntimeError("GatewayClient 尚未启动，请先调用 start()")
+        await self._client.aclose()
+        self._client = client
+
     def _ensure_started(self) -> httpx.AsyncClient:
         """确保客户端已启动，返回底层 httpx 客户端。
 

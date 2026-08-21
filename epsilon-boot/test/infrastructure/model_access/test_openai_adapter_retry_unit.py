@@ -8,6 +8,8 @@
 """
 
 from unittest.mock import AsyncMock, MagicMock
+from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 from openai import APITimeoutError
@@ -30,7 +32,7 @@ def _make_config() -> ProviderConfig:
         models="gpt-test",
         temperature=0.7,
         max_tokens=100,
-        timeout=5.0,
+        timeout=5,
         max_retries=0,
         max_connections=10,
         max_keepalive_connections=5,
@@ -67,7 +69,7 @@ class TestChatRetry:
         mock_create = AsyncMock(
             side_effect=[APITimeoutError(request=MagicMock()), _make_chat_completion("ok")]
         )
-        adapter._client.chat.completions.create = mock_create
+        adapter.client.chat.completions.create = mock_create
 
         request = ChatRequest(messages=[UserMessage(content="hi")])
         result = await adapter.chat(request)
@@ -81,7 +83,7 @@ class TestChatRetry:
         adapter = OpenAICompatibleAdapter(config, retry_attempts=2)
 
         mock_create = AsyncMock(side_effect=APITimeoutError(request=MagicMock()))
-        adapter._client.chat.completions.create = mock_create
+        adapter.client.chat.completions.create = mock_create
 
         request = ChatRequest(messages=[UserMessage(content="hi")])
         with pytest.raises(ModelTimeoutError):
@@ -106,14 +108,14 @@ class TestStreamRetry:
         chunk.usage.completion_tokens = 2
         chunk.usage.total_tokens = 3
 
-        async def fake_stream():
+        async def fake_stream() -> AsyncIterator[Any]:
             yield chunk
 
         mock_create = AsyncMock(side_effect=[APITimeoutError(request=MagicMock()), fake_stream()])
-        adapter._client.chat.completions.create = mock_create
+        adapter.client.chat.completions.create = mock_create
 
         request = ChatRequest(messages=[UserMessage(content="hi")])
-        chunks = []
+        chunks: list[Any] = []
         async for c in adapter.stream(request):
             chunks.append(c)
 
@@ -127,12 +129,12 @@ class TestStreamRetry:
         adapter = OpenAICompatibleAdapter(config, retry_attempts=3)
 
         # 构造一个会在迭代中抛异常的 async iterator
-        async def failing_stream():
+        async def failing_stream() -> AsyncIterator[Any]:
             raise RuntimeError("mid-stream failure")
             yield  # pragma: no cover - 使其为 async generator
 
         mock_create = AsyncMock(return_value=failing_stream())
-        adapter._client.chat.completions.create = mock_create
+        adapter.client.chat.completions.create = mock_create
 
         request = ChatRequest(messages=[UserMessage(content="hi")])
         with pytest.raises(RuntimeError, match="mid-stream failure"):

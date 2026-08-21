@@ -26,11 +26,16 @@
 """
 
 from collections.abc import Callable
-from typing import TypeVar
+from pathlib import Path
+from typing import Protocol, TypeVar, cast
 
 import pytest
 
 _ConfigT = TypeVar("_ConfigT")
+
+
+class _RequestWithNode(Protocol):
+    node: pytest.Item
 
 
 # 覆盖 src/ 下所有 PropertiesBaseSettings 子类使用的 env_prefix。
@@ -72,6 +77,7 @@ _CONFIG_ENV_PREFIXES: tuple[str, ...] = (
     "WORKSPACE_",
     "EPSILON_LOG_",
 )
+CONFIG_ENV_PREFIXES = _CONFIG_ENV_PREFIXES
 
 
 @pytest.fixture(autouse=True)
@@ -89,7 +95,8 @@ def isolate_config_sources(
         monkeypatch: 用于清理环境变量并重定向配置文件路径，测试结束自动回滚。
         tmp_path_factory: 生成一个（不创建文件的）临时路径，作为不存在的配置源。
     """
-    if request.node.get_closest_marker("real_config") is not None:
+    node = cast(_RequestWithNode, request).node
+    if node.get_closest_marker("real_config") is not None:
         # 显式选择使用真实配置源的用例，不做隔离。
         return
 
@@ -119,7 +126,7 @@ def isolate_config_sources(
 @pytest.fixture
 def config_factory(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: pytest.TempPathFactory,
+    tmp_path: Path,
 ) -> Callable[..., object]:
     """返回一个「干净配置源」工厂：仅从显式给定的 properties 内容加载配置类。
 

@@ -249,7 +249,7 @@ async def test_register_delegate_tool_uses_agent_config_max_depth():
     tool = registry.get("delegate_to_agent")
     assert tool is not None
     assert hasattr(tool, "_max_delegation_depth"), "委派工具应具有 _max_delegation_depth 属性"
-    assert tool._max_delegation_depth == 7
+    assert cast(Any, tool).max_delegation_depth == 7
 
 
 async def test_create_task_agent_uses_task_agent_config_max_rounds():
@@ -663,9 +663,9 @@ async def test_create_compaction_adapter_returns_llm_summary_adapter():
         adapter = await _create_compaction_adapter()
 
     assert isinstance(adapter, LLMSummaryCompactionAdapter)
-    assert adapter._trigger_tokens == 1234
-    assert adapter._keep_recent_messages == 7
-    assert adapter._fallback._max_messages == 33
+    assert adapter.trigger_tokens == 1234
+    assert adapter.keep_recent_messages == 7
+    assert adapter.fallback.max_messages == 33
     prompt_registry.get.assert_called_once_with("context-summary")
 
 
@@ -715,8 +715,8 @@ async def test_create_context_builder_resolves_compaction_and_constructs_adapter
         builder = await _create_context_builder()
 
     assert isinstance(builder, ContextBuilderAdapter)
-    assert builder._compaction is mock_compaction
-    assert isinstance(builder._environment_provider, StaticEnvironmentContextProvider)
+    assert builder.compaction is mock_compaction
+    assert isinstance(builder.environment_provider, StaticEnvironmentContextProvider)
     mock_container.resolve.assert_awaited_once_with(_config_module.ContextCompactionPort)
 
 

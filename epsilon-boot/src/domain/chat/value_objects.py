@@ -7,7 +7,7 @@
 
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from domain.agent.segmented_execution import SegmentRunMetadata
 from domain.agent.value_objects import (
@@ -26,6 +26,14 @@ _PROMPT_ID_PATTERN = re.compile(r"^[a-z][a-z0-9\-]*@v[1-9]\d*$")
 ``domain/prompt/value_objects.py`` / ``domain/agent/value_objects.py`` 中
 同名常量语义一致。
 """
+
+
+def _int_dict() -> dict[str, int]:
+    return {}
+
+
+def _any_dict() -> dict[str, Any]:
+    return {}
 
 
 ChatResponseStatus = Literal["completed", "approval_required", "paused"]
@@ -197,14 +205,18 @@ class ContextCompactionResult:
     """
 
     messages: list["BaseMessage"]
-    usage: dict[str, int] = field(default_factory=dict)
+    usage: dict[str, int] = field(default_factory=_int_dict)
     summary_created: bool = False
 
     def __post_init__(self) -> None:
         """校验压缩结果结构合法。"""
-        if not isinstance(self.messages, list):
+        messages_value = cast(object, self.messages)
+        if not isinstance(messages_value, list):
             raise ValueError("messages 必须为 list")
-        for key, value in self.usage.items():
+        usage_value = cast(object, self.usage)
+        if not isinstance(usage_value, dict):
+            raise ValueError("usage 必须为 dict")
+        for key, value in cast(dict[object, object], usage_value).items():
             if not isinstance(value, int):
                 raise ValueError(f"usage[{key!r}] 必须为 int")
             if value < 0:
@@ -223,10 +235,10 @@ class ContextBuilderResult:
     """
 
     messages: list["BaseMessage"]
-    usage: dict[str, int] = field(default_factory=dict)
+    usage: dict[str, int] = field(default_factory=_int_dict)
     summary_created: bool = False
     environment_injected: bool = False
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=_any_dict)
 
     def __post_init__(self) -> None:
         """校验上下文构建结果结构合法。
@@ -244,24 +256,30 @@ class ContextBuilderResult:
         # （context.py 引用本模块的部分类型，反向依赖须延迟解析）。
         from domain.chat.context import BaseMessage
 
-        if not isinstance(self.messages, list):
+        messages_value = cast(object, self.messages)
+        if not isinstance(messages_value, list):
             raise ValueError("messages 必须为 list")
-        if not self.messages:
+        messages = cast(list[object], messages_value)
+        if not messages:
             raise ValueError("messages 不能为空")
-        for index, message in enumerate(self.messages):
+        for index, message in enumerate(messages):
             if not isinstance(message, BaseMessage):
                 raise ValueError(
                     f"messages[{index}] 必须为 BaseMessage 子类实例，"
                     f"当前类型: {type(message).__name__}"
                 )
-        for key, value in self.usage.items():
+        usage_value = cast(object, self.usage)
+        if not isinstance(usage_value, dict):
+            raise ValueError("usage 必须为 dict")
+        for key, value in cast(dict[object, object], usage_value).items():
             if not isinstance(key, str):
                 raise ValueError("usage key 必须为 str")
             if type(value) is not int:
                 raise ValueError(f"usage[{key!r}] 必须为 int")
             if value < 0:
                 raise ValueError(f"usage[{key!r}] 必须为非负整数")
-        if not isinstance(self.metadata, dict):
+        metadata_value = cast(object, self.metadata)
+        if not isinstance(metadata_value, dict):
             raise ValueError("metadata 必须为 dict")
 
 

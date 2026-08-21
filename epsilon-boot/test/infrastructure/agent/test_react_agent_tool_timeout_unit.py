@@ -18,13 +18,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 import pytest
 
 from domain.agent.tools import Tool, ToolExecutionResult, ToolRegistry
-from domain.agent.value_objects import AgentConfig
-from domain.chat.context import ConversationContext, ToolMessage
+from domain.agent.value_objects import AgentConfig, AgentStreamEvent
+from domain.chat.context import BaseMessage, ConversationContext, ToolMessage
 from domain.chat.value_objects import ContextBuilderResult
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import (
     LLMResponse,
     ToolCallRequest,
@@ -35,7 +37,14 @@ from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 
 
 class _FakeContextBuilder:
-    async def build(self, messages, **kwargs) -> ContextBuilderResult:
+    async def build(
+        self,
+        messages: list[BaseMessage],
+        *,
+        model_access: ModelAccessPort | None = None,
+        model: str | None = None,
+    ) -> ContextBuilderResult:
+        del model_access, model
         return ContextBuilderResult(
             messages=messages,
             usage={},
@@ -60,14 +69,14 @@ class _SlowTool(Tool):
         return "slow tool"
 
     @property
-    def parameters(self) -> dict:
+    def parameters(self) -> dict[str, Any]:
         return {"type": "object", "properties": {}, "required": []}
 
     @property
     def timeout_seconds(self) -> float | None:
         return self._timeout
 
-    async def execute(self, **kwargs) -> ToolExecutionResult:
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
         await asyncio.sleep(self._sleep)
         self.executed = True
         return ToolExecutionResult(content="ok")
@@ -96,7 +105,7 @@ def _adapter_with(tool: Tool) -> ReActAgentAdapter:
     registry.register(tool)
     return ReActAgentAdapter(
         tool_registry=registry,
-        context_builder=_FakeContextBuilder(),  # type: ignore[arg-type]
+        context_builder=_FakeContextBuilder(),
     )
 
 
@@ -114,7 +123,7 @@ async def test_no_timeout_when_both_unset() -> None:
     cfg = _config(tool_timeout_seconds=None)
     ctx = ConversationContext()
 
-    result, is_error = await adapter._execute_tool_call(ctx, _tool_call(), cfg)
+    result, is_error = await adapter.execute_tool_call_result(ctx, _tool_call(), cfg)
 
     assert is_error is False
     assert result.content == "ok"
@@ -134,7 +143,7 @@ async def test_global_timeout_triggers_timeout_error(
     ctx = ConversationContext()
 
     with caplog.at_level(logging.WARNING, logger="infrastructure.agent.react_agent_adapter"):
-        result, is_error = await adapter._execute_tool_call(ctx, _tool_call(), cfg)
+        result, is_error = await adapter.execute_tool_call_result(ctx, _tool_call(), cfg)
 
     assert is_error is True
     assert result.content == "工具执行超时（0.1s)"
@@ -171,7 +180,7 @@ async def test_per_tool_override_triggers_timeout() -> None:
     cfg = _config(tool_timeout_seconds=5.0)
     ctx = ConversationContext()
 
-    result, is_error = await adapter._execute_tool_call(ctx, _tool_call(), cfg)
+    result, is_error = await adapter.execute_tool_call_result(ctx, _tool_call(), cfg)
 
     assert is_error is True
     # 内容携带工具级超时值（0.1s），而非全局 5.0s
@@ -189,7 +198,7 @@ async def test_per_tool_override_disables_short_global() -> None:
     cfg = _config(tool_timeout_seconds=0.1)
     ctx = ConversationContext()
 
-    result, is_error = await adapter._execute_tool_call(ctx, _tool_call(), cfg)
+    result, is_error = await adapter.execute_tool_call_result(ctx, _tool_call(), cfg)
 
     assert is_error is False
     assert result.content == "ok"
@@ -267,7 +276,7 @@ async def test_run_events_intermediate_round_timeout_emits_tool_error() -> None:
     context = ConversationContext()
     context.add_user_message("go")
 
-    events = []
+    events: list[AgentStreamEvent] = []
     async for ev in adapter.run_events(context, cfg, model_access):
         events.append(ev)
 

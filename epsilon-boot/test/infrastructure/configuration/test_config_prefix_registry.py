@@ -22,7 +22,7 @@ import application
 import common
 import infrastructure
 from common.configuration.configuration_utils import PropertiesBaseSettings
-from test.conftest import _CONFIG_ENV_PREFIXES
+from test.conftest import CONFIG_ENV_PREFIXES
 
 
 def _discover_config_prefixes() -> set[str]:
@@ -42,7 +42,7 @@ def _discover_config_prefixes() -> set[str]:
 
     prefixes: set[str] = set()
 
-    def _collect(cls: type) -> None:
+    def _collect(cls: type[PropertiesBaseSettings]) -> None:
         for subclass in cls.__subclasses__():
             # 仅统计生产代码（src/ 下的包）定义的配置类；测试模块内为验证加载行为
             # 而临时定义的 PropertiesBaseSettings 子类会残留在 __subclasses__() 中，
@@ -66,7 +66,7 @@ def test_config_env_prefixes_matches_discovered() -> None:
     便于直接据此增删 ``_CONFIG_ENV_PREFIXES``。
     """
     discovered = _discover_config_prefixes()
-    declared = set(_CONFIG_ENV_PREFIXES)
+    declared = set(CONFIG_ENV_PREFIXES)
 
     stale = declared - discovered
     missing = discovered - declared
@@ -81,4 +81,4 @@ def test_config_env_prefixes_matches_discovered() -> None:
 
 def test_config_prefixes_tuple_has_no_duplicates() -> None:
     """``_CONFIG_ENV_PREFIXES`` 元组不应含重复项。"""
-    assert len(_CONFIG_ENV_PREFIXES) == len(set(_CONFIG_ENV_PREFIXES))
+    assert len(CONFIG_ENV_PREFIXES) == len(set(CONFIG_ENV_PREFIXES))

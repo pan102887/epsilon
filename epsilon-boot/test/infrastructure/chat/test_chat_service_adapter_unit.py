@@ -12,6 +12,8 @@
 **Validates: Requirements 4.3, 4.4, 4.5, 6.1, 6.2, 6.6, 7.1**
 """
 
+from collections.abc import AsyncIterator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -19,11 +21,12 @@ import pytest
 from domain.agent.value_objects import AgentConfig, AgentResult
 from domain.chat.context import BaseMessage, ConversationContext, SystemMessage, UserMessage
 from domain.chat.value_objects import ChatRequestVO, ContextBuilderResult
-from domain.model_access.value_objects import LLMResponse, StreamingChunk
+from domain.model_access.ports import ModelAccessPort
+from domain.model_access.value_objects import ChatRequest, LLMResponse, StreamingChunk
 from domain.prompt.value_objects import LoadedPrompt
 from infrastructure.chat.chat_service_adapter import ChatServiceAdapter
 from infrastructure.chat.environment_context_provider import EnvironmentContextBuildError
-from infrastructure.prompt.workspace_guidance import _WORKSPACE_PATH_GUIDANCE
+from infrastructure.prompt.workspace_guidance import WORKSPACE_PATH_GUIDANCE
 from test.infrastructure.chat.chat_adapter_test_utils import make_chat_adapter_dependencies
 
 
@@ -122,7 +125,7 @@ class TestChatServiceAdapterCompactionUsage:
         assert response.usage == {"summary_tokens": 3, "prompt_tokens": 5}
         saved_context = session_store.save.call_args.args[1]
         assert [message.content for message in saved_context.get_messages()] == [
-            "你是助手" + _WORKSPACE_PATH_GUIDANCE,
+            "你是助手" + WORKSPACE_PATH_GUIDANCE,
             "hello",
             "reply",
         ]
@@ -136,7 +139,7 @@ class TestChatServiceAdapterCompactionUsage:
         session_store.save = AsyncMock()
         model_access = MagicMock()
 
-        async def stream(_request):
+        async def stream(_request: ChatRequest) -> AsyncIterator[StreamingChunk]:
             yield StreamingChunk(delta_content="a", finished=False)
             yield StreamingChunk(
                 delta_content="b",
@@ -145,9 +148,9 @@ class TestChatServiceAdapterCompactionUsage:
             )
 
         model_access.stream = stream
-        captured_requests = []
+        captured_requests: list[ChatRequest] = []
 
-        async def capturing_stream(request):
+        async def capturing_stream(request: ChatRequest) -> AsyncIterator[StreamingChunk]:
             captured_requests.append(request)
             async for chunk in stream(request):
                 yield chunk
@@ -184,7 +187,7 @@ class TestChatServiceAdapterCompactionUsage:
         session_store.save = AsyncMock()
         model_access = MagicMock()
 
-        async def stream(_request):
+        async def stream(_request: ChatRequest) -> AsyncIterator[StreamingChunk]:
             yield StreamingChunk(delta_content="a", finished=False)
             yield StreamingChunk(
                 delta_content="",
@@ -193,9 +196,9 @@ class TestChatServiceAdapterCompactionUsage:
             )
 
         model_access.stream = stream
-        captured_requests = []
+        captured_requests: list[ChatRequest] = []
 
-        async def capturing_stream(request):
+        async def capturing_stream(request: ChatRequest) -> AsyncIterator[StreamingChunk]:
             captured_requests.append(request)
             async for chunk in stream(request):
                 yield chunk
@@ -266,7 +269,7 @@ class TestChatServiceAdapterAllowedToolNames:
         """ChatServiceAdapter 构造 AgentConfig 不传 allowed_tool_names 时，
         依赖自动提取，allowed_tool_names 应等于 tool_schemas 中的工具名称集合。
         """
-        tool_schemas = [
+        tool_schemas: list[dict[str, Any]] = [
             {
                 "type": "function",
                 "function": {"name": "search", "description": "搜索", "parameters": {}},
@@ -279,7 +282,11 @@ class TestChatServiceAdapterAllowedToolNames:
 
         captured_configs: list[AgentConfig] = []
 
-        async def capture_run(context, config, model_access):
+        async def capture_run(
+            context: ConversationContext,
+            config: AgentConfig,
+            model_access: ModelAccessPort,
+        ) -> AgentResult:
             """捕获 AgentPort.run() 的 config 参数。"""
             captured_configs.append(config)
             result = MagicMock()
@@ -371,7 +378,11 @@ class TestChatServiceAdapterPromptRegistry:
 
         captured_configs: list[AgentConfig] = []
 
-        async def capture_run(context, config, model_access):
+        async def capture_run(
+            context: ConversationContext,
+            config: AgentConfig,
+            model_access: ModelAccessPort,
+        ) -> AgentResult:
             captured_configs.append(config)
             return agent_run_result
 
@@ -389,7 +400,7 @@ class TestChatServiceAdapterPromptRegistry:
         context_builder = MagicMock()
         context_builder.build = AsyncMock(return_value=_builder_result())
 
-        tool_schemas = [
+        tool_schemas: list[dict[str, Any]] = [
             {
                 "type": "function",
                 "function": {
@@ -440,7 +451,7 @@ class TestChatServiceAdapterPromptRegistry:
 
         assert prompt_registry.get.call_count == 1
         prompt_registry.get.assert_called_once_with("chat-default")
-        assert adapter._prompt_id == "chat-default@v3"
+        assert adapter.prompt_id == "chat-default@v3"
 
     @pytest.mark.asyncio
     async def test_chat_passes_loaded_content_with_workspace_guidance_to_agent_config(
@@ -467,7 +478,7 @@ class TestChatServiceAdapterPromptRegistry:
         await adapter.chat(request)
 
         assert len(captured_configs) == 1
-        assert captured_configs[0].system_prompt == "你是一个测试助手。" + _WORKSPACE_PATH_GUIDANCE
+        assert captured_configs[0].system_prompt == "你是一个测试助手。" + WORKSPACE_PATH_GUIDANCE
 
     @pytest.mark.asyncio
     async def test_chat_response_carries_prompt_id_from_loaded_prompt(self) -> None:
@@ -512,12 +523,12 @@ class TestChatServiceAdapterPromptRegistry:
             ),
         )
 
-        snapshot_prompt = adapter._system_prompt
-        snapshot_prompt_id = adapter._prompt_id
+        snapshot_prompt = adapter.system_prompt
+        snapshot_prompt_id = adapter.prompt_id
 
         for i in range(3):
             await adapter.chat(ChatRequestVO(session_id=f"s{i}", message="msg", stream=False))
 
         assert prompt_registry.get.call_count == 1
-        assert adapter._system_prompt == snapshot_prompt
-        assert adapter._prompt_id == snapshot_prompt_id
+        assert adapter.system_prompt == snapshot_prompt
+        assert adapter.prompt_id == snapshot_prompt_id

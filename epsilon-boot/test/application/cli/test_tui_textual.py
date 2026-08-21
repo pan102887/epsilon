@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import cast
 
-from application.cli.runtime import ResumeSessionResult
+from application.cli.runtime import CliRuntime, ResumeSessionResult
 from application.cli.session import TuiSessionState
-from application.cli.tui import _EpsilonTextualApp
+from application.cli.tui import EpsilonTextualApp
 from domain.agent.value_objects import AgentStreamEvent
 from domain.chat.value_objects import SessionMetadata
 
 
 def test_textual_tui_loads_external_css_file() -> None:
-    assert _EpsilonTextualApp.CSS_PATH == "tui.css"
-    assert "CSS" not in _EpsilonTextualApp.__dict__
+    assert EpsilonTextualApp.CSS_PATH == "tui.css"
+    assert "CSS" not in EpsilonTextualApp.__dict__
 
 
 class FakeRuntime:
@@ -81,55 +82,55 @@ class FakeRuntime:
 
 async def test_textual_tui_submits_message_and_renders_events() -> None:
     runtime = FakeRuntime()
-    app = _EpsilonTextualApp(runtime)  # type: ignore[arg-type]
+    app = EpsilonTextualApp(cast(CliRuntime, runtime))
 
     async with app.run_test(size=(100, 30)) as pilot:
-        app._set_composer_text("hello")
+        app.set_composer_text("hello")
         await app.action_submit()
 
         for _ in range(20):
             await pilot.pause(0.01)
-            if app._current_task is None:
+            if app.current_task is None:
                 break
 
         assert runtime.messages == ["hello"]
-        assert app._current_task is None
+        assert app.current_task is None
         assert len(app.query(".message")) >= 4
 
 
 async def test_textual_tui_routes_slash_commands() -> None:
     runtime = FakeRuntime()
-    app = _EpsilonTextualApp(runtime)  # type: ignore[arg-type]
+    app = EpsilonTextualApp(cast(CliRuntime, runtime))
 
     async with app.run_test(size=(100, 30)) as pilot:
-        app._set_composer_text("/model qwen3")
+        app.set_composer_text("/model qwen3")
         await app.action_submit()
         await pilot.pause(0.01)
 
-        assert app._state.model == "qwen3"
+        assert app.session_state.model == "qwen3"
         assert runtime.messages == []
 
 
 async def test_textual_tui_new_keeps_old_session_resumable() -> None:
     runtime = FakeRuntime()
-    app = _EpsilonTextualApp(runtime)  # type: ignore[arg-type]
+    app = EpsilonTextualApp(cast(CliRuntime, runtime))
 
     async with app.run_test(size=(100, 30)) as pilot:
-        old_session_id = app._state.session_id
+        old_session_id = app.session_state.session_id
 
-        app._set_composer_text("/new")
+        app.set_composer_text("/new")
         await app.action_submit()
         await pilot.pause(0.01)
 
-        assert app._state.session_id != old_session_id
+        assert app.session_state.session_id != old_session_id
         assert runtime.cleared == []
         assert runtime.deleted == []
         assert runtime.messages == []
 
-        app._set_composer_text(f"/resume {old_session_id}")
+        app.set_composer_text(f"/resume {old_session_id}")
         await app.action_submit()
         await pilot.pause(0.01)
 
-        assert app._state.session_id == old_session_id
+        assert app.session_state.session_id == old_session_id
         assert runtime.resumed == [old_session_id]
         assert runtime.messages == []

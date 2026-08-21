@@ -19,13 +19,13 @@ from hypothesis import given, settings
 from domain.agent.exceptions import ToolExecutionError
 from domain.agent.tools import Tool
 from infrastructure.tools.http_request.http_request_tool import (
-    _PRIVATE_NETWORKS,
+    PRIVATE_NETWORKS,
     HttpRequestTool,
-    _host_block_reason,
-    _normalise_header_name,
-    _reject_sensitive_headers,
-    _sensitive_header_reason,
+    host_block_reason,
+    normalise_header_name,
     process_response,
+    reject_sensitive_headers,
+    sensitive_header_reason,
     validate_url_safety,
 )
 
@@ -43,7 +43,7 @@ def private_ip_strategy(
     Returns:
         (network, ip_str) 元组：所属网段和生成的 IP 字符串。
     """
-    network = draw(st.sampled_from(_PRIVATE_NETWORKS))
+    network = draw(st.sampled_from(PRIVATE_NETWORKS))
     # 网段内的主机地址数量
     num_addresses = network.num_addresses
     # 生成网段内的随机偏移量
@@ -59,7 +59,9 @@ def private_ip_strategy(
 
 @settings(max_examples=100, deadline=5000)
 @given(data=private_ip_strategy())
-def test_ssrf_private_ip_rejection(data: tuple) -> None:
+def test_ssrf_private_ip_rejection(
+    data: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, str],
+) -> None:
     """验证 SSRF 防护对私有 IP 地址的拒绝行为。
 
     对于任意解析后 IP 地址属于私有网段的 URL，validate_url_safety()
@@ -77,7 +79,9 @@ def test_ssrf_private_ip_rejection(data: tuple) -> None:
 
     # 根据 IP 版本构造 getaddrinfo 返回值
     if is_ipv6:
-        mock_return = [(socket.AF_INET6, socket.SOCK_STREAM, 0, "", (ip_str, 0, 0, 0))]
+        mock_return: list[
+            tuple[int, int, int, str, tuple[str, int] | tuple[str, int, int, int]]
+        ] = [(socket.AF_INET6, socket.SOCK_STREAM, 0, "", (ip_str, 0, 0, 0))]
     else:
         mock_return = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", (ip_str, 0))]
 
@@ -123,11 +127,11 @@ def test_sensitive_header_helpers_reject_model_controlled_headers(
     """验证敏感 Header 名大小写和空白变体均会被拒绝。"""
     headers = {header_name: "secret-token"}
 
-    assert _normalise_header_name(header_name) == normalised_name
-    assert _sensitive_header_reason(headers) == f"sensitive-header: {normalised_name}"
+    assert normalise_header_name(header_name) == normalised_name
+    assert sensitive_header_reason(headers) == f"sensitive-header: {normalised_name}"
 
     with pytest.raises(ToolExecutionError) as exc_info:
-        _reject_sensitive_headers(headers, tool_name="http_request")
+        reject_sensitive_headers(headers, tool_name="http_request")
 
     assert normalised_name in exc_info.value.message
     assert "secret-token" not in exc_info.value.message
@@ -156,7 +160,7 @@ async def test_sensitive_header_execute_blocks_before_url_dns_and_request(header
         patch(
             "infrastructure.tools.http_request.http_request_tool.socket.getaddrinfo"
         ) as mock_getaddrinfo,
-        patch.object(tool._client, "request", new_callable=AsyncMock) as mock_request,
+        patch.object(tool.client, "request", new_callable=AsyncMock) as mock_request,
         pytest.raises(ToolExecutionError) as exc_info,
     ):
         await tool.execute(
@@ -167,7 +171,7 @@ async def test_sensitive_header_execute_blocks_before_url_dns_and_request(header
     mock_validate.assert_not_called()
     mock_getaddrinfo.assert_not_called()
     mock_request.assert_not_called()
-    assert _normalise_header_name(header_name) in exc_info.value.message
+    assert normalise_header_name(header_name) in exc_info.value.message
     assert "secret-token" not in exc_info.value.message
 
 
@@ -190,7 +194,7 @@ async def test_non_sensitive_headers_are_passed_to_request() -> None:
         patch(
             "infrastructure.tools.http_request.http_request_tool.validate_url_safety"
         ) as mock_validate,
-        patch.object(tool._client, "request", new_callable=AsyncMock) as mock_request,
+        patch.object(tool.client, "request", new_callable=AsyncMock) as mock_request,
     ):
         mock_request.return_value = mock_resp
 
@@ -210,7 +214,7 @@ async def test_non_sensitive_headers_are_passed_to_request() -> None:
 
 
 @st.composite
-def json_response_strategy(draw: st.DrawFn) -> tuple[str, dict, MagicMock]:
+def json_response_strategy(draw: st.DrawFn) -> tuple[str, dict[str, str], httpx.Response]:
     """生成 application/json 类型的 Mock 响应。
 
     随机生成一个 JSON 字典，构造对应的 Mock httpx.Response。
@@ -228,7 +232,7 @@ def json_response_strategy(draw: st.DrawFn) -> tuple[str, dict, MagicMock]:
     )
     status_code = draw(st.sampled_from([200, 201, 204, 301, 400, 404, 500]))
 
-    mock_resp = MagicMock(spec=httpx.Response)
+    mock_resp: httpx.Response = MagicMock(spec=httpx.Response)
     mock_resp.headers = {"content-type": "application/json"}
     mock_resp.status_code = status_code
     mock_resp.json.return_value = json_data
@@ -238,7 +242,7 @@ def json_response_strategy(draw: st.DrawFn) -> tuple[str, dict, MagicMock]:
 
 
 @st.composite
-def html_response_strategy(draw: st.DrawFn) -> tuple[str, str, MagicMock]:
+def html_response_strategy(draw: st.DrawFn) -> tuple[str, str, httpx.Response]:
     """生成 text/html 类型的 Mock 响应。
 
     随机生成文本内容，包裹在 HTML 结构中，构造对应的 Mock httpx.Response。
@@ -258,7 +262,7 @@ def html_response_strategy(draw: st.DrawFn) -> tuple[str, str, MagicMock]:
 
     html = f"<html><head><title>Test</title></head><body><p>{text_content}</p></body></html>"
 
-    mock_resp = MagicMock(spec=httpx.Response)
+    mock_resp: httpx.Response = MagicMock(spec=httpx.Response)
     mock_resp.headers = {"content-type": "text/html"}
     mock_resp.status_code = status_code
     mock_resp.text = html
@@ -267,7 +271,7 @@ def html_response_strategy(draw: st.DrawFn) -> tuple[str, str, MagicMock]:
 
 
 @st.composite
-def plain_text_response_strategy(draw: st.DrawFn) -> tuple[str, str, MagicMock]:
+def plain_text_response_strategy(draw: st.DrawFn) -> tuple[str, str, httpx.Response]:
     """生成 text/plain 类型的 Mock 响应。
 
     随机生成纯文本内容，构造对应的 Mock httpx.Response。
@@ -278,7 +282,7 @@ def plain_text_response_strategy(draw: st.DrawFn) -> tuple[str, str, MagicMock]:
     text_content = draw(st.text(min_size=1, max_size=200))
     status_code = draw(st.sampled_from([200, 201, 400, 500]))
 
-    mock_resp = MagicMock(spec=httpx.Response)
+    mock_resp: httpx.Response = MagicMock(spec=httpx.Response)
     mock_resp.headers = {"content-type": "text/plain"}
     mock_resp.status_code = status_code
     mock_resp.text = text_content
@@ -287,7 +291,7 @@ def plain_text_response_strategy(draw: st.DrawFn) -> tuple[str, str, MagicMock]:
 
 
 @st.composite
-def binary_response_strategy(draw: st.DrawFn) -> tuple[str, int, MagicMock]:
+def binary_response_strategy(draw: st.DrawFn) -> tuple[str, int, httpx.Response]:
     """生成二进制类型（如 image/png）的 Mock 响应。
 
     随机生成 Content-Length，构造对应的 Mock httpx.Response。
@@ -301,7 +305,7 @@ def binary_response_strategy(draw: st.DrawFn) -> tuple[str, int, MagicMock]:
     content_length = draw(st.integers(min_value=0, max_value=10485760))
     status_code = draw(st.sampled_from([200, 206, 404, 500]))
 
-    mock_resp = MagicMock(spec=httpx.Response)
+    mock_resp: httpx.Response = MagicMock(spec=httpx.Response)
     mock_resp.headers = {"content-type": content_type, "content-length": str(content_length)}
     mock_resp.status_code = status_code
 
@@ -315,7 +319,7 @@ def binary_response_strategy(draw: st.DrawFn) -> tuple[str, int, MagicMock]:
 
 @settings(max_examples=100, deadline=5000)
 @given(data=json_response_strategy())
-def test_content_type_dispatch_json(data: tuple) -> None:
+def test_content_type_dispatch_json(data: tuple[str, dict[str, str], httpx.Response]) -> None:
     """验证 application/json 响应的 Content-Type 分派行为。
 
     对于 Content-Type 为 application/json 的响应，process_response 应返回
@@ -344,7 +348,7 @@ def test_content_type_dispatch_json(data: tuple) -> None:
 
 @settings(max_examples=100, deadline=5000)
 @given(data=html_response_strategy())
-def test_content_type_dispatch_html(data: tuple) -> None:
+def test_content_type_dispatch_html(data: tuple[str, str, httpx.Response]) -> None:
     """验证 text/html 响应的 Content-Type 分派行为。
 
     对于 Content-Type 为 text/html 的响应，process_response 应使用 readability
@@ -366,7 +370,7 @@ def test_content_type_dispatch_html(data: tuple) -> None:
 
 @settings(max_examples=100, deadline=5000)
 @given(data=plain_text_response_strategy())
-def test_content_type_dispatch_plain_text(data: tuple) -> None:
+def test_content_type_dispatch_plain_text(data: tuple[str, str, httpx.Response]) -> None:
     """验证 text/plain 响应的 Content-Type 分派行为。
 
     对于 Content-Type 为 text/plain 的响应，process_response 应直接返回
@@ -388,7 +392,7 @@ def test_content_type_dispatch_plain_text(data: tuple) -> None:
 
 @settings(max_examples=100, deadline=5000)
 @given(data=binary_response_strategy())
-def test_content_type_dispatch_binary(data: tuple) -> None:
+def test_content_type_dispatch_binary(data: tuple[str, int, httpx.Response]) -> None:
     """验证二进制类型响应的 Content-Type 分派行为。
 
     对于 Content-Type 为二进制类型（image/png、application/pdf 等）的响应，
@@ -514,7 +518,7 @@ async def test_exception_wrapping(exception_cls: type, error_message: str) -> No
 
     with (
         patch("infrastructure.tools.http_request.http_request_tool.validate_url_safety"),
-        patch.object(tool._client, "request", new_callable=AsyncMock) as mock_request,
+        patch.object(tool.client, "request", new_callable=AsyncMock) as mock_request,
     ):
         mock_request.side_effect = exception_cls(error_message)
 
@@ -582,9 +586,9 @@ class TestHttpRequestToolInterface:
         from infrastructure.gateway.gateway_client import GatewayClient
 
         tool = self._create_tool()
-        assert isinstance(tool._client, httpx.AsyncClient)
-        assert not isinstance(tool._client, GatewayClient)
-        assert tool._client.follow_redirects is False
+        assert isinstance(tool.client, httpx.AsyncClient)
+        assert not isinstance(tool.client, GatewayClient)
+        assert tool.client.follow_redirects is False
 
     @pytest.mark.asyncio
     async def test_default_method_is_get(self) -> None:
@@ -598,7 +602,7 @@ class TestHttpRequestToolInterface:
 
         with (
             patch("infrastructure.tools.http_request.http_request_tool.validate_url_safety"),
-            patch.object(tool._client, "request", new_callable=AsyncMock) as mock_request,
+            patch.object(tool.client, "request", new_callable=AsyncMock) as mock_request,
         ):
             mock_request.return_value = mock_resp
             await tool.execute(url="http://example.com")
@@ -673,7 +677,7 @@ class TestHttpRequestToolInterface:
         expected_reason: str | None,
     ) -> None:
         """验证 metadata、localhost 与 IP literal 在 DNS 查询前被拒绝。"""
-        host_reason = _host_block_reason(hostname)
+        host_reason = host_block_reason(hostname)
         assert host_reason is not None
         if expected_reason is not None:
             assert host_reason == expected_reason
@@ -696,7 +700,7 @@ class TestHttpRequestToolInterface:
             patch(
                 "infrastructure.tools.http_request.http_request_tool.socket.getaddrinfo"
             ) as mock_getaddrinfo,
-            patch.object(tool._client, "request", new_callable=AsyncMock) as mock_request,
+            patch.object(tool.client, "request", new_callable=AsyncMock) as mock_request,
             pytest.raises(ToolExecutionError) as exc_info,
         ):
             await tool.execute(url="http://169.254.169.254/latest/meta-data")

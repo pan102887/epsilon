@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from contextvars import Token
 from datetime import UTC, datetime
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -22,6 +24,7 @@ from domain.run.checkpoint_context import (
     reset_run_checkpoint_context,
     set_run_checkpoint_context,
 )
+from domain.run.ports import RunCheckpointSinkPort
 from domain.run.value_objects import (
     ToolLedgerStatus,
     ToolReplayPolicy,
@@ -36,13 +39,13 @@ pytestmark = pytest.mark.asyncio
 class _Sink:
     def __init__(self, before_result: ToolResultLedgerEntry | None = None) -> None:
         self.before_result = before_result
-        self.calls: list[tuple[str, dict]] = []
+        self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def before_tool_call(self, **kwargs):
+    async def before_tool_call(self, **kwargs: Any) -> ToolResultLedgerEntry | None:
         self.calls.append(("before_tool_call", kwargs))
         return self.before_result
 
-    async def after_tool_call(self, **kwargs):
+    async def after_tool_call(self, **kwargs: Any) -> None:
         self.calls.append(("after_tool_call", kwargs))
         return None
 
@@ -55,7 +58,7 @@ async def test_approve_reuses_completed_ledger_without_executing_tool() -> None:
     token = _set_checkpoint(sink)
 
     try:
-        await adapter._apply_approval_decisions(
+        await adapter.apply_approval_decisions(
             ctx,
             _config(),
             _interrupt(ctx),
@@ -78,7 +81,7 @@ async def test_edit_reuses_completed_ledger_without_executing_tool() -> None:
     token = _set_checkpoint(sink)
 
     try:
-        await adapter._apply_approval_decisions(
+        await adapter.apply_approval_decisions(
             ctx,
             _config(),
             _interrupt(ctx),
@@ -106,7 +109,7 @@ async def test_reject_decision_writes_checkpoint_ledger() -> None:
     token = _set_checkpoint(sink)
 
     try:
-        await adapter._apply_approval_decisions(
+        await adapter.apply_approval_decisions(
             ctx,
             _config(),
             _interrupt(ctx),
@@ -141,7 +144,10 @@ def _registry() -> MagicMock:
     tool.replay_policy = ToolReplayPolicy.REPLAY_RESULT
     tool.side_effect_level = ToolSideEffectLevel.NONE
     tool.idempotency_key = MagicMock(return_value="idem")
-    tool.cast_params = MagicMock(side_effect=lambda value: value)
+    def identity(value: Any) -> Any:
+        return value
+
+    tool.cast_params = MagicMock(side_effect=identity)
     tool.validate_params = MagicMock(return_value=[])
     registry.get = MagicMock(return_value=tool)
     return registry
@@ -185,14 +191,16 @@ def _interrupt(ctx: ConversationContext) -> ApprovalInterrupt:
     )
 
 
-def _set_checkpoint(sink: _Sink):
+def _set_checkpoint(
+    sink: _Sink,
+) -> Token[RunCheckpointExecutionContext | None]:
     return set_run_checkpoint_context(
         RunCheckpointExecutionContext(
             run_id="run-1",
             owner_id="owner-a",
             segment_index=2,
             recovery_mode=True,
-            sink=sink,
+            sink=cast(RunCheckpointSinkPort, sink),
         )
     )
 

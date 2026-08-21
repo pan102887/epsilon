@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from application.run.run_checkpoint_recovery_service import RunRecoveryService
 from domain.agent.guardrails import GuardrailAction, GuardrailMode
 from domain.chat.context import ConversationContext
+from domain.run.ports import RunCheckpointStorePort, RunEventStorePort, RunStorePort
 from domain.run.value_objects import (
     CheckpointPhase,
     CheckpointRetentionPolicy,
@@ -62,24 +64,28 @@ class _RunStore:
                 "collaboration_summary": collaboration_summary,
             }
         )
-        self.snapshot = RunSnapshot(
-            **{
-                **self.snapshot.__dict__,
-                "status": RunStatus.QUEUED,
-                "latest_checkpoint_id": latest_checkpoint_id,
-                "recovery_attempt_count": recovery_attempt_count,
-                "guardrail_summary": guardrail_summary
+        self.snapshot = replace(
+            self.snapshot,
+            status=RunStatus.QUEUED,
+            latest_checkpoint_id=latest_checkpoint_id,
+            recovery_attempt_count=recovery_attempt_count,
+            guardrail_summary=(
+                guardrail_summary
                 if guardrail_summary is not None
-                else self.snapshot.guardrail_summary,
-                "workflow_run_state": workflow_run_state
+                else self.snapshot.guardrail_summary
+            ),
+            workflow_run_state=(
+                workflow_run_state
                 if workflow_run_state is not None
-                else self.snapshot.workflow_run_state,
-                "collaboration_summary": collaboration_summary
+                else self.snapshot.workflow_run_state
+            ),
+            collaboration_summary=(
+                collaboration_summary
                 if collaboration_summary is not None
-                else self.snapshot.collaboration_summary,
-                "recoverable": True,
-                "updated_at": _NOW,
-            }
+                else self.snapshot.collaboration_summary
+            ),
+            recoverable=True,
+            updated_at=_NOW,
         )
         return self.snapshot
 
@@ -213,9 +219,11 @@ def _service(
 
     run_store = _RunStore(snapshot)
     service = RunRecoveryService(
-        run_store=run_store,
-        checkpoint_store=_CheckpointStore(checkpoint or _checkpoint()),
-        event_store=_EventStore(),
+        run_store=cast(RunStorePort, run_store),
+        checkpoint_store=cast(
+            RunCheckpointStorePort, _CheckpointStore(checkpoint or _checkpoint())
+        ),
+        event_store=cast(RunEventStorePort, _EventStore()),
         retention_policy=_policy(),
         max_recovery_attempts=3,
         auto_recovery_enabled=True,
@@ -254,8 +262,10 @@ async def test_recovery_keeps_existing_guardrail_summary() -> None:
 
     assert run_store.enqueued[0]["guardrail_summary"] == summary
     assert recovered[0].guardrail_summary == summary
-    assert recovered[0].guardrail_summary["evaluation_count"] == 3
-    assert recovered[0].guardrail_summary["runtime_stats"] == {
+    recovered_summary = recovered[0].guardrail_summary
+    assert recovered_summary is not None
+    assert recovered_summary["evaluation_count"] == 3
+    assert recovered_summary["runtime_stats"] == {
         "total_tokens": 20,
         "prompt_tokens": 12,
         "completion_tokens": 8,
@@ -298,7 +308,9 @@ async def test_recovery_reuses_checkpoint_guardrail_summary_without_usage_recoun
 
     assert run_store.enqueued[0]["guardrail_summary"] == checkpoint_summary
     assert recovered[0].guardrail_summary == checkpoint_summary
-    assert recovered[0].guardrail_summary["runtime_stats"] == {
+    recovered_summary = recovered[0].guardrail_summary
+    assert recovered_summary is not None
+    assert recovered_summary["runtime_stats"] == {
         "total_tokens": 20,
         "prompt_tokens": 12,
         "completion_tokens": 8,
@@ -324,21 +336,17 @@ async def test_recovery_blocks_waiting_child_run_without_reconciliation() -> Non
         },
     }
     service, _run_store = _service(
-        RunSnapshot(
-            **{
-                **_snapshot(latest_checkpoint_id="chk-previous").__dict__,
-                "workflow_run_state": workflow_state,
-            }
+        replace(
+            _snapshot(latest_checkpoint_id="chk-previous"),
+            workflow_run_state=workflow_state,
         ),
         checkpoint=_checkpoint(segment_metadata={"workflow_run_state": workflow_state}),
     )
 
     blocked = await service.evaluate_recovery(
-        RunSnapshot(
-            **{
-                **_snapshot(latest_checkpoint_id="chk-previous").__dict__,
-                "workflow_run_state": workflow_state,
-            }
+        replace(
+            _snapshot(latest_checkpoint_id="chk-previous"),
+            workflow_run_state=workflow_state,
         )
     )
 
@@ -365,21 +373,17 @@ async def test_recovery_allows_reconciled_child_run_state() -> None:
         },
     }
     service, _run_store = _service(
-        RunSnapshot(
-            **{
-                **_snapshot(latest_checkpoint_id="chk-previous").__dict__,
-                "workflow_run_state": workflow_state,
-            }
+        replace(
+            _snapshot(latest_checkpoint_id="chk-previous"),
+            workflow_run_state=workflow_state,
         ),
         checkpoint=_checkpoint(segment_metadata={"workflow_run_state": workflow_state}),
     )
 
     decision = await service.evaluate_recovery(
-        RunSnapshot(
-            **{
-                **_snapshot(latest_checkpoint_id="chk-previous").__dict__,
-                "workflow_run_state": workflow_state,
-            }
+        replace(
+            _snapshot(latest_checkpoint_id="chk-previous"),
+            workflow_run_state=workflow_state,
         )
     )
 

@@ -26,6 +26,8 @@ from __future__ import annotations
 import importlib.util
 import os
 import pathlib
+from collections.abc import Iterator
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -36,13 +38,15 @@ from domain.agent.exceptions import ToolExecutionError
 pytestmark = [pytest.mark.asyncio]
 
 
-def _load_container_config_module():
+def _load_container_config_module() -> Any:
     config_path = (
         pathlib.Path(__file__).resolve().parents[2] / "src" / "application" / "container_config.py"
     )
     spec = importlib.util.spec_from_file_location(
         "test_workspace_end_to_end_integration_module", str(config_path)
     )
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -52,23 +56,24 @@ _config_module = _load_container_config_module()
 
 
 @pytest.fixture(autouse=True)
-def _isolate_container():
+def isolate_container() -> Iterator[None]:
     """用例间隔离容器全局状态。"""
     from common.container import container
 
-    original_registry = container._registry.copy()
-    original_singletons = container._singletons.copy()
-    original_resources = container._async_resources[:]
-    original_initialized = container._initialized_resources[:]
+    container_state = cast(Any, container)
+    original_registry = container_state._registry.copy()
+    original_singletons = container_state._singletons.copy()
+    original_resources = container_state._async_resources[:]
+    original_initialized = container_state._initialized_resources[:]
     yield
-    container._registry = original_registry
-    container._singletons = original_singletons
-    container._async_resources = original_resources
-    container._initialized_resources = original_initialized
+    container_state._registry = original_registry
+    container_state._singletons = original_singletons
+    container_state._async_resources = original_resources
+    container_state._initialized_resources = original_initialized
 
 
 @pytest.fixture(autouse=True)
-def _reset_workspace_singleton():
+def reset_workspace_singleton() -> Iterator[None]:
     original = _config_module._workspace_singleton
     yield
     _config_module._workspace_singleton = original
@@ -79,7 +84,10 @@ def _reset_workspace_singleton():
 # ---------------------------------------------------------------------------
 
 
-async def test_read_file_outside_workspace_raises_tool_execution_error(tmp_path, monkeypatch):
+async def test_read_file_outside_workspace_raises_tool_execution_error(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """通过真实 Workspace（LocalFilesystemWorkspace）解析 ``../etc/passwd``
     应该抛 ``ToolExecutionError``；ScopedToolRegistry 会将其包装为
     ToolMessage 形态（需求 8.5）。"""
@@ -107,7 +115,10 @@ async def test_read_file_outside_workspace_raises_tool_execution_error(tmp_path,
         assert exc_info.value.tool_name == "read_file"
 
 
-async def test_write_file_success_message_uses_logical_path(tmp_path, monkeypatch):
+async def test_write_file_success_message_uses_logical_path(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """``write_file`` 成功消息应使用 ``/xxx`` 逻辑路径，不含宿主根。"""
     monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKSPACE_BACKEND", "local_filesystem")
@@ -131,7 +142,10 @@ async def test_write_file_success_message_uses_logical_path(tmp_path, monkeypatc
         assert result.metadata["logical_path"] == "/notes.md"
 
 
-async def test_list_dir_returns_logical_paths(tmp_path, monkeypatch):
+async def test_list_dir_returns_logical_paths(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """``list_dir("/")`` 返回的条目路径应以 ``/`` 起始且不含宿主根。"""
     monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKSPACE_BACKEND", "local_filesystem")
@@ -170,7 +184,10 @@ async def test_list_dir_returns_logical_paths(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_shell_exec_subprocess_cwd_inside_workspace_root(tmp_path, monkeypatch):
+async def test_shell_exec_subprocess_cwd_inside_workspace_root(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """``ShellExecTool`` 通过 ``materialize_cwd`` 把子进程 cwd 锁在
     ``WORKSPACE_ROOT`` 之内。"""
     monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path))
@@ -215,7 +232,10 @@ async def test_shell_exec_subprocess_cwd_inside_workspace_root(tmp_path, monkeyp
 # ---------------------------------------------------------------------------
 
 
-async def test_shell_exec_working_dir_outside_workspace_fails_fast(tmp_path, monkeypatch):
+async def test_shell_exec_working_dir_outside_workspace_fails_fast(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """``SHELL_EXEC_WORKING_DIR=/etc`` 与 ``WORKSPACE_ROOT=<tmp_path>`` 冲突时，
     ``_create_tool_registry`` 阶段应 fail-fast 抛 ``ConfigurationError``。"""
     monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path))
@@ -256,7 +276,10 @@ async def test_shell_exec_working_dir_outside_workspace_fails_fast(tmp_path, mon
         assert "工作区内" in msg or "留空" in msg
 
 
-async def test_python_exec_working_dir_outside_workspace_fails_fast(tmp_path, monkeypatch):
+async def test_python_exec_working_dir_outside_workspace_fails_fast(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """对称地验证 ``PYTHON_EXEC_WORKING_DIR``。"""
     monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKSPACE_BACKEND", "local_filesystem")

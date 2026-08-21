@@ -7,6 +7,8 @@
 - 重复 aclose() 不抛异常（幂等）
 """
 
+from collections.abc import AsyncGenerator
+
 import pytest
 from fastmcp import FastMCP
 
@@ -22,11 +24,13 @@ def _build_server() -> FastMCP:
         """回显输入。"""
         return f"echo: {text}"
 
+    del echo
+
     return server
 
 
 @pytest.fixture
-async def bridge() -> MCPToolBridge:
+async def bridge() -> AsyncGenerator[MCPToolBridge, None]:
     bridge = MCPToolBridge(transport=_build_server())
     try:
         yield bridge
@@ -40,9 +44,9 @@ class TestPersistentSession:
     @pytest.mark.asyncio
     async def test_discover_opens_session(self, bridge: MCPToolBridge):
         """discover() 后 session 持久保持。"""
-        assert bridge._session_owner is False
+        assert bridge.session_owner is False
         await bridge.discover()
-        assert bridge._session_owner is True
+        assert bridge.session_owner is True
 
     @pytest.mark.asyncio
     async def test_multiple_execute_after_discover(self, bridge: MCPToolBridge):
@@ -58,9 +62,9 @@ class TestPersistentSession:
     async def test_aclose_releases_session(self, bridge: MCPToolBridge):
         """aclose() 后 _session_owner 变为 False。"""
         await bridge.discover()
-        assert bridge._session_owner is True
+        assert bridge.session_owner is True
         await bridge.aclose()
-        assert bridge._session_owner is False
+        assert bridge.session_owner is False
 
     @pytest.mark.asyncio
     async def test_aclose_idempotent(self, bridge: MCPToolBridge):
@@ -68,10 +72,10 @@ class TestPersistentSession:
         await bridge.discover()
         await bridge.aclose()
         await bridge.aclose()  # 第二次不应抛
-        assert bridge._session_owner is False
+        assert bridge.session_owner is False
 
     @pytest.mark.asyncio
     async def test_aclose_without_discover(self, bridge: MCPToolBridge):
         """未 discover 直接 aclose 不抛。"""
         await bridge.aclose()
-        assert bridge._session_owner is False
+        assert bridge.session_owner is False

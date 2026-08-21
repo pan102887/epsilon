@@ -21,6 +21,7 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import PurePosixPath
+from typing import cast
 
 from domain.workspace.exceptions import (
     ConfinementViolationReason,
@@ -127,8 +128,11 @@ class WorkspacePath:
             WorkspaceConfinementViolation: ``segment`` 含非法字符或拼接后
                 越过工作区根。
         """
-        if not isinstance(segment, str):
-            raise TypeError(f"segment 必须为 str，实际类型：{type(segment).__name__}")
+        segment_value = cast(object, segment)
+        if not isinstance(segment_value, str):
+            raise TypeError(
+                f"segment 必须为 str，实际类型：{type(segment_value).__name__}"
+            )
         _reject_illegal_chars(segment)
 
         combined = PurePosixPath(self._posix) / segment

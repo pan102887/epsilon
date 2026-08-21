@@ -61,6 +61,28 @@ class ApprovalScreen(ModalScreen[list[ApprovalDecision] | None]):
         self._editing = False
         self._error_text = ""
 
+    @property
+    def actions(self) -> tuple[PendingActionRequest, ...]:
+        """返回本批次按展示顺序排列的待审批动作。"""
+        return self._actions
+
+    @property
+    def current_index(self) -> int:
+        """返回当前待决策动作索引。"""
+        return self._index
+
+    @property
+    def editing(self) -> bool:
+        return self._editing
+
+    @property
+    def decisions(self) -> list[ApprovalDecision]:
+        return list(self._decisions)
+
+    @property
+    def error_text(self) -> str:
+        return self._error_text
+
     def compose(self) -> ComposeResult:
         """组合当前待审批动作的展示区与（edit 子状态时的）JSON 编辑区。
 

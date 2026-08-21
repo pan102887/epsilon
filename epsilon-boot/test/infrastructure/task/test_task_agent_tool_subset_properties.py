@@ -16,9 +16,9 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from domain.agent.tools import Tool, ToolRegistry
+from domain.agent.tools import Tool, ToolExecutionResult, ToolRegistry
 from domain.agent.value_objects import AgentConfig
-from domain.chat.context import ConversationContext
+from domain.chat.context import BaseMessage, ConversationContext
 from domain.chat.value_objects import ContextCompactionResult
 from domain.prompt.value_objects import LoadedPrompt
 from domain.task.value_objects import Task, TaskStatus
@@ -50,8 +50,8 @@ class FakeTool(Tool):
     def parameters(self) -> dict[str, Any]:
         return {"type": "object", "properties": {}}
 
-    async def execute(self, **kwargs: Any) -> str:
-        return "ok"
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
+        return ToolExecutionResult(content="ok")
 
 
 # ── Hypothesis 策略 ──
@@ -97,10 +97,14 @@ def _make_adapter(
     mock_model_registry.get_default_model.return_value = "test-model"
     mock_model_registry.get_adapter_for_model.return_value = MagicMock()
 
+    async def compact_messages(
+        messages: list[BaseMessage],
+        **kwargs: Any,
+    ) -> ContextCompactionResult:
+        return ContextCompactionResult(messages=messages)
+
     mock_compaction = MagicMock()
-    mock_compaction.compact = AsyncMock(
-        side_effect=lambda msgs, **kwargs: ContextCompactionResult(messages=msgs)
-    )
+    mock_compaction.compact = AsyncMock(side_effect=compact_messages)
 
     mock_session_store = MagicMock()
     mock_session_store.load = AsyncMock(return_value=ConversationContext())

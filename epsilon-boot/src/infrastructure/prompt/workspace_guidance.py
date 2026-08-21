@@ -20,9 +20,9 @@ re-export 暴露，**不复制**其文案定义。两个模块对同一常量保
 
 from __future__ import annotations
 
-from infrastructure.chat.chat_config import _WORKSPACE_PATH_GUIDANCE
+from infrastructure.chat.chat_config import WORKSPACE_PATH_GUIDANCE
 
-__all__ = ["_WORKSPACE_PATH_GUIDANCE", "append_workspace_path_guidance"]
+__all__ = ["WORKSPACE_PATH_GUIDANCE", "append_workspace_path_guidance"]
 
 
 def append_workspace_path_guidance(content: str) -> str:
@@ -45,6 +45,6 @@ def append_workspace_path_guidance(content: str) -> str:
         :data:`_WORKSPACE_PATH_GUIDANCE` 的 ``strip()`` 形式结尾
         （满足 ``rstrip().endswith(...)``）。
     """
-    if content.rstrip().endswith(_WORKSPACE_PATH_GUIDANCE.strip()):
+    if content.rstrip().endswith(WORKSPACE_PATH_GUIDANCE.strip()):
         return content
-    return content + _WORKSPACE_PATH_GUIDANCE
+    return content + WORKSPACE_PATH_GUIDANCE

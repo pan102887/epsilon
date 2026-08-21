@@ -11,7 +11,7 @@ from dataclasses import is_dataclass, replace
 from datetime import UTC, date, datetime
 from enum import Enum, StrEnum
 from time import time
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from application.run.serialization_ports import WorkflowSerializerPort
@@ -244,6 +244,7 @@ class WorkflowRunOrchestrator:
         child_state = state.get("child_run_state")
         if not isinstance(child_state, dict):
             return None
+        child_state = cast(dict[str, Any], child_state)
         if child_state.get("ownership_status") != "parent_waiting_child":
             return None
         if child_state.get("reconciliation_status") == "reconciled":
@@ -1147,8 +1148,12 @@ def _phase_attempt(state: dict[str, Any], phase: WorkflowPhase) -> int:
     history = state.get("phase_history")
     if not isinstance(history, list):
         return 1
+    history = cast(list[Any], history)
     count = sum(
-        1 for item in history if isinstance(item, dict) and item.get("phase") == phase.value
+        1
+        for item in history
+        if isinstance(item, dict)
+        and cast(dict[str, Any], item).get("phase") == phase.value
     )
     return count + 1
 
@@ -1163,7 +1168,9 @@ def _revise_limit_hit(
     if phase is not WorkflowPhase.REVISE:
         return False
     revise_counts = state.get("revise_counts")
-    count = revise_counts.get("revise", 0) if isinstance(revise_counts, dict) else 0
+    if not isinstance(revise_counts, dict):
+        return False
+    count = cast(dict[str, Any], revise_counts).get("revise", 0)
     return int(count) >= workflow.collaboration_limit.max_revise_per_phase
 
 
@@ -1239,7 +1246,8 @@ def _history(state: dict[str, Any]) -> list[dict[str, Any]]:
     raw = state.get("phase_history")
     if not isinstance(raw, list):
         return []
-    return [dict(item) for item in raw if isinstance(item, dict)]
+    raw = cast(list[Any], raw)
+    return [dict(cast(dict[str, Any], item)) for item in raw if isinstance(item, dict)]
 
 
 def _revise_counts(state: dict[str, Any]) -> dict[str, int]:
@@ -1248,6 +1256,7 @@ def _revise_counts(state: dict[str, Any]) -> dict[str, int]:
     raw = state.get("revise_counts")
     if not isinstance(raw, dict):
         return {}
+    raw = cast(dict[Any, Any], raw)
     result: dict[str, int] = {}
     for key, value in raw.items():
         try:
@@ -1357,7 +1366,9 @@ def _json_safe(value: Any) -> Any:
     if is_dataclass(value):
         return _json_safe(value.__dict__)
     if isinstance(value, dict):
+        value = cast(dict[Any, Any], value)
         return {str(key): _json_safe(item) for key, item in value.items()}
     if isinstance(value, (list, tuple, set, frozenset)):
+        value = cast(list[Any] | tuple[Any, ...] | set[Any] | frozenset[Any], value)
         return [_json_safe(item) for item in value]
     return str(value)

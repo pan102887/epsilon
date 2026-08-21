@@ -12,7 +12,7 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 
 class RunStatus(StrEnum):
@@ -120,11 +120,12 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, tuple):
-        return [_json_safe(item) for item in value]
+        return [_json_safe(item) for item in cast(tuple[object, ...], value)]
     if isinstance(value, list):
-        return [_json_safe(item) for item in value]
+        return [_json_safe(item) for item in cast(list[object], value)]
     if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
+        mapping = cast(dict[object, object], value)
+        return {str(key): _json_safe(item) for key, item in mapping.items()}
     return value
 
 

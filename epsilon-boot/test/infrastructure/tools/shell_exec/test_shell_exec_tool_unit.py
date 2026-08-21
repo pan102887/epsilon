@@ -31,7 +31,7 @@ from domain.workspace.exceptions import (
 from domain.workspace.value_objects import WorkspaceCapabilities, WorkspacePath
 from infrastructure.tools.shell_exec.shell_exec_tool import (
     ShellExecTool,
-    _blocked_command_reason,
+    blocked_command_reason,
     sanitize_env,
 )
 
@@ -43,6 +43,11 @@ _SUBPROCESS_PATCH_TARGET = (
 def _make_ws_path(s: str) -> WorkspacePath:
     """构造 :class:`WorkspacePath`，绕过 Policy 便于测试。"""
     return WorkspacePath(_posix=PurePosixPath(s))
+
+
+def _resolve_workspace_path(path: str) -> WorkspacePath:
+    normalized = path if path.startswith("/") else f"/{path}"
+    return _make_ws_path(normalized)
 
 
 def _fake_workspace(
@@ -62,7 +67,7 @@ def _fake_workspace(
         supports_large_files=True,
         local_materialization=local_materialization,
     )
-    ws.resolve_path.side_effect = lambda s: _make_ws_path(s if s.startswith("/") else f"/{s}")
+    ws.resolve_path.side_effect = _resolve_workspace_path
     ws.materialize_cwd = MagicMock(return_value=materialize_return)
     return ws
 
@@ -111,7 +116,7 @@ async def test_rejects_dangerous_commands_before_workspace_and_subprocess(
     ):
         await tool.execute(command=command)
 
-    assert _blocked_command_reason(command) is not None
+    assert blocked_command_reason(command) is not None
     assert "blocked-command" in exc_info.value.message
     assert exc_info.value.tool_name == "shell_exec"
     fake_exec.assert_not_called()

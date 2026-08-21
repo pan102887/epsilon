@@ -17,7 +17,7 @@ from typing import ClassVar
 from pydantic_settings import SettingsConfigDict
 
 from common.configuration import PropertiesBaseSettings, create_config
-from common.configuration.configuration_utils import _ENV_FILE
+from common.configuration.configuration_utils import ENV_FILE
 
 
 class ProviderConfig(PropertiesBaseSettings):
@@ -97,7 +97,7 @@ def create_provider_config(env_prefix: str) -> ProviderConfig:
         {
             "model_config": SettingsConfigDict(
                 env_prefix=env_prefix,
-                env_file=str(_ENV_FILE),
+                env_file=str(ENV_FILE),
                 env_file_encoding="utf-8",
                 extra="ignore",
                 frozen=True,

@@ -4,7 +4,7 @@
 本模块实现 SessionProviderPort 端口，提供基于 SQLAlchemy AsyncSession 的会话管理。
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -39,7 +39,7 @@ class SessionProviderAdapter(SessionProviderPort):
         self._session_factory = session_factory
 
     @asynccontextmanager
-    async def session(self) -> AsyncIterator[AsyncSession]:
+    async def session(self) -> AsyncGenerator[AsyncSession, None]:
         """
         获取数据库会话的异步上下文管理器
 

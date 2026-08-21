@@ -5,6 +5,8 @@
 使用 httpx 内置的 MockTransport 替代真实网络调用。
 """
 
+from typing import Any
+
 import httpx
 import pytest
 
@@ -14,7 +16,7 @@ from infrastructure.gateway.gateway_config import GatewayConfig
 # ── 测试用 Fixtures ──
 
 
-def _make_config(**overrides) -> GatewayConfig:
+def _make_config(**overrides: object) -> GatewayConfig:
     """创建测试用 GatewayConfig，通过构造参数覆盖默认值。
 
     Args:
@@ -23,18 +25,18 @@ def _make_config(**overrides) -> GatewayConfig:
     Returns:
         填充了测试值的 GatewayConfig 实例。
     """
-    defaults = {
+    defaults: dict[str, object] = {
         "base_url": "http://test-gateway:8080",
         "timeout": 5,
         "max_retries": 0,
     }
     defaults.update(overrides)
-    return GatewayConfig(**defaults)
+    return GatewayConfig.model_validate(defaults)
 
 
 def _mock_transport(
     status_code: int = 200,
-    json_body: dict | None = None,
+    json_body: dict[str, Any] | None = None,
     text_body: str = "ok",
 ) -> httpx.MockTransport:
     """创建返回固定响应的 MockTransport。
@@ -149,11 +151,12 @@ async def _start_with_mock(
         transport: 用于模拟响应的 MockTransport。
     """
     await client.start()
-    await client._client.aclose()
-    client._client = httpx.AsyncClient(
-        base_url=config.base_url,
-        timeout=httpx.Timeout(config.timeout),
-        transport=transport,
+    await client.replace_client(
+        httpx.AsyncClient(
+            base_url=config.base_url,
+            timeout=httpx.Timeout(config.timeout),
+            transport=transport,
+        )
     )
 
 
@@ -230,7 +233,7 @@ async def test_delete_request(config: GatewayConfig) -> None:
 
 async def test_default_headers_are_sent(config: GatewayConfig) -> None:
     """验证构造时传入的 default_headers 会附加到每次请求中。"""
-    captured_headers: list[dict] = []
+    captured_headers: list[dict[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured_headers.append(dict(request.headers))
@@ -251,7 +254,7 @@ async def test_default_headers_are_sent(config: GatewayConfig) -> None:
 
 async def test_per_request_headers_override_defaults(config: GatewayConfig) -> None:
     """验证单次请求的 headers 参数可以覆盖 default_headers 中的同名键。"""
-    captured_headers: list[dict] = []
+    captured_headers: list[dict[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured_headers.append(dict(request.headers))

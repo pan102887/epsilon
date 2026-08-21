@@ -23,14 +23,21 @@
 """
 
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
 from infrastructure.workspace.local_filesystem._common_impl import (
-    _edit_with_fallback_match,
-    _read_bytes_in_range,
-    _render_tree,
-    _write_bytes_atomically,
+    edit_with_fallback_match as _edit_with_fallback_match,
+)
+from infrastructure.workspace.local_filesystem._common_impl import (
+    read_bytes_in_range as _read_bytes_in_range,
+)
+from infrastructure.workspace.local_filesystem._common_impl import (
+    render_tree as _render_tree,
+)
+from infrastructure.workspace.local_filesystem._common_impl import (
+    write_bytes_atomically as _write_bytes_atomically,
 )
 
 # ── _read_bytes_in_range ──
@@ -123,7 +130,7 @@ class TestWriteBytesAtomically:
 
         real_replace = _os.replace
 
-        def _boom(*args, **kwargs):  # type: ignore[no-untyped-def]
+        def _boom(*args: object, **kwargs: object) -> NoReturn:
             raise OSError("simulated failure")
 
         monkeypatch.setattr(

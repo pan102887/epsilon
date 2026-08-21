@@ -36,13 +36,13 @@ _RESERVED_NAMES: list[str] = (
 # 保留名策略：随机大小写 + 可选后缀扩展名。
 def _randomize_case(word: str, toggles: tuple[bool, ...]) -> str:
     """按 toggles 对 word 的每个字符做大小写翻转。"""
-    out = []
+    out: list[str] = []
     for ch, flip in zip(word, toggles[: len(word)], strict=True):
         out.append(ch.upper() if flip else ch.lower())
     return "".join(out)
 
 
-reserved_name_st = st.builds(
+reserved_name_st: st.SearchStrategy[str] = st.builds(
     _randomize_case,
     st.sampled_from(_RESERVED_NAMES),
     st.tuples(st.booleans(), st.booleans(), st.booleans(), st.booleans()),
@@ -50,8 +50,12 @@ reserved_name_st = st.builds(
 
 
 # 带扩展名的保留名："CON.txt" / "NUL.json" 等——需求 4.3 要求前缀命中即拒绝。
-reserved_name_with_ext_st = st.builds(
-    lambda base, ext: f"{base}.{ext}",
+def _with_extension(base: str, ext: str) -> str:
+    return f"{base}.{ext}"
+
+
+reserved_name_with_ext_st: st.SearchStrategy[str] = st.builds(
+    _with_extension,
     reserved_name_st,
     st.sampled_from(["txt", "json", "log", "dat", "cfg"]),
 )
@@ -65,8 +69,12 @@ illegal_char_name_st = st.text(alphabet=_ILLEGAL_CHAR_ALPHABET, min_size=1, max_
 
 
 # 混合策略：在合法前缀后插入至少一个非法字符。
-mixed_illegal_name_st = st.builds(
-    lambda prefix, illegal_char, suffix: f"{prefix}{illegal_char}{suffix}",
+def _mixed_illegal_name(prefix: str, illegal_char: str, suffix: str) -> str:
+    return f"{prefix}{illegal_char}{suffix}"
+
+
+mixed_illegal_name_st: st.SearchStrategy[str] = st.builds(
+    _mixed_illegal_name,
     st.text(alphabet="abcdefgh0123456789-_", min_size=0, max_size=8),
     st.sampled_from(list(_ILLEGAL_CHAR_ALPHABET)),
     st.text(alphabet="abcdefgh0123456789-_", min_size=0, max_size=8),

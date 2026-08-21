@@ -19,13 +19,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from domain.agent.exceptions import HandoffPerformed
+from domain.agent.tools import ToolExecutionResult
 from domain.agent.value_objects import (
     AgentConfig,
     ApprovalDecision,
     ApprovalInterrupt,
     PendingActionRequest,
 )
-from domain.chat.context import AssistantMessage, ConversationContext
+from domain.chat.context import AssistantMessage, BaseMessage, ConversationContext
 from domain.chat.value_objects import ContextBuilderResult
 from domain.model_access.value_objects import (
     LLMResponse,
@@ -55,7 +56,7 @@ def _make_adapter(store: MemoryApprovalStore) -> ReActAgentAdapter:
     使循环能进入下一轮入口的 detect_handoff 检测点。
     """
 
-    async def _execute_proxy(req: ToolCallRequest) -> str:
+    async def _execute_proxy(req: ToolCallRequest) -> ToolExecutionResult:
         raise HandoffPerformed(
             target_agent="agent_b",
             content="reply from agent_b",
@@ -67,13 +68,14 @@ def _make_adapter(store: MemoryApprovalStore) -> ReActAgentAdapter:
     tool_registry.execute = AsyncMock(side_effect=_execute_proxy)
     tool_registry.get = MagicMock(return_value=None)
 
+    async def build_context(
+        messages: list[BaseMessage],
+        **kwargs: object,
+    ) -> ContextBuilderResult:
+        return ContextBuilderResult(messages=messages, usage={})
+
     context_builder = MagicMock()
-    context_builder.build = AsyncMock(
-        side_effect=lambda msgs, **kwargs: ContextBuilderResult(
-            messages=msgs,
-            usage={},
-        )
-    )
+    context_builder.build = AsyncMock(side_effect=build_context)
     return ReActAgentAdapter(
         tool_registry=tool_registry,
         context_builder=context_builder,
@@ -86,13 +88,16 @@ def _seed_context_with_handoff_tool_call() -> ConversationContext:
     context = ConversationContext()
     context.add_system_message("system")
     context.add_user_message("handoff to agent_b")
-    context._messages.append(
-        AssistantMessage(
+    context.replace_messages(
+        [
+            *context.get_messages(),
+            AssistantMessage(
             content="",
             tool_calls=[
                 ToolCallRequest("call-h1", "handoff_to_agent", '{"target":"agent_b"}')
             ],
-        )
+            ),
+        ]
     )
     return context
 

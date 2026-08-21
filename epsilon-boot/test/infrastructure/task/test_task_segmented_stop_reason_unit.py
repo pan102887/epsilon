@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from domain.agent.segmented_execution import SegmentExecutionPolicy
-from domain.agent.value_objects import AgentResult
+from domain.agent.value_objects import AgentConfig, AgentResult
 from domain.chat.context import ConversationContext, SystemMessage
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import ToolCallRequest
 from domain.prompt.value_objects import LoadedPrompt
 from domain.task.value_objects import Task, TaskContinueRequest, TaskStatus
 from infrastructure.task.task_agent_adapter import TaskAgentAdapter
 
 
-def _schema(name: str) -> dict:
+def _schema(name: str) -> dict[str, Any]:
     return {"type": "function", "function": {"name": name, "parameters": {}}}
 
 
@@ -24,12 +26,12 @@ def _adapter(
     agent: MagicMock,
     context: ConversationContext,
     policy: SegmentExecutionPolicy,
-    schemas: list[dict] | None = None,
+    schemas: list[dict[str, Any]] | None = None,
 ) -> TaskAgentAdapter:
     all_schemas = schemas or [_schema("search")]
     tool_registry = MagicMock()
 
-    def get_schemas(tool_names=None):
+    def get_schemas(tool_names: frozenset[str] | None = None) -> list[dict[str, Any]]:
         if tool_names is None:
             return list(all_schemas)
         requested = set(tool_names)
@@ -81,7 +83,11 @@ async def test_execute_stops_on_tool_boundary_unavailable() -> None:
         )
     )
 
-    async def run(ctx, _config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         _append_tool_tail(ctx)
         return AgentResult(content="", model="test-model", terminated_reason="max_rounds")
 
@@ -143,7 +149,11 @@ async def test_execute_stops_on_repeated_tool_call() -> None:
     """连续相同工具调用达到阈值时按 repeated_tool_call 停止。"""
     context = ConversationContext()
 
-    async def run(ctx, _config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         _append_tool_tail(ctx, arguments='{"q":"same"}')
         return AgentResult(
             content="",
@@ -182,7 +192,11 @@ async def test_execute_stops_on_repeated_tool_call_with_equivalent_json_argument
         '{"page":2,"q":"other"}',
     ]
 
-    async def run(ctx, _config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         _append_tool_tail(ctx, arguments=arguments_by_segment.pop(0))
         return AgentResult(
             content="",

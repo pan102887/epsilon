@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
 from domain.workspace.value_objects import (
@@ -86,7 +87,7 @@ class Workspace(Protocol):
         self,
         path: WorkspacePath,
         *,
-        context: dict | None = None,
+        context: Mapping[str, object] | None = None,
     ) -> bool:
         """判定 ``path`` 是否存在。
 
@@ -103,7 +104,7 @@ class Workspace(Protocol):
         self,
         path: WorkspacePath,
         *,
-        context: dict | None = None,
+        context: Mapping[str, object] | None = None,
     ) -> WorkspaceStatEntry:
         """返回 ``path`` 的元数据。
 
@@ -125,7 +126,7 @@ class Workspace(Protocol):
         *,
         start_line: int | None = None,
         end_line: int | None = None,
-        context: dict | None = None,
+        context: Mapping[str, object] | None = None,
     ) -> bytes:
         """读取 ``path`` 的字节内容，可选按 UTF-8 行范围切片。
 
@@ -149,7 +150,7 @@ class Workspace(Protocol):
         path: WorkspacePath,
         content: bytes,
         *,
-        context: dict | None = None,
+        context: Mapping[str, object] | None = None,
     ) -> int:
         """将 ``content`` 写入 ``path``，返回写入字节数。
 
@@ -173,7 +174,7 @@ class Workspace(Protocol):
         old_content: bytes,
         new_content: bytes,
         *,
-        context: dict | None = None,
+        context: Mapping[str, object] | None = None,
     ) -> int:
         """对 ``path`` 做"首个匹配替换"。
 
@@ -197,7 +198,7 @@ class Workspace(Protocol):
         path: WorkspacePath,
         *,
         recursive: bool = True,
-        context: dict | None = None,
+        context: Mapping[str, object] | None = None,
     ) -> list[WorkspaceStatEntry]:
         """列出 ``path`` 下的条目。
 
@@ -218,7 +219,7 @@ class Workspace(Protocol):
         self,
         path: WorkspacePath,
         *,
-        context: dict | None = None,
+        context: Mapping[str, object] | None = None,
     ) -> None:
         """删除 ``path``。
 

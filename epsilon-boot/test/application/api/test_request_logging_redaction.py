@@ -1,6 +1,6 @@
 """请求日志脱敏策略测试。"""
 
-from application.api.middlewares.request_logging import _safe_decode_body
+from application.api.middlewares.request_logging import safe_decode_body
 
 
 def test_safe_decode_body_redacts_sensitive_json_fields() -> None:
@@ -8,7 +8,7 @@ def test_safe_decode_body_redacts_sensitive_json_fields() -> None:
 
     raw = b'{"api_key":"sk-test-secret","password":"root123","message":"hello"}'
 
-    decoded = _safe_decode_body(raw)
+    decoded = safe_decode_body(raw)
 
     assert "sk-test-secret" not in decoded
     assert "root123" not in decoded

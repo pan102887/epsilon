@@ -32,7 +32,7 @@ def _rotating_handlers() -> list[RotatingFileHandler]:
 
 
 @pytest.fixture(autouse=True)
-def _cleanup_root_handlers() -> Iterator[None]:
+def cleanup_root_handlers_fixture() -> Iterator[None]:
     """用例结束时移除并关闭本用例挂到 root logger 的 RotatingFileHandler。"""
     before = set(_rotating_handlers())
     yield
@@ -44,7 +44,7 @@ def _cleanup_root_handlers() -> Iterator[None]:
 
 
 @pytest.fixture
-def _reset_tier_resolver(
+def reset_tier_resolver_fixture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[Path]:
     """以临时 HOME / CWD 重置全仓库唯一的 tier 解析器缓存单例。
@@ -67,29 +67,29 @@ def _reset_tier_resolver(
 
 
 def test_configure_cli_file_logging_attaches_rotating_handler(
-    _reset_tier_resolver: Path, monkeypatch: pytest.MonkeyPatch
+    reset_tier_resolver_fixture: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """装配后 root logger 挂上落 USER tier logs 的 RotatingFileHandler。"""
     monkeypatch.setenv("EPSILON_LOG_TO_FILE", "true")
 
-    cli_main._configure_cli_file_logging()
+    cli_main.configure_cli_file_logging()
 
     handlers = _rotating_handlers()
     assert len(handlers) == 1
     log_path = Path(handlers[0].baseFilename)
     assert log_path.name == "epsilon.log"
     # USER tier：~/.epsilon/<project-hash>/logs/epsilon.log，落临时 HOME 下不入项目工作区
-    assert _reset_tier_resolver in log_path.parents
+    assert reset_tier_resolver_fixture in log_path.parents
     assert log_path.parent.name == "logs"
 
 
 def test_configure_cli_file_logging_disabled_by_env(
-    _reset_tier_resolver: Path, monkeypatch: pytest.MonkeyPatch
+    reset_tier_resolver_fixture: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """EPSILON_LOG_TO_FILE=false 时不装配任何 RotatingFileHandler。"""
     monkeypatch.setenv("EPSILON_LOG_TO_FILE", "false")
 
-    cli_main._configure_cli_file_logging()
+    cli_main.configure_cli_file_logging()
 
     assert _rotating_handlers() == []
 
@@ -108,7 +108,7 @@ def test_configure_cli_file_logging_isolated_on_failure(
     monkeypatch.setenv("EPSILON_LOG_TO_FILE", "true")
 
     # 不抛出即为通过；不应挂上 handler
-    cli_main._configure_cli_file_logging()
+    cli_main.configure_cli_file_logging()
     assert _rotating_handlers() == []
 
 

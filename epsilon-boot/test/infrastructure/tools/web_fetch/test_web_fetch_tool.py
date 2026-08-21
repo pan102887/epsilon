@@ -37,7 +37,7 @@ class TestWebFetchToolInterface:
         assert tool.parameters["required"] == ["url"]
         assert "url" in tool.parameters["properties"]
         assert "timeout" in tool.parameters["properties"]
-        assert tool._client.follow_redirects is False
+        assert tool.client.follow_redirects is False
 
 
 @pytest.mark.asyncio
@@ -54,7 +54,7 @@ async def test_execute_returns_formatted_fetch_result() -> None:
 
     with (
         patch("infrastructure.tools.web_fetch.web_fetch_tool.validate_url_safety"),
-        patch.object(tool._client, "get", AsyncMock(return_value=response)) as mock_get,
+        patch.object(tool.client, "get", AsyncMock(return_value=response)) as mock_get,
     ):
         result = await tool.execute(url="https://example.com/start")
 
@@ -90,7 +90,7 @@ async def test_execute_follows_checked_redirects() -> None:
     with (
         patch("infrastructure.tools.web_fetch.web_fetch_tool.validate_url_safety") as mock_validate,
         patch.object(
-            tool._client,
+            tool.client,
             "get",
             AsyncMock(side_effect=[redirect_response, final_response]),
         ) as mock_get,
@@ -124,7 +124,7 @@ async def test_execute_rejects_redirect_to_unsafe_ip() -> None:
             "infrastructure.tools.http_request.http_request_tool.socket.getaddrinfo",
             return_value=public_dns,
         ),
-        patch.object(tool._client, "get", AsyncMock(return_value=redirect_response)) as mock_get,
+        patch.object(tool.client, "get", AsyncMock(return_value=redirect_response)) as mock_get,
         pytest.raises(ToolExecutionError) as exc_info,
     ):
         await tool.execute(url="https://example.com/start")
@@ -137,7 +137,7 @@ async def test_execute_rejects_redirect_to_unsafe_ip() -> None:
 @pytest.mark.asyncio
 async def test_execute_rejects_too_many_redirects() -> None:
     """验证超过最大重定向跳数时中止抓取。"""
-    responses = []
+    responses: list[MagicMock] = []
     for index in range(6):
         response = MagicMock(spec=httpx.Response)
         response.status_code = 302
@@ -150,7 +150,7 @@ async def test_execute_rejects_too_many_redirects() -> None:
 
     with (
         patch("infrastructure.tools.web_fetch.web_fetch_tool.validate_url_safety"),
-        patch.object(tool._client, "get", AsyncMock(side_effect=responses)) as mock_get,
+        patch.object(tool.client, "get", AsyncMock(side_effect=responses)) as mock_get,
         pytest.raises(ToolExecutionError) as exc_info,
     ):
         await tool.execute(url="https://example.com/start")
@@ -167,7 +167,7 @@ async def test_execute_wraps_unexpected_exception() -> None:
 
     with (
         patch("infrastructure.tools.web_fetch.web_fetch_tool.validate_url_safety"),
-        patch.object(tool._client, "get", AsyncMock(side_effect=RuntimeError("network boom"))),
+        patch.object(tool.client, "get", AsyncMock(side_effect=RuntimeError("network boom"))),
         pytest.raises(ToolExecutionError) as exc_info,
     ):
         await tool.execute(url="https://example.com")

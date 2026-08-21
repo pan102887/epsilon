@@ -35,6 +35,7 @@ def _load_chat_module():
         pathlib.Path(__file__).resolve().parents[3] / "src" / "application" / "routers" / "chat.py"
     )
     spec = importlib.util.spec_from_file_location("test_chat_router_sync_module", str(chat_path))
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

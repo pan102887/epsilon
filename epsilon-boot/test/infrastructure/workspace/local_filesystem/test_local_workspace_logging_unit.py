@@ -21,8 +21,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 import pytest
 
@@ -36,9 +38,9 @@ from domain.workspace.policy import WorkspacePolicy
 from domain.workspace.value_objects import WorkspacePath
 from infrastructure.workspace.local_filesystem.local_workspace import (
     LocalFilesystemWorkspace,
-    _log_confinement_violation,
-    _sanitize_context,
-    _sanitize_requested_path_for_log,
+    log_confinement_violation,
+    sanitize_context,
+    sanitize_requested_path_for_log,
 )
 
 _SKIP_IF_WINDOWS = pytest.mark.skipif(
@@ -61,7 +63,7 @@ def _make_ws(root: Path, *, follow_symlinks: bool = False) -> LocalFilesystemWor
 
 
 def test_sanitize_context_drops_non_whitelist_keys() -> None:
-    result = _sanitize_context(
+    result = sanitize_context(
         {
             "tool_name": "read_file",
             "trace_id": "t1",
@@ -84,7 +86,7 @@ def test_sanitize_context_drops_non_whitelist_keys() -> None:
 class TestSanitizeRequestedPathForLog:
     def test_token_equals_value_is_masked(self) -> None:
         s = "/path?token=abcdef&other=keep"
-        out = _sanitize_requested_path_for_log(s)
+        out = sanitize_requested_path_for_log(s)
         assert "abcdef" not in out
         assert "token=" in out
         assert "other=keep" in out
@@ -93,37 +95,37 @@ class TestSanitizeRequestedPathForLog:
 
     def test_secret_equals_value_is_masked(self) -> None:
         s = "/x?secret=xyz"
-        out = _sanitize_requested_path_for_log(s)
+        out = sanitize_requested_path_for_log(s)
         assert "xyz" not in out
         assert "secret=" in out
 
     def test_password_case_insensitive(self) -> None:
         s = "/y?PASSWORD=1234"
-        out = _sanitize_requested_path_for_log(s)
+        out = sanitize_requested_path_for_log(s)
         assert "1234" not in out
         assert "PASSWORD=" in out
 
     def test_api_key_variants_masked(self) -> None:
         s1 = "/z?api_key=aaa"
         s2 = "/z?api-key=bbb"
-        assert "aaa" not in _sanitize_requested_path_for_log(s1)
-        assert "bbb" not in _sanitize_requested_path_for_log(s2)
+        assert "aaa" not in sanitize_requested_path_for_log(s1)
+        assert "bbb" not in sanitize_requested_path_for_log(s2)
 
     def test_credential_masked(self) -> None:
         s = "/z?credential=zzz"
-        out = _sanitize_requested_path_for_log(s)
+        out = sanitize_requested_path_for_log(s)
         assert "zzz" not in out
         assert "credential=" in out
 
     def test_plain_path_unchanged(self) -> None:
         s = "/a/b/c.md"
-        out = _sanitize_requested_path_for_log(s)
+        out = sanitize_requested_path_for_log(s)
         assert out == s
 
     def test_short_value_padded_to_min_three_stars(self) -> None:
         """极短 value（长度 1）也至少替换成 3 个 `*`，便于识别。"""
         s = "/x?token=a"
-        out = _sanitize_requested_path_for_log(s)
+        out = sanitize_requested_path_for_log(s)
         assert "a" not in out.split("token=")[1].split("&")[0]
         assert "***" in out
 
@@ -139,7 +141,7 @@ class TestLogConfinementViolation:
             logging.WARNING, logger="infrastructure.workspace.local_filesystem.local_workspace"
         )
 
-        _log_confinement_violation(
+        log_confinement_violation(
             operation="read",
             requested_path="../etc/passwd",
             resolved_workspace_path=None,
@@ -150,18 +152,18 @@ class TestLogConfinementViolation:
         rec = [r for r in caplog.records if r.message == "workspace_confinement_violation"]
         assert len(rec) == 1
         extra = rec[0]
-        assert extra.workspace_backend_kind == "local_filesystem"
-        assert extra.operation == "read"
-        assert extra.violation_reason == "absolute_outside"
-        assert extra.tool_name == "read_file"
-        assert extra.trace_id == "t1"
+        assert vars(extra)["workspace_backend_kind"] == "local_filesystem"
+        assert vars(extra)["operation"] == "read"
+        assert vars(extra)["violation_reason"] == "absolute_outside"
+        assert vars(extra)["tool_name"] == "read_file"
+        assert vars(extra)["trace_id"] == "t1"
 
     def test_emits_sanitized_requested_path(self, caplog: pytest.LogCaptureFixture) -> None:
         caplog.set_level(
             logging.WARNING, logger="infrastructure.workspace.local_filesystem.local_workspace"
         )
 
-        _log_confinement_violation(
+        log_confinement_violation(
             operation="read",
             requested_path="/hack?token=abcdef",
             resolved_workspace_path=None,
@@ -170,7 +172,7 @@ class TestLogConfinementViolation:
         )
 
         rec = [r for r in caplog.records if r.message == "workspace_confinement_violation"][-1]
-        path_in_log = rec.requested_path
+        path_in_log = str(vars(rec)["requested_path"])
         assert "abcdef" not in path_in_log
         assert "token=" in path_in_log
 
@@ -179,7 +181,7 @@ class TestLogConfinementViolation:
             logging.WARNING, logger="infrastructure.workspace.local_filesystem.local_workspace"
         )
 
-        _log_confinement_violation(
+        log_confinement_violation(
             operation="read",
             requested_path="/x",
             resolved_workspace_path=None,
@@ -188,7 +190,7 @@ class TestLogConfinementViolation:
         )
 
         rec = [r for r in caplog.records if r.message == "workspace_confinement_violation"][-1]
-        assert rec.tool_name == "read_file"
+        assert vars(rec)["tool_name"] == "read_file"
         # secret/password 必须不被记录到 extra
         assert not hasattr(rec, "secret")
         assert not hasattr(rec, "password")
@@ -227,11 +229,11 @@ async def test_read_via_symlink_escape_logs_confinement_violation(
     matching = [r for r in caplog.records if r.message == "workspace_confinement_violation"]
     assert matching, "expected at least one workspace_confinement_violation log"
     rec = matching[-1]
-    assert rec.workspace_backend_kind == "local_filesystem"
-    assert rec.operation == "read"
-    assert rec.tool_name == "read_file"
-    assert rec.trace_id == "t1"
-    assert rec.violation_reason == "symlink_escape"
+    assert vars(rec)["workspace_backend_kind"] == "local_filesystem"
+    assert vars(rec)["operation"] == "read"
+    assert vars(rec)["tool_name"] == "read_file"
+    assert vars(rec)["trace_id"] == "t1"
+    assert vars(rec)["violation_reason"] == "symlink_escape"
 
 
 # ---------------------------------------------------------------------------
@@ -262,12 +264,14 @@ async def test_stat_permission_error_logs_with_context(
     # 一次 ``os.stat(target)`` 用于跨设备校验（此次必须放行走 real_stat），
     # adapter ``stat()`` 随后调用第二次 ``os.stat(target)``，这一次才抛
     # PermissionError，触发 adapter 的 permission_denied 翻译分支。
-    import os as _os
-
-    real_stat = _os.stat
+    real_stat = os.stat
     call_counts: dict[str, int] = {}
 
-    def fake_stat(path, *a, **kw):
+    def fake_stat(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        *a: Any,
+        **kw: Any,
+    ) -> os.stat_result:
         key = str(path)
         if key == str(target):
             call_counts[key] = call_counts.get(key, 0) + 1
@@ -291,8 +295,8 @@ async def test_stat_permission_error_logs_with_context(
     matching = [r for r in caplog.records if r.message == "workspace_io_error"]
     assert matching
     rec = matching[-1]
-    assert rec.tool_name == "read_file"
-    assert rec.trace_id == "t2"
+    assert vars(rec)["tool_name"] == "read_file"
+    assert vars(rec)["trace_id"] == "t2"
 
 
 # ---------------------------------------------------------------------------

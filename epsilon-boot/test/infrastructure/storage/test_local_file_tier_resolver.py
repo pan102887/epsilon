@@ -12,6 +12,7 @@ import re
 from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+from typing import Protocol, cast
 
 import pytest
 
@@ -22,6 +23,26 @@ from infrastructure.storage.local_file_tier_resolver import (
 )
 
 _HEX16 = re.compile(r"^[0-9a-f]{16}$")
+
+
+def _sessions_dir(layout: ResolvedTierLayout) -> Path:
+    return layout.sessions_dir()
+
+
+def _traces_dir(layout: ResolvedTierLayout) -> Path:
+    return layout.traces_dir()
+
+
+def _artifacts_dir(layout: ResolvedTierLayout) -> Path:
+    return layout.artifacts_dir()
+
+
+def _logs_dir(layout: ResolvedTierLayout) -> Path:
+    return layout.logs_dir()
+
+
+class _MutableLayout(Protocol):
+    home: Path
 
 
 def test_resolve_project_is_deterministic(tmp_path: Path) -> None:
@@ -53,10 +74,10 @@ def test_resolve_tenant_raises_value_error(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "subdir_getter",
     [
-        lambda layout: layout.sessions_dir(),
-        lambda layout: layout.traces_dir(),
-        lambda layout: layout.artifacts_dir(),
-        lambda layout: layout.logs_dir(),
+        _sessions_dir,
+        _traces_dir,
+        _artifacts_dir,
+        _logs_dir,
     ],
 )
 def test_subdir_creation_is_idempotent(
@@ -171,5 +192,6 @@ def test_multi_base_hash_determinism_and_isolation(
 def test_resolved_layout_is_frozen(tmp_path: Path) -> None:
     """ResolvedTierLayout 为 frozen dataclass，home 不可变。"""
     layout = ResolvedTierLayout(home=tmp_path)
+    mutable_layout = cast(_MutableLayout, layout)
     with pytest.raises(FrozenInstanceError):
-        layout.home = tmp_path / "other"  # type: ignore[misc]  # 验证 frozen 语义
+        mutable_layout.home = tmp_path / "other"

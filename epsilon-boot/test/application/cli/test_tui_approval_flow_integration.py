@@ -16,14 +16,16 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from io import StringIO
+from typing import cast
 
 from rich.console import Console
 from textual.pilot import Pilot
 from textual.widget import Widget
 
 from application.cli.approval_screen import ApprovalScreen
+from application.cli.runtime import CliRuntime
 from application.cli.session import TuiSessionState
-from application.cli.tui import _EpsilonTextualApp
+from application.cli.tui import EpsilonTextualApp
 from domain.agent.value_objects import (
     AgentStreamEvent,
     ApprovalDecision,
@@ -85,12 +87,15 @@ def _widget_text(widget: Widget) -> str:
     """把消息组件承载的 rich renderable 渲染为纯文本，供断言检索内容。"""
     rendered = widget.render()
     renderable = getattr(rendered, "_renderable", rendered)
-    console = Console(file=StringIO(), width=200)
+    buffer = StringIO()
+    console = Console(file=buffer, width=200)
     console.print(renderable)
-    return console.file.getvalue()
+    return buffer.getvalue()
 
 
-async def _wait_for_screen(app: _EpsilonTextualApp, pilot: Pilot) -> ApprovalScreen | None:
+async def _wait_for_screen(
+    app: EpsilonTextualApp, pilot: Pilot[int]
+) -> ApprovalScreen | None:
     """轮询等待 ApprovalScreen 出现在屏幕栈顶。"""
     for _ in range(60):
         await pilot.pause(0.01)
@@ -100,11 +105,11 @@ async def _wait_for_screen(app: _EpsilonTextualApp, pilot: Pilot) -> ApprovalScr
     return None
 
 
-async def _wait_idle(app: _EpsilonTextualApp, pilot: Pilot) -> None:
+async def _wait_idle(app: EpsilonTextualApp, pilot: Pilot[int]) -> None:
     """轮询等待当前交互任务结束。"""
     for _ in range(80):
         await pilot.pause(0.01)
-        if app._current_task is None:
+        if app.current_task is None:
             return
 
 
@@ -145,25 +150,25 @@ class _ClosedLoopRuntime(_BaseRuntime):
 async def test_approval_flow_closed_loop_reopens_panel() -> None:
     """验证首次审批→approve 续播→再次审批→再次打开面板的闭环（4.1/4.2）。"""
     runtime = _ClosedLoopRuntime()
-    app = _EpsilonTextualApp(runtime)  # type: ignore[arg-type]
+    app = EpsilonTextualApp(cast(CliRuntime, runtime))
 
     async with app.run_test(size=(100, 30)) as pilot:
-        app._set_composer_text("write")
+        app.set_composer_text("write")
         await app.action_submit()
 
         first = await _wait_for_screen(app, pilot)
         assert first is not None
-        assert first._actions[0].tool_call_id == "call-1"
+        assert first.actions[0].tool_call_id == "call-1"
         first.action_approve()
 
         second = await _wait_for_screen(app, pilot)
         assert second is not None
-        assert second._actions[0].tool_call_id == "call-2"
+        assert second.actions[0].tool_call_id == "call-2"
         second.action_approve()
 
         await _wait_idle(app, pilot)
 
-    assert app._current_task is None
+    assert app.current_task is None
     assert [call[1] for call in runtime.resume_calls] == ["a1", "a2"]
     assert runtime.resume_calls[0][2] == [ApprovalDecision("approve", "call-1")]
     assert runtime.resume_calls[1][2] == [ApprovalDecision("approve", "call-2")]
@@ -195,10 +200,10 @@ class _ErrorResumeRuntime(_BaseRuntime):
 async def test_approval_flow_resume_error_ends_stream() -> None:
     """验证续播流 kind="error" 由既有 error 分支渲染并结束续播（4.4）。"""
     runtime = _ErrorResumeRuntime()
-    app = _EpsilonTextualApp(runtime)  # type: ignore[arg-type]
+    app = EpsilonTextualApp(cast(CliRuntime, runtime))
 
     async with app.run_test(size=(100, 30)) as pilot:
-        app._set_composer_text("write")
+        app.set_composer_text("write")
         await app.action_submit()
 
         screen = await _wait_for_screen(app, pilot)
@@ -207,7 +212,7 @@ async def test_approval_flow_resume_error_ends_stream() -> None:
 
         await _wait_idle(app, pilot)
 
-        assert app._current_task is None
+        assert app.current_task is None
         assert len(runtime.resume_calls) == 1
         errors = [_widget_text(w) for w in app.query(".error")]
         assert any("resume failed" in text for text in errors)
@@ -241,11 +246,11 @@ class _CancelRuntime(_BaseRuntime):
 async def test_approval_flow_cancel_during_resume_keeps_recoverable() -> None:
     """验证进行中取消复用既有取消路径、会话不进入不可恢复状态（4.3）。"""
     runtime = _CancelRuntime()
-    app = _EpsilonTextualApp(runtime)  # type: ignore[arg-type]
+    app = EpsilonTextualApp(cast(CliRuntime, runtime))
 
     async with app.run_test(size=(100, 30)) as pilot:
-        session_id = app._state.session_id
-        app._set_composer_text("write")
+        session_id = app.session_state.session_id
+        app.set_composer_text("write")
         await app.action_submit()
 
         screen = await _wait_for_screen(app, pilot)
@@ -262,9 +267,9 @@ async def test_approval_flow_cancel_during_resume_keeps_recoverable() -> None:
 
         await _wait_idle(app, pilot)
 
-        assert app._current_task is None
+        assert app.current_task is None
         # 会话 id 未被清理或替换，仍可再次恢复。
-        assert app._state.session_id == session_id
+        assert app.session_state.session_id == session_id
         cancelled = [_widget_text(w) for w in app.query(".message")]
         assert any("已中止" in text for text in cancelled)
 
@@ -297,24 +302,24 @@ class _MultiActionRuntime(_BaseRuntime):
 async def test_approval_flow_multi_action_per_decision() -> None:
     """验证单批次多动作逐条推进并产出与顺序一致的决策序列（2.1–2.3）。"""
     runtime = _MultiActionRuntime()
-    app = _EpsilonTextualApp(runtime)  # type: ignore[arg-type]
+    app = EpsilonTextualApp(cast(CliRuntime, runtime))
 
     async with app.run_test(size=(100, 30)) as pilot:
-        app._set_composer_text("write")
+        app.set_composer_text("write")
         await app.action_submit()
 
         screen = await _wait_for_screen(app, pilot)
         assert screen is not None
-        assert len(screen._actions) == 2
+        assert len(screen.actions) == 2
         # 第一条 approve，面板逐条推进到第二条。
         screen.action_approve()
-        assert screen._index == 1
+        assert screen.current_index == 1
         # 第二条 reject，全部完成后关闭面板并续播。
         screen.action_reject()
 
         await _wait_idle(app, pilot)
 
-    assert app._current_task is None
+    assert app.current_task is None
     assert len(runtime.resume_calls) == 1
     decisions = runtime.resume_calls[0][2]
     assert [d.type for d in decisions] == ["approve", "reject"]

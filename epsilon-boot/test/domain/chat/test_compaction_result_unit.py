@@ -2,13 +2,13 @@
 
 import pytest
 
-from domain.chat.context import UserMessage
+from domain.chat.context import BaseMessage, UserMessage
 from domain.chat.value_objects import ContextCompactionResult
 
 
 def test_context_compaction_result_accepts_valid_values() -> None:
     """合法消息列表和 usage 可构造压缩结果。"""
-    messages = [UserMessage(content="hello")]
+    messages: list[BaseMessage] = [UserMessage(content="hello")]
 
     result = ContextCompactionResult(
         messages=messages,

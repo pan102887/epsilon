@@ -31,7 +31,7 @@ def test_decide_next_segment_terminal_preconditions(
     decision = decide_next_segment(
         policy=SegmentExecutionPolicy(auto_continue_enabled=True),
         usage=SegmentBudgetUsage(),
-        status=kwargs.get("status", "paused"),
+        status=str(kwargs.get("status", "paused")),
         can_continue=bool(kwargs.get("can_continue", True)),
         progress=_PROGRESS,
         tool_boundary_available=bool(kwargs.get("tool_boundary_available", True)),

@@ -7,13 +7,26 @@
 各结果之间使用分隔符区分，便于 LLM 解析和引用。
 """
 
-from typing import Any
-
-from tavily import TavilyClient
+from importlib import import_module
+from typing import Any, Protocol, cast
 
 from domain.agent.exceptions import ToolExecutionError
 from domain.agent.guardrails import ToolRiskLevel
 from domain.agent.tools import Tool, ToolExecutionResult
+
+
+class _TavilyClient(Protocol):
+    def search(self, *, query: str, max_results: int) -> dict[str, Any]: ...
+
+
+class _TavilyClientFactory(Protocol):
+    def __call__(self, *, api_key: str) -> _TavilyClient: ...
+
+
+TavilyClient = cast(
+    _TavilyClientFactory,
+    import_module("tavily").TavilyClient,
+)
 
 
 class WebSearchTool(Tool):
@@ -103,7 +116,8 @@ class WebSearchTool(Tool):
 
         try:
             response = self._client.search(query=query, max_results=max_results)
-            results = response.get("results", [])
+            raw_results = response.get("results", [])
+            results = cast(list[Any], raw_results) if isinstance(raw_results, list) else []
 
             if not results:
                 return ToolExecutionResult(
@@ -111,8 +125,11 @@ class WebSearchTool(Tool):
                     metadata={"query": query[:128], "result_count": 0},
                 )
 
-            formatted = []
+            formatted: list[str] = []
             for i, result in enumerate(results, start=1):
+                if not isinstance(result, dict):
+                    continue
+                result = cast(dict[str, Any], result)
                 title = result.get("title", "")
                 url = result.get("url", "")
                 content = result.get("content", "")

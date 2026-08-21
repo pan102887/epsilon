@@ -32,3 +32,8 @@ def _render_with_line_numbers(text: str, *, start_line: int = 1) -> str:
         return ""
     lines = text.splitlines()
     return "\n".join(f"{start_line + i:4d} | {line}" for i, line in enumerate(lines))
+
+
+def render_with_line_numbers(text: str, *, start_line: int = 1) -> str:
+    """将文本渲染为带行号的内容。"""
+    return _render_with_line_numbers(text, start_line=start_line)

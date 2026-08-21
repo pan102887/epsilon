@@ -38,10 +38,16 @@ _NON_IO_METHODS: frozenset[str] = frozenset(
 """不得携带 ``context`` 的非 I/O 方法。"""
 
 
+def _source_path(cls: type[object]) -> Path:
+    source_file = inspect.getsourcefile(cls)
+    assert source_file is not None
+    return Path(source_file)
+
+
 def _find_tool_source_paths() -> list[Path]:
     """定位 6 个工具源文件。"""
     fs_paths = [
-        Path(inspect.getsourcefile(cls))
+        _source_path(cls)
         for cls in (ReadFileTool, WriteFileTool, EditFileTool, ListDirTool)
     ]
     tools_root = fs_paths[0].parent.parent

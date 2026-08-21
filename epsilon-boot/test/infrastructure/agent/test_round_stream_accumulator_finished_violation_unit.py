@@ -24,7 +24,9 @@ from domain.model_access.value_objects import (
     StreamingChunk,
     StreamingToolCallDelta,
 )
-from infrastructure.agent.round_stream_accumulator import _RoundStreamAccumulator
+from infrastructure.agent.round_stream_accumulator import (
+    RoundStreamAccumulator as _RoundStreamAccumulator,
+)
 
 
 async def _stream(chunks: list[StreamingChunk]) -> AsyncIterator[StreamingChunk]:
@@ -66,11 +68,11 @@ async def test_t4_finished_id_none_falls_back_with_warning(
     warns = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert any("finished 分片违约" in r.getMessage() for r in warns)
     record = next(r for r in warns if "finished 分片违约" in r.getMessage())
-    assert record.violation_field == "id"
-    assert record.source == "stream_finished"
-    assert record.model == "glm-4-plus"
-    assert record.tool_call_index == 0
-    assert record.raw_id_value is None
+    assert getattr(record, "violation_field", None) == "id"
+    assert getattr(record, "source", None) == "stream_finished"
+    assert getattr(record, "model", None) == "glm-4-plus"
+    assert getattr(record, "tool_call_index", None) == 0
+    assert getattr(record, "raw_id_value", None) is None
 
 
 @pytest.mark.asyncio
@@ -108,8 +110,8 @@ async def test_t5_finished_id_empty_string_falls_back(
         for r in caplog.records
         if r.levelno == logging.WARNING and "finished 分片违约" in r.getMessage()
     )
-    assert record.violation_field == "id"
-    assert record.raw_id_value == ""
+    assert getattr(record, "violation_field", None) == "id"
+    assert getattr(record, "raw_id_value", None) == ""
 
 
 @pytest.mark.asyncio

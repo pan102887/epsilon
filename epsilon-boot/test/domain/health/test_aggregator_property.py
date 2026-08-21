@@ -4,6 +4,7 @@
 验证聚合状态逻辑和结果完整性始终满足正确性属性。
 """
 
+from typing import cast
 from unittest.mock import AsyncMock
 
 import hypothesis.strategies as st
@@ -11,6 +12,7 @@ import pytest
 from hypothesis import given, settings
 
 from domain.health.aggregator import ReadinessAggregator
+from domain.health.ports import HealthCheckPort
 from domain.health.value_objects import (
     HealthCheckResult,
     HealthStatus,
@@ -66,7 +68,7 @@ async def test_aggregated_status_is_up_iff_all_checks_are_up(
     空列表视为全部 UP（无 DOWN 项）。
     """
     mock_ports = [_make_mock_check_port(r) for r in results]
-    aggregator = ReadinessAggregator(checks=mock_ports)
+    aggregator = ReadinessAggregator(checks=cast(list[HealthCheckPort], mock_ports))
 
     readiness: ReadinessResult = await aggregator.check_readiness()
 
@@ -94,7 +96,7 @@ async def test_aggregated_result_contains_all_check_items(
     应等于输入的检查实例数量，且每个检查的 name 都出现在结果中。
     """
     mock_ports = [_make_mock_check_port(r) for r in results]
-    aggregator = ReadinessAggregator(checks=mock_ports)
+    aggregator = ReadinessAggregator(checks=cast(list[HealthCheckPort], mock_ports))
 
     readiness: ReadinessResult = await aggregator.check_readiness()
 

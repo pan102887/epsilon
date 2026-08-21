@@ -15,7 +15,7 @@ from domain.workspace.exceptions import (
 )
 from domain.workspace.ports import Workspace
 from infrastructure.tools._workspace_search import clamp_text, render_file_header
-from infrastructure.tools.filesystem._rendering import _render_with_line_numbers
+from infrastructure.tools.filesystem._rendering import render_with_line_numbers
 
 _DEFAULT_READ_MANY_FILE_LIMIT = 200
 _DEFAULT_READ_MANY_MAX_TOTAL_CHARS = 60000
@@ -159,7 +159,7 @@ class ReadManyFilesTool(Tool):
         except (WorkspaceIoError, UnicodeDecodeError):
             header = render_file_header(file_path)
             return f"{header}\n[error] 读取文件 {file_path} 失败", False, 0
-        rendered = _render_with_line_numbers(text, start_line=offset)
+        rendered = render_with_line_numbers(text, start_line=offset)
         line_count = len(text.splitlines()) if text else 0
         return f"{render_file_header(ws_path.to_posix())}\n{rendered}", True, line_count
 

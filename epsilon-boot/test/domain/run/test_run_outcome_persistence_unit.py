@@ -36,7 +36,7 @@ def test_succeeded_outcome_uses_success_mutation_and_result_fallback() -> None:
 
 def test_paused_outcome_uses_paused_mutation_and_keeps_result() -> None:
     """paused outcome 应写入暂停状态并保留可继续执行语义。"""
-    result = {"content": "partial"}
+    result: dict[str, object] = {"content": "partial"}
     outcome = _outcome(RunStatus.PAUSED, result=result, can_continue=True)
 
     decision = decide_run_outcome_persistence(outcome)

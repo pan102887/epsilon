@@ -6,12 +6,25 @@
 """
 
 import dataclasses
+from typing import Protocol, cast
 
 import hypothesis.strategies as st
 import pytest
 from hypothesis import given, settings
 
 from domain.task.value_objects import Task, TaskResult, TaskStatus, TraceEntry
+
+
+class _MutableTask(Protocol):
+    goal: str
+
+
+class _MutableTraceEntry(Protocol):
+    step: int
+
+
+class _MutableTaskResult(Protocol):
+    content: str
 
 # ── Hypothesis 策略 ──
 
@@ -53,8 +66,8 @@ latency_ms_st = st.floats(min_value=0, allow_nan=False, allow_infinity=False)
 )
 def test_task_construction_and_field_preservation(
     goal: str,
-    input_data: dict,
-    constraints: list,
+    input_data: dict[str, str],
+    constraints: list[str],
     output_format: str | None,
     model: str | None,
     session_id: str | None,
@@ -91,9 +104,10 @@ def test_task_is_frozen(goal: str) -> None:
     Validates: Requirements 2.1
     """
     task = Task(goal=goal)
+    mutable_task = cast(_MutableTask, task)
 
     with pytest.raises(dataclasses.FrozenInstanceError):
-        task.goal = "new goal"  # type: ignore[misc]
+        mutable_task.goal = "new goal"
 
 
 @settings(max_examples=100, deadline=5000)
@@ -142,9 +156,10 @@ def test_trace_entry_is_frozen(
     Validates: Requirements 3.1
     """
     entry = TraceEntry(step=step, action=action, detail=detail, timestamp_ms=timestamp_ms)
+    mutable_entry = cast(_MutableTraceEntry, entry)
 
     with pytest.raises(dataclasses.FrozenInstanceError):
-        entry.step = 999  # type: ignore[misc]
+        mutable_entry.step = 999
 
 
 @settings(max_examples=100, deadline=5000)
@@ -160,8 +175,8 @@ def test_task_result_construction_and_field_preservation(
     content: str,
     status: TaskStatus,
     model: str,
-    usage: dict,
-    trace: list,
+    usage: dict[str, int],
+    trace: list[TraceEntry],
     latency_ms: float,
 ) -> None:
     """验证 TaskResult 构造成功且所有字段值保留。
@@ -203,9 +218,10 @@ def test_task_result_is_frozen(content: str, status: TaskStatus, model: str) -> 
         model=model,
         prompt_id="task-template@v1",
     )
+    mutable_result = cast(_MutableTaskResult, result)
 
     with pytest.raises(dataclasses.FrozenInstanceError):
-        result.content = "new content"  # type: ignore[misc]
+        mutable_result.content = "new content"
 
 
 # ── Property 2: Task goal whitespace validation ──

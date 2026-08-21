@@ -15,7 +15,7 @@ from collections.abc import Callable
 
 from domain.agent.value_objects import ApprovalDecision, ApprovalPolicy, PendingActionRequest
 
-_APPROVAL_MODES = frozenset({"ask", "auto", "manual"})
+APPROVAL_MODES = frozenset({"ask", "auto", "manual"})
 """本地审批模式取值域。
 
 由本模块与 ``commands.py`` 的 ``/approval mode`` 校验共用同一定义，避免

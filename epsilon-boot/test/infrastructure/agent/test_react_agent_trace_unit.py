@@ -1,5 +1,7 @@
 """ReActAgentAdapter trace 集成单元测试。"""
 
+from collections.abc import AsyncIterator, Mapping
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -9,12 +11,17 @@ from domain.agent.tools import ToolExecutionResult
 from domain.agent.trace_value_objects import ErrorTrace, ModelCallTrace, ToolCallTrace
 from domain.agent.value_objects import AgentConfig
 from domain.chat.context import ConversationContext, UserMessage
-from domain.model_access.value_objects import StreamingChunk, StreamingToolCallDelta
+from domain.model_access.value_objects import (
+    ChatRequest,
+    StreamingChunk,
+    StreamingToolCallDelta,
+    ToolCallRequest,
+)
 from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 
 
-def _make_config(**overrides) -> AgentConfig:
-    defaults = {
+def _make_config(**overrides: Any) -> AgentConfig:
+    defaults: dict[str, Any] = {
         "system_prompt": "you are helpful",
         "tool_schemas": [{"type": "function", "function": {"name": "echo", "parameters": {}}}],
         "model": "gpt-4",
@@ -33,30 +40,30 @@ def _make_context(session_id: str = "test-session") -> ConversationContext:
     return ctx
 
 
-def _make_tool_registry_mock():
+def _make_tool_registry_mock() -> MagicMock:
     registry = MagicMock()
     registry.get_schemas.return_value = []
 
-    async def _execute(request):
+    async def _execute(request: ToolCallRequest) -> ToolExecutionResult:
         return ToolExecutionResult(content="tool result")
 
     registry.execute = AsyncMock(side_effect=_execute)
     return registry
 
 
-def _make_tool_registry_with_metadata(metadata):
+def _make_tool_registry_with_metadata(metadata: Mapping[str, Any]) -> MagicMock:
     """工具注册表 mock：execute 返回携带指定 metadata 的 ToolExecutionResult。"""
     registry = MagicMock()
     registry.get_schemas.return_value = []
 
-    async def _execute(request):
+    async def _execute(request: ToolCallRequest) -> ToolExecutionResult:
         return ToolExecutionResult(content="tool ok", metadata=dict(metadata))
 
     registry.execute = AsyncMock(side_effect=_execute)
     return registry
 
 
-def _make_tool_registry_raising(exc: Exception):
+def _make_tool_registry_raising(exc: Exception) -> MagicMock:
     """工具注册表 mock：execute 抛出指定异常（模拟工具执行失败）。"""
     registry = MagicMock()
     registry.get_schemas.return_value = []
@@ -64,11 +71,11 @@ def _make_tool_registry_raising(exc: Exception):
     return registry
 
 
-def _make_model_access_text_response():
+def _make_model_access_text_response() -> MagicMock:
     """模拟只返回文本的 model_access（不调用工具）。"""
     model_access = MagicMock()
 
-    async def _stream(request):
+    async def _stream(request: ChatRequest) -> AsyncIterator[StreamingChunk]:
         yield StreamingChunk(
             delta_content="hello",
             finished=True,
@@ -79,12 +86,12 @@ def _make_model_access_text_response():
     return model_access
 
 
-def _make_model_access_tool_then_text():
+def _make_model_access_tool_then_text() -> MagicMock:
     """模拟先返回 tool_calls，再返回文本。"""
     model_access = MagicMock()
     call_count = {"n": 0}
 
-    async def _stream(request):
+    async def _stream(request: ChatRequest) -> AsyncIterator[StreamingChunk]:
         call_count["n"] += 1
         if call_count["n"] == 1:
             # 第一轮：返回 tool_calls（使用 StreamingToolCallDelta 格式）
@@ -241,7 +248,7 @@ async def test_trace_store_exception_does_not_affect_agent_result():
 # ═══════════════════════════════════════════════════════════════
 
 
-def _tool_traces(trace_store):
+def _tool_traces(trace_store: AsyncMock) -> list[ToolCallTrace]:
     """从 trace_store.append_step 调用记录中提取 ToolCallTrace 列表。"""
     return [
         call[0][1]
@@ -250,7 +257,7 @@ def _tool_traces(trace_store):
     ]
 
 
-def _error_traces(trace_store):
+def _error_traces(trace_store: AsyncMock) -> list[ErrorTrace]:
     """从 trace_store.append_step 调用记录中提取 ErrorTrace 列表。"""
     return [
         call[0][1]
@@ -333,7 +340,7 @@ async def test_error_trace_written_on_agent_loop_exception():
 
     model_access = MagicMock()
 
-    async def _stream(request):
+    async def _stream(request: ChatRequest) -> AsyncIterator[StreamingChunk]:
         raise RuntimeError("model provider down")
         yield  # pragma: no cover  # 使函数成为 async generator
 

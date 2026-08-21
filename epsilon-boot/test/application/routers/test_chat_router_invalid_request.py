@@ -16,6 +16,7 @@ import importlib.util
 import inspect
 import pathlib
 import sys
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -32,7 +33,7 @@ if "prometheus_client" not in sys.modules:
     sys.modules["prometheus_client"] = _mock_prom
 
 
-def _load_chat_module():
+def _load_chat_module() -> Any:
     """直接加载 chat 路由模块，绕过 application 包的 __init__.py。
 
     使用 importlib 从文件路径加载 ``src/application/routers/chat.py``，
@@ -47,12 +48,14 @@ def _load_chat_module():
     spec = importlib.util.spec_from_file_location(
         "test_chat_invalid_request_module", str(chat_path)
     )
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-def _load_exception_handlers_module():
+def _load_exception_handlers_module() -> Any:
     """直接加载异常处理模块，用于注册统一异常处理器。
 
     Returns:
@@ -67,6 +70,8 @@ def _load_exception_handlers_module():
     spec = importlib.util.spec_from_file_location(
         "test_exception_handlers_module", str(handlers_path)
     )
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

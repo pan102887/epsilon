@@ -31,6 +31,9 @@ jobs:
       - name: Run backend lint gate
         run: uv run ruff check src test
 
+      - name: Run backend strict type check
+        run: uv run pyright
+
       - name: Run tests (includes static secret hygiene checks)
         run: uv run pytest -m "not benchmark"
 

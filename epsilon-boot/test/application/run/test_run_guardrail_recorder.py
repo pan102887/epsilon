@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -18,6 +18,7 @@ from domain.agent.guardrails import (
     GuardrailRuntimeStats,
 )
 from domain.run.exceptions import RunLeaseConflictError
+from domain.run.ports import RunStorePort
 from domain.run.runtime_context import (
     RunExecutionContext,
     reset_run_execution_context,
@@ -224,7 +225,7 @@ async def test_record_observation_maps_event_type_and_accumulates_summary_counts
     run_store = _RunStore(snapshot)
     observation_store = _ObservationStore(snapshot)
     recorder = RunGuardrailRecorder(
-        run_store=run_store,
+        run_store=cast(RunStorePort, run_store),
         observation_store=observation_store,
         guardrail_serializer=GuardrailSerializerAdapter(),
     )
@@ -273,7 +274,7 @@ async def test_record_observation_surfaces_owner_conflict_from_store() -> None:
     observation_store = _ObservationStore(snapshot)
     observation_store.error = RunLeaseConflictError("run-1", "worker-1")
     recorder = RunGuardrailRecorder(
-        run_store=run_store,
+        run_store=cast(RunStorePort, run_store),
         observation_store=observation_store,
         guardrail_serializer=GuardrailSerializerAdapter(),
     )
@@ -309,7 +310,7 @@ async def test_record_observation_returns_none_without_run_context() -> None:
     run_store = _RunStore(snapshot)
     observation_store = _ObservationStore(snapshot)
     recorder = RunGuardrailRecorder(
-        run_store=run_store,
+        run_store=cast(RunStorePort, run_store),
         observation_store=observation_store,
         guardrail_serializer=GuardrailSerializerAdapter(),
     )

@@ -29,13 +29,17 @@ def _path(value: str) -> WorkspacePath:
     return WorkspacePath(_posix=PurePosixPath(value))
 
 
+def _resolve_path(value: str) -> WorkspacePath:
+    return _path(value if value.startswith("/") else f"/{value}")
+
+
 def _workspace(*, local_materialization: bool = True) -> MagicMock:
     ws = MagicMock(name="Workspace")
     ws.display_root_hint.return_value = "/tmp/ws"
     ws.capabilities.return_value = WorkspaceCapabilities(
         local_materialization=local_materialization,
     )
-    ws.resolve_path.side_effect = lambda s: _path(s if s.startswith("/") else f"/{s}")
+    ws.resolve_path.side_effect = _resolve_path
     ws.materialize_cwd = MagicMock(return_value="/tmp/ws")
     return ws
 

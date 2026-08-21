@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock
 
 import hypothesis.strategies as st
 import pytest
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from hypothesis import given, settings
 
 from domain.health.value_objects import HealthCheckResult, HealthStatus
@@ -19,7 +21,12 @@ aioredis = pytest.importorskip("redis.asyncio")
 
 exception_message_st = st.text(min_size=1, max_size=200).filter(lambda s: s.strip() != "")
 
-redis_error_st = exception_message_st.map(lambda msg: aioredis.RedisError(msg))
+
+def _redis_error(message: str) -> RedisError:
+    return RedisError(message)
+
+
+redis_error_st: st.SearchStrategy[RedisError] = exception_message_st.map(_redis_error)
 
 timeout_error_st = exception_message_st.map(lambda msg: TimeoutError(msg))
 
@@ -36,14 +43,14 @@ any_exception_st = st.one_of(redis_error_st, timeout_error_st, generic_error_st)
 @given(exc=redis_error_st)
 @pytest.mark.asyncio
 async def test_redis_error_produces_down_with_reason(
-    exc: aioredis.RedisError,
+    exc: RedisError,
 ) -> None:
     """验证任意 RedisError 异常均产生 DOWN 状态并携带失败原因。
 
     使用 Hypothesis 生成随机异常消息构造 RedisError，mock Redis 客户端
     的 ping 方法抛出该异常，断言适配器返回 status=DOWN 且 reason 不为 None。
     """
-    mock_redis = AsyncMock(spec=aioredis.Redis)
+    mock_redis = AsyncMock(spec=Redis)
     mock_redis.ping.side_effect = exc
     adapter = RedisHealthCheckAdapter(redis_client=mock_redis)
 
@@ -66,7 +73,7 @@ async def test_timeout_error_produces_down_with_reason(
     asyncio.wait_for 抛出 asyncio.TimeoutError，断言适配器返回
     status=DOWN 且 reason 包含超时描述。
     """
-    mock_redis = AsyncMock(spec=aioredis.Redis)
+    mock_redis = AsyncMock(spec=Redis)
     mock_redis.ping.side_effect = TimeoutError()
     adapter = RedisHealthCheckAdapter(redis_client=mock_redis)
 
@@ -90,7 +97,7 @@ async def test_generic_exception_produces_down_with_reason(
     的 ping 方法抛出该异常，断言适配器返回 status=DOWN 且 reason 包含
     原始异常消息。
     """
-    mock_redis = AsyncMock(spec=aioredis.Redis)
+    mock_redis = AsyncMock(spec=Redis)
     mock_redis.ping.side_effect = exc
     adapter = RedisHealthCheckAdapter(redis_client=mock_redis)
 
@@ -113,7 +120,7 @@ async def test_any_exception_never_propagates(
     对于任意类型的异常（RedisError、TimeoutError、RuntimeError），
     适配器应始终返回 HealthCheckResult 而非向上传播异常。
     """
-    mock_redis = AsyncMock(spec=aioredis.Redis)
+    mock_redis = AsyncMock(spec=Redis)
     mock_redis.ping.side_effect = exc
     adapter = RedisHealthCheckAdapter(redis_client=mock_redis)
 

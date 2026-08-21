@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from domain.agent.guardrails import ToolRiskLevel
-from domain.agent.tools import Tool
+from domain.agent.tools import Tool, ToolExecutionResult
 
 
 class _MinimalTool(Tool):
@@ -21,8 +21,8 @@ class _MinimalTool(Tool):
     def parameters(self) -> dict[str, Any]:
         return {"type": "object", "properties": {}}
 
-    async def execute(self, **kwargs: Any) -> str:
-        return "ok"
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
+        return ToolExecutionResult(content="ok")
 
 
 def test_tool_default_risk_level_is_high() -> None:

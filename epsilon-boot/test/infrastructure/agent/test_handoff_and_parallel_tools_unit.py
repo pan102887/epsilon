@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -20,6 +21,7 @@ from domain.agent.exceptions import (
     HandoffPerformed,
 )
 from domain.agent.tools import ToolExecutionResult
+from domain.agent.ports import DelegationPort
 from domain.agent.value_objects import (
     DelegationResult,
     HandoffResult,
@@ -241,7 +243,7 @@ def test_handoff_tool_description_lists_registered_agents() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_parallel_tool(delegation) -> DelegateParallelTool:
+def _make_parallel_tool(delegation: DelegationPort) -> DelegateParallelTool:
     registry = AgentRegistryAdapter()
     for n in ("a1", "a2"):
         registry.register(_make_named(n))
@@ -262,7 +264,7 @@ async def test_delegate_parallel_tool_aggregates_results_with_check_marks() -> N
         ]
     )
 
-    tool = _make_parallel_tool(delegation)
+    tool = _make_parallel_tool(cast(DelegationPort, delegation))
     result = await tool.execute(
         requests=[
             {"agent_name": "a1", "task_goal": "g1"},
@@ -279,8 +281,9 @@ async def test_delegate_parallel_tool_aggregates_results_with_check_marks() -> N
     assert result.metadata["results_count"] == 2
     assert result.metadata["success_count"] == 1
     # metadata 字段类型与键集合对齐 design §3.12。
-    assert isinstance(result.metadata["targets"], list)
-    assert all(isinstance(t, str) for t in result.metadata["targets"])
+    targets = result.metadata["targets"]
+    assert isinstance(targets, list)
+    assert all(isinstance(target, str) for target in cast(list[object], targets))
     assert isinstance(result.metadata["results_count"], int)
     assert isinstance(result.metadata["success_count"], int)
     assert set(result.metadata.keys()) == {"targets", "results_count", "success_count"}

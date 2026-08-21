@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import cast
 
 import pytest
 
 from domain.agent.ports import ApprovalPolicyPort, ApprovalStateStorePort
-from domain.agent.tools import ToolExecutionResult
-from domain.agent.value_objects import AgentConfig, ApprovalInterrupt, ApprovalPolicy
-from domain.chat.context import ConversationContext, UserMessage
+from domain.agent.tools import ToolExecutionResult, ToolRegistry
+from domain.agent.value_objects import (
+    AgentConfig,
+    AgentStreamEvent,
+    ApprovalInterrupt,
+    ApprovalInterruptSummary,
+    ApprovalPolicy,
+)
+from domain.chat.context import BaseMessage, ConversationContext, UserMessage
 from domain.chat.value_objects import ContextBuilderResult
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import (
     ChatRequest,
     LLMResponse,
@@ -38,7 +46,14 @@ class FakeContextBuilder:
         self.error = error
         self.calls = 0
 
-    async def build(self, *args, **kwargs) -> ContextBuilderResult:
+    async def build(
+        self,
+        messages: list[BaseMessage],
+        *,
+        model_access: ModelAccessPort | None = None,
+        model: str | None = None,
+    ) -> ContextBuilderResult:
+        del messages, model_access, model
         self.calls += 1
         if self.error is not None:
             raise self.error
@@ -78,7 +93,10 @@ class MemoryApprovalStore(ApprovalStateStorePort):
     async def delete_session(self, session_id: str) -> None:
         self.saved = None
 
-    async def list_pending_by_session(self, session_id: str) -> list:
+    async def list_pending_by_session(
+        self, session_id: str
+    ) -> list[ApprovalInterruptSummary]:
+        del session_id
         return []
 
 
@@ -133,6 +151,14 @@ class FakeModelAccess:
             yield chunk
 
 
+def _tool_registry(fake: FakeToolRegistry) -> ToolRegistry:
+    return cast(ToolRegistry, fake)
+
+
+def _model_access(fake: FakeModelAccess) -> ModelAccessPort:
+    return cast(ModelAccessPort, fake)
+
+
 async def test_react_agent_run_events_emits_tool_and_assistant_events() -> None:
     builder = FakeContextBuilder(
         [
@@ -149,8 +175,8 @@ async def test_react_agent_run_events_emits_tool_and_assistant_events() -> None:
         ]
     )
     adapter = ReActAgentAdapter(
-        tool_registry=FakeToolRegistry(),  # type: ignore[arg-type]
-        context_builder=builder,  # type: ignore[arg-type]
+        tool_registry=_tool_registry(FakeToolRegistry()),
+        context_builder=builder,
     )
     context = ConversationContext()
     context.add_user_message("hello")
@@ -176,7 +202,7 @@ async def test_react_agent_run_events_emits_tool_and_assistant_events() -> None:
         async for event in adapter.run_events(
             context,
             config,
-            FakeModelAccess(),  # type: ignore[arg-type]
+            _model_access(FakeModelAccess()),
         )
     ]
 
@@ -257,6 +283,7 @@ async def test_react_agent_run_events_emits_approval_required_shape() -> None:
 
     assert [event.kind for event in events] == ["status", "approval_required"]
     approval_event = events[-1]
+    assert store.saved is not None
     assert approval_event.content == "当前请求等待人工审批，请通过审批恢复接口提交决策。"
     assert approval_event.metadata["round"] == 1
     assert approval_event.metadata["session_id"] == ""
@@ -299,7 +326,7 @@ async def test_react_agent_run_events_builder_failure_skips_model_calls() -> Non
         prompt_id="chat-default@v1",
     )
     model_access = FakeModelAccess()
-    events = []
+    events: list[AgentStreamEvent] = []
 
     with pytest.raises(EnvironmentContextBuildError):
         async for event in adapter.run_events(

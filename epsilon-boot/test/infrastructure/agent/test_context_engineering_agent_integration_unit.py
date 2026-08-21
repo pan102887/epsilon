@@ -6,20 +6,28 @@
 """
 
 from unittest.mock import AsyncMock, MagicMock
+from collections.abc import AsyncIterator
+from typing import cast
 
 import pytest
 
-from domain.agent.tools import ToolExecutionResult
+from domain.agent.tools import ToolExecutionResult, ToolRegistry
 from domain.agent.value_objects import AgentConfig
 from domain.chat.context import (
     AssistantMessage,
+    BaseMessage,
     ConversationContext,
     SystemMessage,
     ToolMessage,
     UserMessage,
 )
 from domain.chat.value_objects import ContextBuilderResult
-from domain.model_access.value_objects import ChatRequest, LLMResponse, ToolCallRequest
+from domain.model_access.value_objects import (
+    ChatRequest,
+    LLMResponse,
+    StreamingChunk,
+    ToolCallRequest,
+)
 from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 
 
@@ -49,7 +57,7 @@ class FakeModelAccess:
         self.chat_requests.append(request)
         return self._responses.pop(0)
 
-    async def stream(self, request: ChatRequest):
+    async def stream(self, request: ChatRequest) -> AsyncIterator[StreamingChunk]:
         from test.infrastructure.agent._v3_stream_helpers import response_to_chunks
 
         # ``chat_requests`` 仍记录每轮请求，以便保留既有断言语义（NFR-3）。
@@ -63,20 +71,23 @@ class FakeModelAccess:
         for chunk in response_to_chunks(response):
             yield chunk
 
+    def count_tokens(self, messages: list[BaseMessage]) -> int:
+        return sum(len(message.content) for message in messages)
+
 
 @pytest.mark.asyncio
 async def test_agent_context_engineering_uses_builder_messages_without_persisting_environment() -> (
     None
 ):
     """Agent 两轮调用应使用 builder messages、累计 usage，并隔离环境上下文。"""
-    first_builder_messages = [
+    first_builder_messages: list[BaseMessage] = [
         SystemMessage(content="system prompt"),
         SystemMessage(
             content="<environment_context>\nworkspace: workspace:/\n</environment_context>"
         ),
         UserMessage(content="builder round 1 user"),
     ]
-    second_builder_messages = [
+    second_builder_messages: list[BaseMessage] = [
         SystemMessage(content="system prompt"),
         SystemMessage(
             content="<environment_context>\nworkspace: workspace:/\n</environment_context>"
@@ -124,7 +135,7 @@ async def test_agent_context_engineering_uses_builder_messages_without_persistin
     )
     tool_registry = FakeToolRegistry()
     adapter = ReActAgentAdapter(
-        tool_registry=tool_registry,
+        tool_registry=cast(ToolRegistry, tool_registry),
         context_builder=context_builder,
     )
     config = AgentConfig(

@@ -4,7 +4,7 @@
 """
 
 import json
-from typing import Any
+from typing import Any, cast
 
 from pydantic_settings import SettingsConfigDict
 
@@ -42,8 +42,9 @@ class MCPConfig(PropertiesBaseSettings):
             return {}
         data = json.loads(self.servers)
         if isinstance(data, dict) and "mcpServers" in data:
-            return data["mcpServers"]
-        return data
+            wrapped = cast(dict[str, object], data)["mcpServers"]
+            return cast(dict[str, Any], wrapped) if isinstance(wrapped, dict) else {}
+        return cast(dict[str, Any], data) if isinstance(data, dict) else {}
 
 
 mcp_config = create_config(MCPConfig)

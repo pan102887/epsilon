@@ -18,6 +18,7 @@ from domain.agent.exceptions import (
 from domain.agent.value_objects import (
     AgentConfig,
     ApprovalDecision,
+    ApprovalDecisionType,
     ApprovalInterrupt,
     EditedAction,
     PendingActionRequest,
@@ -412,7 +413,9 @@ def _action(
     tool_call_id: str,
     tool_name: str,
     arguments: str,
-    allowed_decisions: frozenset[str] = frozenset({"approve", "edit", "reject"}),
+    allowed_decisions: frozenset[ApprovalDecisionType] = frozenset(
+        {"approve", "edit", "reject"}
+    ),
 ) -> PendingActionRequest:
     """构造待审批动作。"""
     return PendingActionRequest(

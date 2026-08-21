@@ -1,5 +1,7 @@
 """任务继续工具边界属性测试。"""
 
+from collections.abc import Set as AbstractSet
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -8,13 +10,14 @@ from hypothesis import strategies as st
 
 from domain.agent.value_objects import AgentConfig, AgentResult
 from domain.chat.context import ConversationContext, SystemMessage
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import ToolCallRequest
 from domain.prompt.value_objects import LoadedPrompt
 from domain.task.value_objects import TaskContinueRequest
 from infrastructure.task.task_agent_adapter import TaskAgentAdapter
 
 
-def _schema(name: str) -> dict:
+def _schema(name: str) -> dict[str, Any]:
     return {"type": "function", "function": {"name": name, "parameters": {}}}
 
 
@@ -47,13 +50,19 @@ async def test_continue_task_tool_boundary_never_broadens(names: list[str]) -> N
     context.add_tool_result(boundary[0], "result", "call-1")
     captured: list[AgentConfig] = []
 
-    async def run(_ctx, config, _model_access):
+    async def run(
+        _ctx: ConversationContext,
+        config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         captured.append(config)
         return AgentResult(content="done", model="test-model")
 
     registry = MagicMock()
 
-    def get_schemas(tool_names=None):
+    def get_schemas(
+        tool_names: AbstractSet[str] | None = None,
+    ) -> list[dict[str, Any]]:
         if tool_names is None:
             return list(all_schemas)
         return [schema for schema in all_schemas if schema["function"]["name"] in set(tool_names)]

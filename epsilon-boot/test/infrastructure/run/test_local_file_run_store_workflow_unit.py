@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -17,7 +18,7 @@ from infrastructure.run.local_file_run_store_adapter import LocalFileRunStoreAda
 pytestmark = pytest.mark.asyncio
 
 
-def _adapter(tmp_path) -> LocalFileRunStoreAdapter:
+def _adapter(tmp_path: Path) -> LocalFileRunStoreAdapter:
     """使用真实本地文件 helper 构造测试适配器。"""
 
     return LocalFileRunStoreAdapter(
@@ -45,7 +46,7 @@ def _request() -> RunCreateRequest:
     )
 
 
-async def test_create_run_persists_workflow_fields(tmp_path) -> None:
+async def test_create_run_persists_workflow_fields(tmp_path: Path) -> None:
     """create_run 应把 RunCreateRequest workflow 字段写入 snapshot。"""
     store = _adapter(tmp_path)
 
@@ -58,11 +59,13 @@ async def test_create_run_persists_workflow_fields(tmp_path) -> None:
     assert loaded.collaboration_summary == {"latest_steps": []}
 
 
-async def test_legacy_snapshot_without_workflow_fields_loads_as_none(tmp_path) -> None:
+async def test_legacy_snapshot_without_workflow_fields_loads_as_none(
+    tmp_path: Path,
+) -> None:
     """旧 JSON 缺失 workflow 字段时反序列化应得到 None。"""
     store = _adapter(tmp_path)
     snapshot = await store.create_run(_request())
-    path = store._snapshot_path(snapshot.run_id)
+    path = store.snapshot_path(snapshot.run_id)
     data = json.loads(path.read_text(encoding="utf-8"))
     data.pop("workflow_name", None)
     data.pop("workflow_run_state", None)
@@ -77,7 +80,9 @@ async def test_legacy_snapshot_without_workflow_fields_loads_as_none(tmp_path) -
     assert loaded.collaboration_summary is None
 
 
-async def test_worker_mark_methods_override_or_preserve_workflow_fields(tmp_path) -> None:
+async def test_worker_mark_methods_override_or_preserve_workflow_fields(
+    tmp_path: Path,
+) -> None:
     """worker mark 方法传入字段时覆盖，None 时保留原值。"""
     store = _adapter(tmp_path)
     created = await store.create_run(_request())
@@ -108,7 +113,9 @@ async def test_worker_mark_methods_override_or_preserve_workflow_fields(tmp_path
     assert succeeded.collaboration_summary == {"latest_steps": [{"link_id": "step-1"}]}
 
 
-async def test_approval_resume_preserves_or_overrides_workflow_fields(tmp_path) -> None:
+async def test_approval_resume_preserves_or_overrides_workflow_fields(
+    tmp_path: Path,
+) -> None:
     """approval resume 应保留当前 phase，传入字段时可覆盖。"""
     store = _adapter(tmp_path)
     created = await store.create_run(_request())
@@ -161,7 +168,9 @@ async def test_approval_resume_preserves_or_overrides_workflow_fields(tmp_path) 
     assert succeeded.collaboration_summary == {"latest_steps": [{"link_id": "step-2"}]}
 
 
-async def test_enqueue_recovery_preserves_or_overrides_workflow_fields(tmp_path) -> None:
+async def test_enqueue_recovery_preserves_or_overrides_workflow_fields(
+    tmp_path: Path,
+) -> None:
     """recovery 入队应保留当前 phase，传入字段时可覆盖。"""
     store = _adapter(tmp_path)
     created = await store.create_run(_request())

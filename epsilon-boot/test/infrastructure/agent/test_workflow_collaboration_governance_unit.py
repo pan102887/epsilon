@@ -8,8 +8,13 @@ from typing import Any
 import pytest
 
 from domain.agent.exceptions import DelegationDepthExceededError, HandoffPerformed
-from domain.agent.value_objects import DelegationResult, HandoffResult
-from domain.chat.context import ConversationContext
+from domain.agent.value_objects import (
+    DelegationRequest,
+    DelegationResult,
+    HandoffResult,
+    NamedAgentConfig,
+)
+from domain.chat.context import BaseMessage, ConversationContext
 from domain.run.value_objects import RunEvent, RunEventType
 from domain.run.workflow import CollaborationLimit, WorkflowPhase
 from domain.run.workflow_context import (
@@ -26,6 +31,15 @@ pytestmark = pytest.mark.asyncio
 
 
 class _Registry:
+    def register(self, config: NamedAgentConfig) -> None:
+        pass
+
+    def get(self, name: str) -> NamedAgentConfig | None:
+        return None
+
+    def has(self, name: str) -> bool:
+        return name in self.list_names()
+
     def list_names(self) -> list[str]:
         return ["agent-a", "agent-b"]
 
@@ -46,34 +60,34 @@ class _Delegation:
         self,
         agent_name: str,
         task_goal: str,
-        input_data: dict[str, Any],
-        delegation_depth: int,
-        max_delegation_depth: int,
+        input_data: dict[str, Any] | None = None,
+        delegation_depth: int = 0,
+        max_delegation_depth: int = 3,
     ) -> DelegationResult:
         self.delegate_calls.append(
-            (agent_name, task_goal, input_data, delegation_depth, max_delegation_depth)
+            (agent_name, task_goal, input_data or {}, delegation_depth, max_delegation_depth)
         )
         return self.delegate_result
 
     async def delegate_parallel(
         self,
-        requests,
-        *,
-        delegation_depth: int,
-        max_delegation_depth: int,
-    ):
+        requests: list[DelegationRequest],
+        delegation_depth: int = 0,
+        max_delegation_depth: int = 3,
+    ) -> list[DelegationResult]:
         self.parallel_calls.append((requests, delegation_depth, max_delegation_depth))
         return self.parallel_results[: len(requests)]
 
     async def handoff(
         self,
         agent_name: str,
-        messages,
-        *,
-        delegation_depth: int,
-        max_delegation_depth: int,
+        context_messages: list[BaseMessage],
+        delegation_depth: int = 0,
+        max_delegation_depth: int = 3,
     ) -> HandoffResult:
-        self.handoff_calls.append((agent_name, messages, delegation_depth, max_delegation_depth))
+        self.handoff_calls.append(
+            (agent_name, context_messages, delegation_depth, max_delegation_depth)
+        )
         return self.handoff_result
 
 
@@ -317,3 +331,11 @@ async def test_successful_handoff_passes_policy_depths_to_delegation_port() -> N
     _agent_name, _messages, delegation_depth, max_delegation_depth = delegation.handoff_calls[0]
     assert delegation_depth == 1
     assert max_delegation_depth == 2
+
+
+# Public test fakes and context builders reused by integration coverage.
+Delegation = _Delegation
+parent_context_token = _parent_context_token
+Registry = _Registry
+workflow_token = _workflow_token
+EventStore = _EventStore

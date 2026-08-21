@@ -26,15 +26,18 @@ from domain.agent.value_objects import (
     AgentConfig,
     ApprovalDecision,
     ApprovalInterrupt,
+    ApprovalInterruptSummary,
     ApprovalPolicy,
     PendingActionRequest,
 )
 from domain.chat.context import (
     AssistantMessage,
+    BaseMessage,
     ConversationContext,
     UserMessage,
 )
 from domain.chat.value_objects import ContextBuilderResult
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import (
     ChatRequest,
     LLMResponse,
@@ -96,7 +99,9 @@ class _MemoryApprovalStore(ApprovalStateStorePort):
         for k in keys_to_remove:
             del self._store[k]
 
-    async def list_pending_by_session(self, session_id: str) -> list:
+    async def list_pending_by_session(
+        self, session_id: str
+    ) -> list[ApprovalInterruptSummary]:
         return []
 
 
@@ -114,7 +119,14 @@ class _FakeContextBuilder:
             ]
         )
 
-    async def build(self, *args, **kwargs) -> ContextBuilderResult:
+    async def build(
+        self,
+        messages: list[BaseMessage],
+        *,
+        model_access: ModelAccessPort | None = None,
+        model: str | None = None,
+    ) -> ContextBuilderResult:
+        del messages, model_access, model
         if self._results:
             return self._results.pop(0)
         return ContextBuilderResult(
@@ -141,6 +153,9 @@ class _FakeModelAccess:
                 yield chunk
             return
         yield StreamingChunk(delta_content="done", finished=True, usage={"total_tokens": 1})
+
+    def count_tokens(self, messages: list[BaseMessage]) -> int:
+        return sum(len(message.content) for message in messages)
 
 
 def _config() -> AgentConfig:
@@ -262,7 +277,7 @@ async def test_full_hitl_roundtrip_timestamps_flow() -> None:
                     usage={"prompt_tokens": 3},
                 ),
             ]
-        ),  # type: ignore[arg-type]
+        ),
         approval_policy=_AlwaysApprovePolicy(),
         approval_store=store,
     )
@@ -292,10 +307,11 @@ async def test_full_hitl_roundtrip_timestamps_flow() -> None:
     config = _config()
 
     # Step 1: 执行 → 触发审批中断
-    result = await adapter.run(context, config, model)  # type: ignore[arg-type]
+    result = await adapter.run(context, config, model)
     assert result.status == "approval_required"
 
     # 验证 store 中有保存的中断
+    assert result.approval is not None
     approval_id = result.approval.approval_id
     consumed = await store.consume("sess-test", approval_id)
     assert consumed is not None
@@ -327,7 +343,7 @@ async def test_full_hitl_roundtrip_timestamps_flow() -> None:
         config,
         model,
         consumed,
-        decisions,  # type: ignore[arg-type]
+        decisions,
     )
     assert resume_result.status == "completed"
     assert resume_result.content == "final answer"
@@ -374,7 +390,7 @@ async def test_extract_trace_uses_preserved_timestamps_after_resume() -> None:
 
     # 直接调用 _extract_trace 静态方法
     dummy_adapter = TaskAgentAdapter.__new__(TaskAgentAdapter)
-    trace = dummy_adapter._extract_trace(
+    trace = dummy_adapter.extract_trace(
         restored_ctx.get_messages(),
         start_index=2,  # 从 assistant message 开始
         event_timestamps=restored_ctx.event_timestamps,

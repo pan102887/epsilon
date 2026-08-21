@@ -110,8 +110,8 @@ class CollaborationSummaryBody(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    latest_steps: list[dict[str, Any]] = Field(default_factory=list)
-    child_links: list[dict[str, Any]] = Field(default_factory=list)
+    latest_steps: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])
+    child_links: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])
     delegation_count: int = 0
     handoff_count: int = 0
     max_depth_seen: int = 0
@@ -225,6 +225,16 @@ def _event_body(event: RunEvent) -> RunEventBody:
         payload=event.payload,
         created_at=event.created_at,
     )
+
+
+def snapshot_body(snapshot: RunSnapshot) -> RunSnapshotBody:
+    """把领域 RunSnapshot 映射为公开 HTTP body。"""
+    return _snapshot_body(snapshot)
+
+
+def event_body(event: RunEvent) -> RunEventBody:
+    """把领域 RunEvent 映射为公开 HTTP body。"""
+    return _event_body(event)
 
 
 def _run_create_request(body: RunCreateRequestBody) -> RunCreateRequest:

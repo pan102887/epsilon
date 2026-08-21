@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from domain.run.exceptions import RunLeaseConflictError
 from domain.run.outcome import RunExecutionOutcome
+from domain.run.ports import RunEventStorePort, RunProgressSink, RunStorePort
 from domain.run.value_objects import (
     RunEvent,
     RunEventType,
@@ -221,7 +222,9 @@ class _Executor:
         self.outcome = outcome
         self.cancel_after = cancel_after
 
-    async def execute(self, snapshot: RunSnapshot, progress) -> RunExecutionOutcome:
+    async def execute(
+        self, snapshot: RunSnapshot, progress: RunProgressSink
+    ) -> RunExecutionOutcome:
         await progress.segment_started(snapshot.run_id, 1)
         await progress.segment_done(snapshot.run_id, self.outcome.segment_metadata or {})
         if self.cancel_after is not None:
@@ -231,8 +234,8 @@ class _Executor:
 
 def _worker(store: _RunStore, events: _EventStore, outcome: RunExecutionOutcome) -> RunWorker:
     return RunWorker(
-        run_store=store,
-        event_store=events,
+        run_store=cast(RunStorePort, store),
+        event_store=cast(RunEventStorePort, events),
         executor=_Executor(outcome),
         owner_id="owner-a",
         lease_seconds=30,
@@ -338,8 +341,8 @@ async def test_cancel_requested_after_segment_keeps_cancel_priority() -> None:
     events = _EventStore()
     outcome = _outcome(RunStatus.SUCCEEDED)
     worker = RunWorker(
-        run_store=store,
-        event_store=events,
+        run_store=cast(RunStorePort, store),
+        event_store=cast(RunEventStorePort, events),
         executor=_Executor(outcome, cancel_after=store),
         owner_id="owner-a",
         lease_seconds=30,

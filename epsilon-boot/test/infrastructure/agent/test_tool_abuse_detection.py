@@ -79,7 +79,7 @@ async def test_react_adapter_blocks_repeated_same_tool_before_execution(
 
     tracer = _otel_trace.get_tracer("test")
     with caplog.at_level("WARNING"), tracer.start_as_current_span("parent"):
-        executable, approval = await adapter._prepare_tool_calls_for_execution(
+        executable, approval = await adapter.prepare_tool_calls_for_execution(
             context=context,
             config=config,
             tool_calls=tool_calls,
@@ -103,12 +103,14 @@ async def test_react_adapter_blocks_repeated_same_tool_before_execution(
     assert blocked_message.metadata["tool_abuse_detected"] is True
     assert blocked_message.metadata["tool_abuse_reason"] == "same_tool_call_limit_exceeded"
     assert any(
-        record.tool_name == "shell_exec" and record.reason == "same_tool_call_limit_exceeded"
+        record.__dict__.get("tool_name") == "shell_exec"
+        and record.__dict__.get("reason") == "same_tool_call_limit_exceeded"
         for record in caplog.records
     )
     spans = in_memory_exporter.get_finished_spans()
     assert any(
         event.name == "agent.tool_abuse_detected"
+        and event.attributes is not None
         and event.attributes["tool_name"] == "shell_exec"
         and event.attributes["reason"] == "same_tool_call_limit_exceeded"
         for span in spans

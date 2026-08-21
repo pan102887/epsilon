@@ -47,6 +47,7 @@ dependencies = [
     "ty>=0.0.56",
     "black>=26.5.1",
     "pyrefly>=0.60.0",
+    "rich>=15.0.0",
 ]
 
 [build-system]
@@ -79,7 +80,7 @@ url = "https://pypi.org/simple"
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF", "ASYNC"]
@@ -94,3 +95,4 @@ testpaths = ["test"]
 
 [tool.pyright]
 pythonVersion = "3.13"
+typeCheckingMode = "strict"

@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum, StrEnum
-from typing import Any
+from typing import Any, cast
 
 
 class TaskExecutionClass(StrEnum):
@@ -125,10 +125,11 @@ class GuardrailModelPricing:
         if isinstance(value, GuardrailModelPricing):
             return value
         if isinstance(value, Mapping):
+            pricing = cast(Mapping[str, Any], value)
             return cls(
-                prompt_per_1m=value.get("prompt_per_1m"),
-                completion_per_1m=value.get("completion_per_1m"),
-                total_per_1m=value.get("total_per_1m"),
+                prompt_per_1m=pricing.get("prompt_per_1m"),
+                completion_per_1m=pricing.get("completion_per_1m"),
+                total_per_1m=pricing.get("total_per_1m"),
             )
         return cls(total_per_1m=value)
 
@@ -146,13 +147,14 @@ class GuardrailPolicy:
     max_context_growth_messages: int | None = None
     max_repeated_tool_calls: int = 2
     max_consecutive_failures: int = 3
-    model_pricing: dict[str, GuardrailModelPricing] = field(default_factory=dict)
+    model_pricing: dict[str, GuardrailModelPricing] = field(
+        default_factory=dict[str, GuardrailModelPricing]
+    )
 
     def __post_init__(self) -> None:
         """校验策略阈值并归一化模型价格配置。"""
 
-        if not isinstance(self.mode, GuardrailMode):
-            object.__setattr__(self, "mode", GuardrailMode(str(self.mode)))
+        object.__setattr__(self, "mode", _coerce_guardrail_mode(self.mode))
         object.__setattr__(self, "model_pricing", _coerce_model_pricing_map(self.model_pricing))
         if self.max_total_tokens is not None and self.max_total_tokens <= 0:
             raise ValueError("max_total_tokens 必须为 None 或大于 0")
@@ -269,13 +271,13 @@ class GuardrailSummary:
     reason: GuardrailReason | None = None
     message: str = ""
     estimated_cost: float | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
     evaluation_count: int = 0
     blocked_count: int = 0
     approval_request_count: int = 0
     last_event_cursor: int | None = None
     updated_at: str | None = None
-    runtime_stats: dict[str, Any] = field(default_factory=dict)
+    runtime_stats: dict[str, Any] = field(default_factory=dict[str, Any])
     stale: bool = False
     stale_reason: str | None = None
 
@@ -289,7 +291,7 @@ class GuardrailDecision:
     message: str = ""
     mode: GuardrailMode = GuardrailMode.OBSERVE
     estimated_cost: float | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
 
     @property
     def public_terminal_reason(self) -> str | None:
@@ -409,7 +411,7 @@ class GuardrailEvaluationContext:
     context_growth_messages: int = 0
     repeated_tool_call_count: int = 0
     consecutive_failure_count: int = 0
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
 def estimate_guardrail_model_cost(
@@ -533,8 +535,6 @@ def _coerce_guardrail_summary(
         return None
     if isinstance(current, GuardrailSummary):
         return current
-    if not isinstance(current, dict):
-        return None
     return GuardrailSummary(
         mode=_coerce_enum(current.get("mode"), GuardrailMode, GuardrailMode.OBSERVE),
         action=_coerce_enum(
@@ -592,17 +592,23 @@ def _coerce_runtime_stats_payload(value: Any) -> dict[str, Any]:
     return {}
 
 
-def _coerce_model_pricing_map(
-    value: Mapping[str, Any] | None,
-) -> dict[str, GuardrailModelPricing]:
+def _coerce_model_pricing_map(value: object) -> dict[str, GuardrailModelPricing]:
     if not isinstance(value, Mapping):
         return {}
     result: dict[str, GuardrailModelPricing] = {}
-    for model_name, pricing in value.items():
+    for model_name, pricing in cast(Mapping[object, object], value).items():
         if not isinstance(model_name, str) or not model_name:
             continue
         result[model_name] = GuardrailModelPricing.from_raw(pricing)
     return result
+
+
+def _coerce_guardrail_mode(value: object) -> GuardrailMode:
+    """把外部策略模式收窄为 ``GuardrailMode``。"""
+
+    if isinstance(value, GuardrailMode):
+        return value
+    return GuardrailMode(str(value))
 
 
 def _coerce_optional_price(value: Any, field_name: str) -> float | None:
@@ -679,11 +685,19 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, datetime):
         return _resolve_datetime(value).isoformat()
     if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
+        mapping = cast(dict[object, object], value)
+        return {str(key): _json_safe(item) for key, item in mapping.items()}
     if isinstance(value, (list, tuple)):
-        return [_json_safe(item) for item in value]
+        items = cast(list[object] | tuple[object, ...], value)
+        return [_json_safe(item) for item in items]
     if isinstance(value, (set, frozenset)):
-        return [_json_safe(item) for item in sorted(value, key=str)]
+        items = cast(set[object] | frozenset[object], value)
+        return [_json_safe(item) for item in sorted(items, key=str)]
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return str(value)
+
+
+def json_safe(value: Any) -> Any:
+    """Convert a guardrail metadata value to its JSON-safe representation."""
+    return _json_safe(value)

@@ -282,7 +282,9 @@ class ReactToolExecutionCoordinator:
         return None
 
     @staticmethod
-    def _set_parent_context(context: ConversationContext) -> Token:
+    def _set_parent_context(
+        context: ConversationContext,
+    ) -> Token[ConversationContext | None]:
         """设置 handoff 父上下文并返回重置 token。"""
 
         from infrastructure.agent.handoff_context import set_parent_context
@@ -290,7 +292,7 @@ class ReactToolExecutionCoordinator:
         return set_parent_context(context)
 
     @staticmethod
-    def _reset_parent_context(token: Token) -> None:
+    def _reset_parent_context(token: Token[ConversationContext | None]) -> None:
         """重置 handoff 父上下文。"""
 
         from infrastructure.agent.handoff_context import reset_parent_context

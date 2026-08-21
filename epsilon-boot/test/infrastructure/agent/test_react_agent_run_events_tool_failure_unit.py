@@ -45,7 +45,7 @@ class _FakeContextBuilder:
             )
         ]
 
-    async def build(self, *args, **kwargs) -> ContextBuilderResult:
+    async def build(self, *args: object, **kwargs: object) -> ContextBuilderResult:
         return self._results.pop(0)
 
 

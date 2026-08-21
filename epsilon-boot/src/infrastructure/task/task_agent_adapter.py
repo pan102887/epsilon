@@ -12,7 +12,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from typing import Protocol
+from typing import Any, Protocol, cast
 
 from opentelemetry import trace as _otel_trace
 
@@ -273,11 +273,24 @@ class TaskAgentAdapter:
 
         return trace
 
+    def extract_trace(
+        self,
+        messages: list[BaseMessage],
+        start_index: int,
+        event_timestamps: dict[int, int] | None = None,
+    ) -> list[TraceEntry]:
+        """从消息序列提取任务执行轨迹。"""
+        return self._extract_trace(
+            messages,
+            start_index,
+            event_timestamps=event_timestamps,
+        )
+
     def _make_agent_config(
         self,
         *,
         system_prompt: str,
-        tool_schemas: list[dict],
+        tool_schemas: list[dict[str, Any]],
         model_name: str,
     ) -> AgentConfig:
         """构造任务 Agent 单段执行配置。"""
@@ -333,11 +346,7 @@ class TaskAgentAdapter:
                 model_name=model_name,
             ),
             system_prompt=system_message.content,
-            allowed_tool_names=(
-                system_message.metadata.get("task_allowed_tool_names")
-                if isinstance(system_message.metadata, dict)
-                else None
-            ),
+            allowed_tool_names=system_message.metadata.get("task_allowed_tool_names"),
         )
 
     async def _run_task_agent(
@@ -346,7 +355,8 @@ class TaskAgentAdapter:
         config: AgentConfig,
     ) -> AgentResult:
         """执行任务 Agent 单段。"""
-        model_access = self._model_registry.get_adapter_for_model(config.model)
+        model_name = config.model or self._model_registry.get_default_model()
+        model_access = self._model_registry.get_adapter_for_model(model_name)
         return await self._agent.run(context, config, model_access)
 
     async def _resume_task_agent(
@@ -357,7 +367,8 @@ class TaskAgentAdapter:
         decisions: tuple[ApprovalDecision, ...],
     ) -> AgentResult:
         """恢复任务 Agent 审批。"""
-        model_access = self._model_registry.get_adapter_for_model(config.model)
+        model_name = config.model or self._model_registry.get_default_model()
+        model_access = self._model_registry.get_adapter_for_model(model_name)
         return await self._agent.resume(
             context,
             config,
@@ -376,7 +387,7 @@ class TaskAgentAdapter:
             (message for message in messages if isinstance(message, SystemMessage)),
             None,
         )
-        if system_message is None or not isinstance(system_message.metadata, dict):
+        if system_message is None:
             return False
         if "task_allowed_tool_names" not in system_message.metadata:
             return False
@@ -388,13 +399,12 @@ class TaskAgentAdapter:
         return True
 
     @staticmethod
-    def _schema_names(tool_schemas: list[dict]) -> frozenset[str]:
+    def _schema_names(tool_schemas: list[dict[str, Any]]) -> frozenset[str]:
         """从工具 schema 中提取工具名称集合。"""
         return frozenset(
             schema["function"]["name"]
             for schema in tool_schemas
-            if isinstance(schema, dict)
-            and isinstance(schema.get("function"), dict)
+            if isinstance(schema.get("function"), dict)
             and isinstance(schema["function"].get("name"), str)
         )
 
@@ -419,7 +429,7 @@ class TaskAgentAdapter:
         context: ConversationContext,
         pre_message_count: int,
         approval_required: bool = False,
-        approval_metadata: dict | None = None,
+        approval_metadata: dict[str, Any] | None = None,
     ) -> tuple[bool, str | None]:
         """根据本段新增稳定 metadata 判断是否需要风险门禁。"""
         guardrail_reason: str | None = None
@@ -459,19 +469,25 @@ class TaskAgentAdapter:
     def _tool_schemas_for_boundary(
         self,
         allowed_tool_names: object,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """按持久化的工具访问边界重建工具 schema。"""
         if allowed_tool_names is None:
             return self._tool_registry.get_schemas()
-        if not isinstance(allowed_tool_names, list) or not all(
-            isinstance(name, str) for name in allowed_tool_names
-        ):
+        if not isinstance(allowed_tool_names, list):
             raise ContinuationUnavailableError(
                 "",
                 "缺少可继续的工具访问边界",
             )
 
-        requested_names = frozenset(allowed_tool_names)
+        candidate_names = cast(list[object], allowed_tool_names)
+        if not all(isinstance(name, str) for name in candidate_names):
+            raise ContinuationUnavailableError(
+                "",
+                "缺少可继续的工具访问边界",
+            )
+        requested_names = frozenset(
+            name for name in candidate_names if isinstance(name, str)
+        )
         tool_schemas = self._tool_registry.get_schemas(tool_names=set(requested_names))
         if self._schema_names(tool_schemas) != requested_names:
             raise ContinuationUnavailableError(
@@ -485,7 +501,7 @@ class TaskAgentAdapter:
         *,
         session_id: str,
         context: ConversationContext,
-    ) -> tuple[SystemMessage, list[dict]]:
+    ) -> tuple[SystemMessage, list[dict[str, Any]]]:
         """校验并恢复任务继续/审批恢复所需的上下文与工具边界。"""
         messages = context.get_messages()
         if not messages:
@@ -503,10 +519,7 @@ class TaskAgentAdapter:
                 session_id,
                 "缺少可继续的任务上下文",
             )
-        if (
-            not isinstance(system_message.metadata, dict)
-            or "task_allowed_tool_names" not in system_message.metadata
-        ):
+        if "task_allowed_tool_names" not in system_message.metadata:
             raise ContinuationUnavailableError(
                 session_id,
                 "缺少可继续的工具访问边界",
@@ -599,10 +612,7 @@ class TaskAgentAdapter:
                 )
             else:
                 system_message = existing_system_messages[0]
-                if (
-                    isinstance(system_message.metadata, dict)
-                    and "task_allowed_tool_names" not in system_message.metadata
-                ):
+                if "task_allowed_tool_names" not in system_message.metadata:
                     system_message.metadata["task_allowed_tool_names"] = allowed_tool_names
                 if system_message.content != system_prompt:
                     logger.info(
@@ -692,7 +702,7 @@ class TaskAgentAdapter:
         self,
         first_result: TaskResult,
         *,
-        continue_factory,
+        continue_factory: Callable[[], Awaitable[TaskResult]],
         allow_auto_continue: bool,
     ) -> TaskResult:
         """对 TaskResult 单段结果执行分段续跑决策与累计。"""
@@ -955,7 +965,7 @@ class TaskAgentAdapter:
     async def restore_checkpoint_context(
         self,
         session_id: str,
-        context_snapshot: dict,
+        context_snapshot: dict[str, Any],
     ) -> None:
         """把 checkpoint 快照恢复为该任务会话的当前上下文。"""
 

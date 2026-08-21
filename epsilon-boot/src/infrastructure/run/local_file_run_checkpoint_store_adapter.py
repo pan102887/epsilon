@@ -7,7 +7,7 @@ from dataclasses import fields, is_dataclass, replace
 from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from domain.run.exceptions import RunCheckpointSchemaError
 from domain.run.ports import RunCheckpointStorePort
@@ -237,9 +237,11 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
+        mapping = cast(dict[object, object], value)
+        return {str(key): _json_safe(item) for key, item in mapping.items()}
     if isinstance(value, (list, tuple)):
-        return [_json_safe(item) for item in value]
+        sequence = cast(list[object] | tuple[object, ...], value)
+        return [_json_safe(item) for item in sequence]
     return value
 
 

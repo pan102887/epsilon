@@ -44,7 +44,9 @@ class MemoryApprovalStore:
     async def delete_session(self, session_id: str) -> None:
         self.deleted_sessions.append(session_id)
 
-    async def list_pending_by_session(self, session_id: str) -> list:
+    async def list_pending_by_session(
+        self, session_id: str
+    ) -> list[ApprovalInterrupt]:
         return []
 
 

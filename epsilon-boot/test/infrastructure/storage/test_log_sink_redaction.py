@@ -27,7 +27,7 @@ _SENSITIVE_KEYS = frozenset(
 
 
 @pytest.fixture
-def _cleanup_root_handlers() -> Iterator[None]:
+def cleanup_root_handlers() -> Iterator[None]:
     """记录装配前 root logger 的 handler，测试结束后移除新增项，避免污染其他测试。"""
     root = logging.getLogger()
     before = list(root.handlers)
@@ -107,7 +107,7 @@ def test_empty_sensitive_keys_is_noop() -> None:
 
 def test_configure_logging_writes_to_user_tier(
     tmp_path: Path,
-    _cleanup_root_handlers: None,
+    cleanup_root_handlers: None,
 ) -> None:
     """默认经 resolve(USER) 落 <user_base>/.epsilon/<hash>/logs/epsilon.log（不落项目区）。"""
     user_base = tmp_path / "home"
@@ -133,7 +133,7 @@ def test_configure_logging_writes_to_user_tier(
 
 def test_configure_logging_redacts_on_disk(
     tmp_path: Path,
-    _cleanup_root_handlers: None,
+    cleanup_root_handlers: None,
 ) -> None:
     """经装配的 handler 写盘内容中敏感取值被脱敏为 ****（Property 9）。"""
     resolver = LocalFileTierResolver(

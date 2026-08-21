@@ -88,8 +88,14 @@ def _find_local_properties_file() -> Path:
 
 
 _ENV_FILE = _find_file(".env")
+ENV_FILE = _ENV_FILE
 _PROPERTIES_FILE = _find_file("config.properties")
 _LOCAL_PROPERTIES_FILE = _find_local_properties_file()
+
+# Public read-only paths and resolver for callers that inspect configuration sources.
+PROPERTIES_FILE = _PROPERTIES_FILE
+LOCAL_PROPERTIES_FILE = _LOCAL_PROPERTIES_FILE
+find_file = _find_file
 
 
 def _parse_properties_file(path: Path) -> dict[str, str]:
@@ -132,6 +138,12 @@ def _parse_properties_file(path: Path) -> dict[str, str]:
         pass
 
     return properties
+
+
+def parse_properties_file(path: Path) -> dict[str, str]:
+    """Parse a Java properties file for application-level configuration checks."""
+
+    return _parse_properties_file(path)
 
 
 class PropertiesFileSettingsSource(PydanticBaseSettingsSource):

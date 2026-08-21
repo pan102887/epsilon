@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+from contextvars import Token
+from dataclasses import replace
 from datetime import UTC, datetime
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from application.run.run_checkpoint_sink import RunCheckpointSink
+from domain.agent.ports import ApprovalPolicyPort
 from domain.agent.tools import ToolExecutionResult
 from domain.agent.value_objects import AgentConfig, ApprovalPolicy
-from domain.chat.context import ConversationContext, ToolMessage
+from domain.chat.context import BaseMessage, ConversationContext, ToolMessage
 from domain.chat.value_objects import ContextBuilderResult
 from domain.model_access.value_objects import LLMResponse, ToolCallRequest
 from domain.run.checkpoint_context import (
@@ -18,10 +22,13 @@ from domain.run.checkpoint_context import (
     reset_run_checkpoint_context,
     set_run_checkpoint_context,
 )
+from domain.run.ports import RunCheckpointSinkPort, RunEventStorePort
 from domain.run.value_objects import (
     CheckpointPhase,
     CheckpointRetentionPolicy,
     DurableCheckpoint,
+    RunEvent,
+    RunEventType,
     ToolLedgerStatus,
     ToolReplayPolicy,
     ToolResultLedgerEntry,
@@ -42,27 +49,27 @@ class _Sink:
     ) -> None:
         self.before_result = before_result
         self.before_error = before_error
-        self.calls: list[tuple[str, dict]] = []
+        self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def model_completed(self, **kwargs):
+    async def model_completed(self, **kwargs: Any) -> DurableCheckpoint:
         self.calls.append(("model_completed", kwargs))
         return _checkpoint(CheckpointPhase.MODEL_COMPLETED)
 
-    async def before_tool_call(self, **kwargs):
+    async def before_tool_call(self, **kwargs: Any) -> ToolResultLedgerEntry | None:
         self.calls.append(("before_tool_call", kwargs))
         if self.before_error is not None:
             raise self.before_error
         return self.before_result
 
-    async def after_tool_call(self, **kwargs):
+    async def after_tool_call(self, **kwargs: Any) -> DurableCheckpoint:
         self.calls.append(("after_tool_call", kwargs))
         return _checkpoint(CheckpointPhase.TOOL_COMPLETED)
 
-    async def approval_interrupt(self, **kwargs):
+    async def approval_interrupt(self, **kwargs: Any) -> DurableCheckpoint:
         self.calls.append(("approval_interrupt", kwargs))
         return _checkpoint(CheckpointPhase.APPROVAL_INTERRUPT)
 
-    async def segment_done(self, **kwargs):
+    async def segment_done(self, **kwargs: Any) -> DurableCheckpoint:
         self.calls.append(("segment_done", kwargs))
         return _checkpoint(CheckpointPhase.SEGMENT_DONE)
 
@@ -73,12 +80,10 @@ class _MemoryCheckpointStore:
         self.ledger: dict[str, ToolResultLedgerEntry] = {}
 
     async def save_checkpoint(self, checkpoint: DurableCheckpoint) -> DurableCheckpoint:
-        saved = DurableCheckpoint(
-            **{
-                **checkpoint.__dict__,
-                "sequence": len(self.checkpoints) + 1,
-                "checkpoint_id": f"chk_{len(self.checkpoints) + 1:06d}",
-            }
+        saved = replace(
+            checkpoint,
+            sequence=len(self.checkpoints) + 1,
+            checkpoint_id=f"chk_{len(self.checkpoints) + 1:06d}",
         )
         self.checkpoints.append(saved)
         return saved
@@ -102,18 +107,16 @@ class _MemoryCheckpointStore:
         tool_execution_key: str,
         result: str,
         is_error: bool,
-        metadata: dict,
+        metadata: dict[str, Any],
     ) -> ToolResultLedgerEntry:
         existing = self.ledger[tool_execution_key]
-        completed = ToolResultLedgerEntry(
-            **{
-                **existing.__dict__,
-                "status": ToolLedgerStatus.ERROR if is_error else ToolLedgerStatus.COMPLETED,
-                "result": result,
-                "is_error": is_error,
-                "metadata": metadata,
-                "updated_at": datetime.now(UTC),
-            }
+        completed = replace(
+            existing,
+            status=ToolLedgerStatus.ERROR if is_error else ToolLedgerStatus.COMPLETED,
+            result=result,
+            is_error=is_error,
+            metadata=metadata,
+            updated_at=datetime.now(UTC),
         )
         self.ledger[tool_execution_key] = completed
         return completed
@@ -126,13 +129,17 @@ class _MemoryCheckpointStore:
     async def list_tool_ledger(self, run_id: str) -> list[ToolResultLedgerEntry]:
         return list(self.ledger.values())
 
-    async def trim_checkpoints(self, run_id: str, policy) -> None:
+    async def trim_checkpoints(
+        self, run_id: str, policy: CheckpointRetentionPolicy
+    ) -> None:
         return None
 
 
 class _MemoryEventStore:
-    async def append_event(self, run_id: str, event_type, payload: dict):
-        return None
+    async def append_event(
+        self, run_id: str, event_type: RunEventType, payload: dict[str, Any]
+    ) -> RunEvent:
+        return cast(RunEvent, MagicMock())
 
 
 class _Tool:
@@ -164,7 +171,7 @@ async def test_tool_pending_is_written_before_execute_and_completed_after() -> N
     token = _set_checkpoint(sink)
 
     try:
-        result, is_error = await adapter._execute_tool_call(ctx, _tool_call(), _config())
+        result, is_error = await adapter.execute_tool_call_result(ctx, _tool_call(), _config())
     finally:
         reset_run_checkpoint_context(token)
 
@@ -189,7 +196,7 @@ async def test_pending_write_failure_prevents_tool_execution() -> None:
 
     try:
         with pytest.raises(RuntimeError, match="checkpoint unavailable"):
-            await adapter._execute_tool_call(ctx, _tool_call(), _config())
+            await adapter.execute_tool_call_result(ctx, _tool_call(), _config())
     finally:
         reset_run_checkpoint_context(token)
 
@@ -203,7 +210,7 @@ async def test_real_checkpoint_sink_uses_same_tool_execution_key_as_agent_for_js
     store = _MemoryCheckpointStore()
     sink = RunCheckpointSink(
         checkpoint_store=store,
-        event_store=_MemoryEventStore(),
+        event_store=cast(RunEventStorePort, _MemoryEventStore()),
         retention_policy=CheckpointRetentionPolicy(10, 3600, 4096, 10),
         now=lambda: datetime.now(UTC),
     )
@@ -218,7 +225,7 @@ async def test_real_checkpoint_sink_uses_same_tool_execution_key_as_agent_for_js
     token = _set_checkpoint(sink)
 
     try:
-        result, is_error = await adapter._execute_tool_call(
+        result, is_error = await adapter.execute_tool_call_result(
             ctx,
             tool_call,
             _config(),
@@ -242,7 +249,7 @@ async def test_completed_ledger_replay_skips_tool_execution() -> None:
     token = _set_checkpoint(sink)
 
     try:
-        result, is_error = await adapter._execute_tool_call(ctx, _tool_call(), _config())
+        result, is_error = await adapter.execute_tool_call_result(ctx, _tool_call(), _config())
     finally:
         reset_run_checkpoint_context(token)
 
@@ -266,7 +273,7 @@ async def test_iter_rounds_saves_model_completed_checkpoint() -> None:
     token = _set_checkpoint(sink)
 
     try:
-        outcome = await anext(adapter._iter_rounds(ctx, _config(), model_access))
+        outcome = await anext(adapter.iter_rounds(ctx, _config(), model_access))
     finally:
         reset_run_checkpoint_context(token)
 
@@ -296,7 +303,7 @@ async def test_approval_interrupt_saves_checkpoint_before_returning() -> None:
     token = _set_checkpoint(sink)
 
     try:
-        outcome = await anext(adapter._iter_rounds(ctx, _config(), model_access))
+        outcome = await anext(adapter.iter_rounds(ctx, _config(), model_access))
     finally:
         reset_run_checkpoint_context(token)
 
@@ -306,20 +313,27 @@ async def test_approval_interrupt_saves_checkpoint_before_returning() -> None:
         "approval_interrupt",
     ]
     assert sink.calls[1][1]["round_num"] == 1
+    assert outcome.approval is not None
     assert sink.calls[1][1]["approval_id"] == outcome.approval.approval_id
 
 
-def _adapter(registry: MagicMock, approval_policy=None) -> ReActAgentAdapter:
+def _adapter(
+    registry: MagicMock,
+    approval_policy: ApprovalPolicyPort | None = None,
+) -> ReActAgentAdapter:
     builder = MagicMock()
-    builder.build = AsyncMock(
-        side_effect=lambda msgs, **kwargs: ContextBuilderResult(messages=msgs, usage={})
-    )
+
+    async def build_context(
+        msgs: list[BaseMessage], **kwargs: Any
+    ) -> ContextBuilderResult:
+        return ContextBuilderResult(messages=msgs, usage={})
+
+    builder.build = AsyncMock(side_effect=build_context)
     return ReActAgentAdapter(
         tool_registry=registry,
         context_builder=builder,
         approval_policy=approval_policy,
     )
-
 
 def _registry(result: str = "ok") -> MagicMock:
     registry = MagicMock()
@@ -342,14 +356,16 @@ def _tool_call() -> ToolCallRequest:
     return ToolCallRequest(id="call-1", name="echo", arguments='{"x":1}')
 
 
-def _set_checkpoint(sink: _Sink):
+def _set_checkpoint(
+    sink: _Sink | RunCheckpointSink,
+) -> Token[RunCheckpointExecutionContext | None]:
     return set_run_checkpoint_context(
         RunCheckpointExecutionContext(
             run_id="run-1",
             owner_id="owner-a",
             segment_index=3,
             recovery_mode=False,
-            sink=sink,
+            sink=cast(RunCheckpointSinkPort, sink),
         )
     )
 

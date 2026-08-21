@@ -24,6 +24,7 @@ def _load_container_config_module():
     spec = importlib.util.spec_from_file_location(
         "test_startup_validation_module", str(config_path)
     )
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

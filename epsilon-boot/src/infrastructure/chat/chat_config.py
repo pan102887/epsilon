@@ -29,7 +29,7 @@ UNLIMITED_MAX_TOOL_ROUNDS_SENTINEL = 1_000_000
 真正的失控兜底由 token 预算（``CHAT_SEGMENT_MAX_TOTAL_TOKENS`` 等）与工具超时承担。
 """
 
-_WORKSPACE_PATH_GUIDANCE: str = (
+WORKSPACE_PATH_GUIDANCE: str = (
     "\n\nUse workspace-relative POSIX paths for all file operations. Separate path "
     "components with /."
 )

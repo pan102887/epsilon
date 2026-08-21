@@ -48,6 +48,7 @@ def _load_traces_module():
         / "traces.py"
     )
     spec = importlib.util.spec_from_file_location("test_traces_module", str(traces_path))
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

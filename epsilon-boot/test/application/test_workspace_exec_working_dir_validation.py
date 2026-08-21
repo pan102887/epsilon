@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -46,7 +47,7 @@ def _make_workspace_config_stub(
     )
 
 
-def _load_container_config_module():
+def _load_container_config_module() -> ModuleType:
     """同 ``test_workspace_container_integration``，直接加载源文件。"""
     config_path = (
         pathlib.Path(__file__).resolve().parents[2] / "src" / "application" / "container_config.py"
@@ -54,40 +55,37 @@ def _load_container_config_module():
     spec = importlib.util.spec_from_file_location(
         "test_workspace_exec_working_dir_validation_module", str(config_path)
     )
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-_config_module = _load_container_config_module()
-configure_container = _config_module.configure_container
+_config_module: Any = _load_container_config_module()
 
 
 @pytest.fixture(autouse=True)
-def _isolate_container():
+def isolate_container():
     """用例间隔离容器全局状态。"""
     from common.container import container
 
-    original_registry = container._registry.copy()
-    original_singletons = container._singletons.copy()
-    original_resources = container._async_resources[:]
-    original_initialized = container._initialized_resources[:]
+    original_state = container.capture_state()
     yield
-    container._registry = original_registry
-    container._singletons = original_singletons
-    container._async_resources = original_resources
-    container._initialized_resources = original_initialized
+    container.restore_state(original_state)
 
 
 @pytest.fixture(autouse=True)
-def _reset_workspace_singleton():
+def reset_workspace_singleton():
     """重置 ``_workspace_singleton`` 以避免跨用例泄漏。"""
     original = _config_module._workspace_singleton
     yield
     _config_module._workspace_singleton = original
 
 
-async def test_shell_exec_working_dir_outside_workspace_fails_fast(tmp_path):
+async def test_shell_exec_working_dir_outside_workspace_fails_fast(
+    tmp_path: pathlib.Path,
+) -> None:
     """``SHELL_EXEC_WORKING_DIR=/etc`` 超出 ``WORKSPACE_ROOT=<tmp_path>`` 时，
     ``_validate_exec_working_dir`` 必须 fail-fast 并抛出 ``ConfigurationError``。
 
@@ -123,7 +121,9 @@ async def test_shell_exec_working_dir_outside_workspace_fails_fast(tmp_path):
     )
 
 
-async def test_python_exec_working_dir_outside_workspace_fails_fast(tmp_path):
+async def test_python_exec_working_dir_outside_workspace_fails_fast(
+    tmp_path: pathlib.Path,
+) -> None:
     """``PYTHON_EXEC_WORKING_DIR=/etc`` 超出 workspace 时同样 fail-fast。
 
     断言与 ``shell_exec`` 用例对称。
@@ -151,7 +151,7 @@ async def test_python_exec_working_dir_outside_workspace_fails_fast(tmp_path):
     )
 
 
-async def test_empty_working_dir_uses_default_no_error(tmp_path):
+async def test_empty_working_dir_uses_default_no_error(tmp_path: pathlib.Path) -> None:
     """``SHELL_EXEC_WORKING_DIR`` / ``PYTHON_EXEC_WORKING_DIR`` 为空时
     （默认行为）不触发二次校验错误。
     """

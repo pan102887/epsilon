@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from domain.agent.value_objects import AgentConfig
+from domain.agent.value_objects import AgentConfig, AgentStreamEvent
 from domain.chat.context import BaseMessage, ConversationContext
 from domain.chat.value_objects import ContextBuilderResult
 from domain.model_access.ports import ModelAccessPort
@@ -65,6 +65,11 @@ class _FakeModelAccess:
         """本测试不依赖 token 估算。"""
         return len(messages)
 
+    @property
+    def chunks(self) -> list[StreamingChunk]:
+        """返回测试配置的原始分片。"""
+        return self._chunks
+
 
 def _config() -> AgentConfig:
     """构造测试用 Agent 配置。"""
@@ -89,7 +94,9 @@ async def _collect_chunks(stream: AsyncIterator[StreamingChunk]) -> list[Streami
     return [chunk async for chunk in stream]
 
 
-async def _collect_events(stream) -> list:
+async def _collect_events(
+    stream: AsyncIterator[AgentStreamEvent],
+) -> list[AgentStreamEvent]:
     """收集异步 event 流。"""
     return [event async for event in stream]
 
@@ -119,7 +126,7 @@ async def test_stream_chunks_passes_text_deltas_and_builds_chat_request() -> Non
     )
 
     assert [chunk.delta_content for chunk in chunks] == ["你", "好", ""]
-    assert chunks[0] is model._chunks[0]
+    assert chunks[0] is model.chunks[0]
     assert len(builder.calls) == 1
     assert builder.calls[0][1] is model
     assert builder.calls[0][2] == "test-model"

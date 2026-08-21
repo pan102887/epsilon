@@ -22,36 +22,34 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from pydantic_settings import SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
-from common.configuration import PropertiesBaseSettings
 from common.configuration.configuration_utils import PropertiesFileSettingsSource
 from common.configuration.id_validation_config import IdValidationConfig
 
 
-def _build_isolated_config_cls(props_file: Path) -> type[PropertiesBaseSettings]:
+def _build_isolated_config_cls(props_file: Path) -> type[IdValidationConfig]:
     """构造一个仅以 ``props_file`` 作为 properties 源的 IdValidationConfig 子类。
 
     避免实际项目 ``config.properties`` 干扰本测试。
     """
 
-    class _IsolatedConfig(PropertiesBaseSettings):
+    class _IsolatedConfig(IdValidationConfig):
         model_config = SettingsConfigDict(
             env_prefix="ID_VALIDATION_",
             env_file=None,
             extra="ignore",
         )
-        history_restore_strategy: str = "filter"
-
         @classmethod
-        def settings_customise_sources(  # type: ignore[override]
-            cls,
-            settings_cls,
-            init_settings,
-            env_settings,
-            dotenv_settings,
-            file_secret_settings,
-        ):
+        def settings_customise_sources(
+            cls: type[BaseSettings],
+            settings_cls: type[BaseSettings],
+            init_settings: PydanticBaseSettingsSource,
+            env_settings: PydanticBaseSettingsSource,
+            dotenv_settings: PydanticBaseSettingsSource,
+            file_secret_settings: PydanticBaseSettingsSource,
+        ) -> tuple[PydanticBaseSettingsSource, ...]:
+            del cls, dotenv_settings
             return (
                 init_settings,
                 env_settings,
@@ -116,10 +114,10 @@ def test_configure_history_restore_strategy_passes_through_raise() -> None:
     """合法值 'raise' 透传。"""
     from domain.chat import context as ctx_module
 
-    original = ctx_module._HISTORY_RESTORE_STRATEGY
+    original = ctx_module.history_restore_strategy
     try:
         ctx_module.configure_history_restore_strategy("raise")
-        assert ctx_module._HISTORY_RESTORE_STRATEGY == "raise"
+        assert ctx_module.history_restore_strategy == "raise"
     finally:
         ctx_module.configure_history_restore_strategy(original)
 

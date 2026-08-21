@@ -13,6 +13,7 @@ Property 3（序列化往返一致性）自动覆盖这些新字段。
 """
 
 import json
+from typing import Any
 
 import hypothesis.strategies as st
 from hypothesis import given, settings
@@ -540,7 +541,7 @@ def _old_flow(messages: list[BaseMessage], max_messages: int) -> list[dict[str, 
     if len(non_system_msgs) > max_messages:
         non_system_msgs = non_system_msgs[-max_messages:]
     combined = system_msgs + non_system_msgs
-    result: list[dict] = []
+    result: list[dict[str, Any]] = []
     for m in combined:
         if isinstance(m, AssistantMessage) and m.tool_calls:
             result.append(
@@ -570,7 +571,7 @@ def _old_flow(messages: list[BaseMessage], max_messages: int) -> list[dict[str, 
     return result
 
 
-def _new_flow(messages: list[BaseMessage], max_messages: int) -> list[dict[str, str]]:
+def _new_flow(messages: list[BaseMessage], max_messages: int) -> list[dict[str, Any]]:
     """执行重构后的新流程：压缩 → 序列化。
 
     新流程逻辑：
@@ -586,7 +587,7 @@ def _new_flow(messages: list[BaseMessage], max_messages: int) -> list[dict[str, 
     """
     adapter = SlidingWindowCompactionAdapter(max_messages=max_messages)
     compacted = adapter.compact_messages(messages)
-    return OpenAICompatibleAdapter._to_openai_messages(compacted)
+    return OpenAICompatibleAdapter.to_openai_messages(compacted)
 
 
 @settings(max_examples=100)

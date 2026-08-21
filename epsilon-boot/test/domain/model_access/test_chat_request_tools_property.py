@@ -5,13 +5,13 @@
 """
 
 import dataclasses
-from typing import Any
+from typing import Any, Protocol, cast
 
 import hypothesis.strategies as st
 import pytest
 from hypothesis import given, settings
 
-from domain.agent.tools import Tool, ToolRegistry
+from domain.agent.tools import Tool, ToolExecutionResult, ToolRegistry
 from domain.chat.context import BaseMessage, UserMessage
 from domain.model_access.value_objects import ChatRequest
 from infrastructure.model_access.openai_compatible_adapter import OpenAICompatibleAdapter
@@ -23,32 +23,40 @@ from infrastructure.model_access.provider_config import ProviderConfig
 
 _param_name_st = st.from_regex(r"[a-z][a-z0-9_]{0,15}", fullmatch=True)
 
-_tool_schema_st = st.fixed_dictionaries(
-    {
-        "type": st.just("function"),
-        "function": st.fixed_dictionaries(
-            {
-                "name": _param_name_st,
-                "description": st.text(min_size=1, max_size=50),
-                "parameters": st.fixed_dictionaries(
-                    {
-                        "type": st.just("object"),
-                        "properties": st.dictionaries(
-                            keys=_param_name_st,
-                            values=st.fixed_dictionaries(
-                                {"type": st.sampled_from(["string", "integer", "boolean"])}
-                            ),
-                            min_size=0,
-                            max_size=3,
-                        ),
-                    }
-                ),
-            }
-        ),
-    }
+_property_schema_st: st.SearchStrategy[dict[str, str]] = st.fixed_dictionaries(
+    {"type": st.sampled_from(["string", "integer", "boolean"])}
+)
+_properties_st: st.SearchStrategy[dict[str, dict[str, str]]] = st.dictionaries(
+    keys=_param_name_st,
+    values=_property_schema_st,
+    min_size=0,
+    max_size=3,
 )
 
-_tools_st = st.one_of(
+
+def _build_tool_schema(
+    name: str,
+    description: str,
+    properties: dict[str, dict[str, str]],
+) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {"type": "object", "properties": properties},
+        },
+    }
+
+
+_tool_schema_st: st.SearchStrategy[dict[str, Any]] = st.builds(
+    _build_tool_schema,
+    name=_param_name_st,
+    description=st.text(min_size=1, max_size=50),
+    properties=_properties_st,
+)
+
+_tools_st: st.SearchStrategy[list[dict[str, Any]] | None] = st.one_of(
     st.none(),
     st.just([]),
     st.lists(_tool_schema_st, min_size=1, max_size=5),
@@ -62,6 +70,10 @@ _messages_st = st.builds(
 Hypothesis 的 ``st.just`` 会复用同一对象，导致跨用例共享同一可变列表，
 因此改用 ``st.builds(lambda: [...])`` 保证每个示例都拿到全新实例。
 """
+
+
+class _MutableChatRequest(Protocol):
+    tools: list[dict[str, Any]] | None
 
 
 def _make_adapter() -> OpenAICompatibleAdapter:
@@ -107,7 +119,7 @@ def test_build_params_tools_inclusion(
     """truthy tools 时 params 含 "tools" 键且值一致，falsy 时不含。"""
     adapter = _make_adapter()
     request = ChatRequest(messages=messages, tools=tools)
-    params = adapter._build_params(request, stream=False)
+    params = adapter.build_params(request, stream=False)
 
     if tools:
         assert "tools" in params
@@ -130,10 +142,11 @@ def test_frozen_immutability(
 ) -> None:
     """构造后尝试赋值 tools 应抛出 FrozenInstanceError。"""
     request = ChatRequest(messages=messages, tools=tools)
+    mutable_request = cast(_MutableChatRequest, request)
     with pytest.raises(dataclasses.FrozenInstanceError):
-        request.tools = [
+        mutable_request.tools = [
             {"type": "function", "function": {"name": "x", "description": "x", "parameters": {}}}
-        ]  # type: ignore[misc]
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -162,8 +175,8 @@ class _MockTool(Tool):
     def parameters(self) -> dict[str, Any]:
         return {"type": "object", "properties": {}}
 
-    async def execute(self, **kwargs: Any) -> str:
-        return ""
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
+        return ToolExecutionResult(content="")
 
 
 _tool_name_st = st.from_regex(r"[a-z][a-z0-9_]{0,15}", fullmatch=True)

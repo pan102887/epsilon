@@ -14,9 +14,13 @@
 from .atomic_writer import TempFileAtomicWriter
 from .path_policy import CrossPlatformPathPolicy, PathPolicyViolation
 from .tmp_file_sweeper import TmpFileSweeper
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .file_lock import CrossPlatformFileLock, LockFactory, LockHandle, LockMode, LockTimeout
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """延迟导入 file_lock 模块的导出，避免包初始化时拉入 portalocker→redis 链。"""
     _file_lock_names = {
         "CrossPlatformFileLock",

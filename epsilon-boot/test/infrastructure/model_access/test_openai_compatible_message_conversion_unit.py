@@ -46,7 +46,7 @@ def test_convert_plain_system_user_assistant_messages() -> None:
         AssistantMessage(content="assistant"),
     ]
 
-    assert OpenAICompatibleAdapter._to_openai_messages(messages) == [
+    assert OpenAICompatibleAdapter.to_openai_messages(messages) == [
         {"role": "system", "content": "system"},
         {"role": "user", "content": "user"},
         {"role": "assistant", "content": "assistant"},
@@ -69,7 +69,7 @@ def test_convert_assistant_with_tool_calls_outputs_openai_nested_shape() -> None
         ],
     )
 
-    assert OpenAICompatibleAdapter._to_openai_messages([message]) == [
+    assert OpenAICompatibleAdapter.to_openai_messages([message]) == [
         {
             "role": "assistant",
             "content": "",
@@ -96,7 +96,7 @@ def test_convert_tool_message_includes_tool_call_id() -> None:
         tool_call_id="call-1",
     )
 
-    assert OpenAICompatibleAdapter._to_openai_messages([message]) == [
+    assert OpenAICompatibleAdapter.to_openai_messages([message]) == [
         {"role": "tool", "content": "result", "tool_call_id": "call-1"}
     ]
 
@@ -108,7 +108,7 @@ def test_convert_empty_list_returns_empty_list() -> None:
     ``_to_openai_messages`` 作为底层 helper 应优雅处理空输入，便于在
     单元测试与未来潜在的旁路调用中复用。
     """
-    assert OpenAICompatibleAdapter._to_openai_messages([]) == []
+    assert OpenAICompatibleAdapter.to_openai_messages([]) == []
 
 
 def test_convert_does_not_mutate_input_messages() -> None:
@@ -131,7 +131,7 @@ def test_convert_does_not_mutate_input_messages() -> None:
     ]
     snapshot = deepcopy(messages)
 
-    OpenAICompatibleAdapter._to_openai_messages(messages)
+    OpenAICompatibleAdapter.to_openai_messages(messages)
 
     assert len(messages) == len(snapshot)
     for actual, expected in zip(messages, snapshot, strict=True):

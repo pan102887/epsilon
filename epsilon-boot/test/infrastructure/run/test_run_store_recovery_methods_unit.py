@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
 fakeredis = pytest.importorskip("fakeredis.aioredis")
 
 from domain.run.exceptions import RunLeaseConflictError  # noqa: E402
+from domain.run.ports import RunStorePort  # noqa: E402
 from domain.run.value_objects import (  # noqa: E402
     RunCreateRequest,
     RunKind,
@@ -39,7 +41,10 @@ def _request() -> RunCreateRequest:
 
 
 @pytest.fixture(params=("local", "redis"))
-async def store(request, tmp_path) -> AsyncIterator[object]:
+async def store(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+) -> AsyncIterator[RunStorePort]:
     if request.param == "local":
         yield LocalFileRunStoreAdapter(
             root=tmp_path,
@@ -54,7 +59,7 @@ async def store(request, tmp_path) -> AsyncIterator[object]:
     await redis_client.aclose()
 
 
-async def _running_expired(store: object) -> RunSnapshot:
+async def _running_expired(store: RunStorePort) -> RunSnapshot:
     created = await store.create_run(_request())
     claimed = await store.claim_next(owner_id="owner-a", lease_seconds=0)
     assert claimed is not None
@@ -64,7 +69,7 @@ async def _running_expired(store: object) -> RunSnapshot:
 
 
 async def test_list_expired_leased_runs_returns_only_expired_running_or_cancel_requested(
-    store: object,
+    store: RunStorePort,
 ) -> None:
     expired = await _running_expired(store)
     active_created = await store.create_run(_request())
@@ -77,6 +82,7 @@ async def test_list_expired_leased_runs_returns_only_expired_running_or_cancel_r
     assert cancel_claimed is not None
     cancel_requested = await store.request_cancel(cancel_created.run_id)
 
+    assert expired.lease is not None
     expired_runs = await store.list_expired_leased_runs(
         now=expired.lease.lease_until + timedelta(seconds=1)
     )
@@ -88,7 +94,7 @@ async def test_list_expired_leased_runs_returns_only_expired_running_or_cancel_r
 
 
 async def test_enqueue_recovery_requeues_expired_run_and_records_metadata(
-    store: object,
+    store: RunStorePort,
 ) -> None:
     expired = await _running_expired(store)
 
@@ -112,7 +118,7 @@ async def test_enqueue_recovery_requeues_expired_run_and_records_metadata(
 
 
 async def test_enqueue_recovery_rejects_non_expired_or_changed_run(
-    store: object,
+    store: RunStorePort,
 ) -> None:
     created = await store.create_run(_request())
     active = await store.claim_next(owner_id="owner-a", lease_seconds=3600)
@@ -127,7 +133,7 @@ async def test_enqueue_recovery_rejects_non_expired_or_changed_run(
 
 
 async def test_mark_lost_expired_run_records_recovery_error(
-    store: object,
+    store: RunStorePort,
 ) -> None:
     expired = await _running_expired(store)
 
@@ -150,10 +156,11 @@ async def test_mark_lost_expired_run_records_recovery_error(
 
 
 async def test_stage_three_mark_lost_expired_leases_remains_compatible(
-    store: object,
+    store: RunStorePort,
 ) -> None:
     expired = await _running_expired(store)
 
+    assert expired.lease is not None
     lost = await store.mark_lost_expired_leases(
         now=expired.lease.lease_until + timedelta(seconds=1)
     )

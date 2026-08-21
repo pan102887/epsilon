@@ -154,13 +154,19 @@ def _metadata_from_dict(data: dict[str, object]) -> SessionMetadata:
     """从字典恢复会话元数据值对象。"""
     return SessionMetadata(
         session_id=str(data["session_id"]),
-        updated_at_epoch_ms=int(data["updated_at_epoch_ms"]),
-        message_count=int(data["message_count"]),
+        updated_at_epoch_ms=_required_int(data["updated_at_epoch_ms"]),
+        message_count=_required_int(data["message_count"]),
         preview=str(data["preview"]),
         created_at_epoch_ms=(
-            int(data["created_at_epoch_ms"])
+            _required_int(data["created_at_epoch_ms"])
             if data.get("created_at_epoch_ms") is not None
             else None
         ),
         model=str(data["model"]) if data.get("model") is not None else None,
     )
+
+
+def _required_int(value: object) -> int:
+    if not isinstance(value, (int, str)):
+        raise ValueError(f"expected integer-compatible value, got {type(value).__name__}")
+    return int(value)

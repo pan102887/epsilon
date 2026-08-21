@@ -7,7 +7,7 @@ import pytest
 from infrastructure.chat.environment_context_provider import (
     StaticEnvironmentContextProvider,
     UnsafeEnvironmentContextError,
-    _assert_no_host_absolute_path,
+    assert_no_host_absolute_path,
 )
 
 
@@ -54,7 +54,7 @@ def test_assert_no_host_absolute_path_rejects_unsafe_paths_without_leaking(
 ) -> None:
     """路径安全断言应拒绝常见宿主绝对路径，异常消息不得回显原路径。"""
     with pytest.raises(UnsafeEnvironmentContextError) as exc_info:
-        _assert_no_host_absolute_path(f"workspace: {unsafe_path}")
+        assert_no_host_absolute_path(f"workspace: {unsafe_path}")
 
     assert unsafe_path not in str(exc_info.value)
 

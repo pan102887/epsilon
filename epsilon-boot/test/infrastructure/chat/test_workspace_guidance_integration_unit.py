@@ -15,7 +15,7 @@ from domain.chat.context import UserMessage
 from domain.chat.value_objects import ContextBuilderResult
 from domain.prompt.value_objects import LoadedPrompt
 from infrastructure.chat.chat_service_adapter import ChatServiceAdapter
-from infrastructure.prompt.workspace_guidance import _WORKSPACE_PATH_GUIDANCE
+from infrastructure.prompt.workspace_guidance import WORKSPACE_PATH_GUIDANCE
 
 
 def _build_adapter(content: str) -> ChatServiceAdapter:
@@ -61,23 +61,23 @@ def _build_adapter(content: str) -> ChatServiceAdapter:
 def test_system_prompt_starts_with_loaded_content() -> None:
     """构造完成后 ``_system_prompt`` 应以 ``LoadedPrompt.content`` 起始。"""
     adapter = _build_adapter("自定义助手内容")
-    assert adapter._system_prompt.startswith("自定义助手内容")
+    assert adapter.system_prompt.startswith("自定义助手内容")
 
 
 def test_system_prompt_ends_with_workspace_guidance() -> None:
     """构造完成后 ``_system_prompt`` 应以工作区路径规范收尾。"""
     adapter = _build_adapter("自定义助手内容")
-    assert adapter._system_prompt.rstrip().endswith(_WORKSPACE_PATH_GUIDANCE.strip())
+    assert adapter.system_prompt.rstrip().endswith(WORKSPACE_PATH_GUIDANCE.strip())
 
 
 def test_system_prompt_does_not_double_append_when_content_already_has_guidance() -> None:
     """``LoadedPrompt.content`` 末尾已含规范文案时构造期不再二次追加。"""
-    content = "自定义助手内容" + _WORKSPACE_PATH_GUIDANCE
+    content = "自定义助手内容" + WORKSPACE_PATH_GUIDANCE
     adapter = _build_adapter(content)
-    assert adapter._system_prompt == content
+    assert adapter.system_prompt == content
 
 
 def test_prompt_id_attribute_matches_loaded_prompt() -> None:
     """构造完成后 ``_prompt_id`` 应等于 ``LoadedPrompt.prompt_id``。"""
     adapter = _build_adapter("任意内容")
-    assert adapter._prompt_id == "chat-default@v1"
+    assert adapter.prompt_id == "chat-default@v1"

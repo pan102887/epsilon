@@ -13,6 +13,7 @@ import importlib.util
 import json
 import pathlib
 import sys
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -29,7 +30,7 @@ if "prometheus_client" not in sys.modules:
     sys.modules["prometheus_client"] = _mock_prom
 
 
-def _load_task_module():
+def _load_task_module() -> Any:
     """直接加载 task 路由模块，绕过 application 包的 __init__.py。
 
     使用 importlib 从文件路径加载 ``src/application/routers/task.py``，
@@ -43,6 +44,8 @@ def _load_task_module():
     )
     mod_name = "test_task_router_module"
     spec = importlib.util.spec_from_file_location(mod_name, str(task_path))
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[mod_name] = module
     spec.loader.exec_module(module)
@@ -51,26 +54,6 @@ def _load_task_module():
     module.TaskExecuteRequestBody.model_rebuild()
     module.TaskExecuteResponseBody.model_rebuild()
     module.TraceEntryBody.model_rebuild()
-    return module
-
-
-def _load_exception_handlers_module():
-    """直接加载异常处理模块，用于注册统一异常处理器。
-
-    Returns:
-        exception_handlers 模块对象
-    """
-    handlers_path = (
-        pathlib.Path(__file__).resolve().parents[3]
-        / "src"
-        / "application"
-        / "exception_handlers.py"
-    )
-    spec = importlib.util.spec_from_file_location(
-        "test_exception_handlers_module", str(handlers_path)
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
     return module
 
 

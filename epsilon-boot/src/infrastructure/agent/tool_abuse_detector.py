@@ -8,6 +8,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+def _count_dict() -> dict[str, int]:
+    return {}
+
+
 @dataclass(frozen=True)
 class ToolAbuseVerdict:
     """单次工具调用滥用检测结果。"""
@@ -21,7 +25,7 @@ class ToolAbuseDetector:
     """统计单个 Agent run 内的工具调用模式并识别滥用迹象。"""
 
     max_same_tool_calls: int = 5
-    _counts: dict[str, int] = field(default_factory=dict)
+    _counts: dict[str, int] = field(default_factory=_count_dict)
 
     def record_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> ToolAbuseVerdict:
         """记录一次工具调用并返回是否命中滥用策略。

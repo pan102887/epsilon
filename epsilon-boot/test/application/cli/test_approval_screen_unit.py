@@ -17,7 +17,11 @@ from __future__ import annotations
 from textual.app import App
 
 from application.cli.approval_screen import ApprovalScreen
-from domain.agent.value_objects import ApprovalDecision, PendingActionRequest
+from domain.agent.value_objects import (
+    ApprovalDecision,
+    ApprovalDecisionType,
+    PendingActionRequest,
+)
 
 
 class _HostApp(App[int]):
@@ -28,7 +32,7 @@ def _make_action(
     tool_call_id: str,
     tool_name: str,
     arguments: str,
-    allowed: tuple[str, ...],
+    allowed: tuple[ApprovalDecisionType, ...],
 ) -> PendingActionRequest:
     """构造测试用 PendingActionRequest。"""
     return PendingActionRequest(
@@ -73,7 +77,7 @@ async def test_disallowed_decision_is_ignored() -> None:
         # approve 不在 allowed_decisions 内，应被忽略：不推进、不 dismiss。
         screen.action_approve()
         assert result == []
-        assert screen._index == 0
+        assert screen.current_index == 0
         # 允许的 reject 决策正常推进并完成。
         screen.action_reject()
 
@@ -97,7 +101,7 @@ async def test_edit_prefills_original_arguments() -> None:
 
         editor = screen.query_one("#approval-editor", TextArea)
         assert editor.text == '{"path": "a.txt"}'
-        assert screen._editing is True
+        assert screen.editing is True
 
 
 async def test_edit_invalid_json_stays_open_and_does_not_advance() -> None:
@@ -120,10 +124,10 @@ async def test_edit_invalid_json_stays_open_and_does_not_advance() -> None:
 
         # 不推进、不 dismiss、不提交，保留 editing 子状态并展示错误。
         assert result == []
-        assert screen._index == 0
-        assert screen._editing is True
-        assert screen._decisions == []
-        assert screen._error_text != ""
+        assert screen.current_index == 0
+        assert screen.editing is True
+        assert screen.decisions == []
+        assert screen.error_text != ""
 
 
 async def test_edit_valid_json_builds_edited_action() -> None:

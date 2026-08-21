@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+from collections.abc import Iterator
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 
-def _load_container_config_module():
+def _load_container_config_module() -> Any:
     """直接加载 ``container_config``，绕过应用包导出副作用。"""
 
     config_path = (
@@ -18,6 +20,8 @@ def _load_container_config_module():
     spec = importlib.util.spec_from_file_location(
         "test_run_workflow_container_wiring_module", str(config_path)
     )
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -27,23 +31,17 @@ _config_module = _load_container_config_module()
 
 
 @pytest.fixture(autouse=True)
-def _isolate_container():
+def isolate_container() -> Iterator[None]:
     """每个测试恢复全局容器和 Run 模块级单例。"""
 
     from common.container import container
 
-    original_registry = container._registry.copy()
-    original_singletons = container._singletons.copy()
-    original_resources = container._async_resources[:]
-    original_initialized = container._initialized_resources[:]
+    original_state = container.capture_state()
     original_run_store = _config_module._run_store_adapter
     original_checkpoint_store = _config_module._run_checkpoint_store_adapter
     original_run_manager = _config_module._run_worker_manager
     yield
-    container._registry = original_registry
-    container._singletons = original_singletons
-    container._async_resources = original_resources
-    container._initialized_resources = original_initialized
+    container.restore_state(original_state)
     _config_module._run_store_adapter = original_run_store
     _config_module._run_checkpoint_store_adapter = original_checkpoint_store
     _config_module._run_worker_manager = original_run_manager
@@ -65,7 +63,7 @@ def _set_run_config(
     worker_enabled: bool = True,
     checkpoint_enabled: bool = True,
     checkpoint_auto_recovery_enabled: bool = True,
-):
+) -> Any:
     class _RunConfig:
         worker_count = 1
         lease_seconds = 60
@@ -81,6 +79,11 @@ def _set_run_config(
         checkpoint_ttl_seconds = 604800
         checkpoint_max_payload_bytes = 262144
         checkpoint_tool_ledger_max_count = 1000
+
+        def __init__(self) -> None:
+            self.worker_enabled = worker_enabled
+            self.checkpoint_enabled = checkpoint_enabled
+            self.checkpoint_auto_recovery_enabled = checkpoint_auto_recovery_enabled
 
         def to_capacity_policy(self):
             from domain.run.value_objects import RunCapacityPolicy
@@ -109,9 +112,6 @@ def _set_run_config(
             )
 
     cfg = _RunConfig()
-    cfg.worker_enabled = worker_enabled
-    cfg.checkpoint_enabled = checkpoint_enabled
-    cfg.checkpoint_auto_recovery_enabled = checkpoint_auto_recovery_enabled
     monkeypatch.setattr(_config_module, "run_runtime_config", cfg)
     return cfg
 

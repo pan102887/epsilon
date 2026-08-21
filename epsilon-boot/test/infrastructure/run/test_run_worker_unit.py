@@ -6,13 +6,15 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from domain.run.exceptions import RunLeaseConflictError
 from domain.run.outcome import RunExecutionOutcome
+from domain.run.ports import ApprovalResumeStoreResult, RunProgressSink, RunStorePort
 from domain.run.value_objects import (
+    EventRetentionPolicy,
     RunCreateRequest,
     RunEvent,
     RunEventType,
@@ -54,7 +56,7 @@ class _MemoryRunStore:
                 return snapshot
         return None
 
-    async def count_by_status(self, statuses) -> int:
+    async def count_by_status(self, statuses: set[RunStatus]) -> int:
         return sum(1 for snapshot in self._runs.values() if snapshot.status in statuses)
 
     async def claim_next(self, *, owner_id: str, lease_seconds: int) -> RunSnapshot | None:
@@ -239,7 +241,9 @@ class _MemoryRunStore:
             collaboration_summary=collaboration_summary,
         )
 
-    async def resolve_approval_resume(self, *, run_id: str, owner_id: str, result):
+    async def resolve_approval_resume(
+        self, *, run_id: str, owner_id: str, result: ApprovalResumeStoreResult
+    ) -> RunSnapshot:
         raise NotImplementedError
 
     async def enqueue_continue(self, *, run_id: str, model: str | None = None):
@@ -353,17 +357,21 @@ class _MemoryEventStore:
         self.events.append(event)
         return event
 
-    async def list_events(self, run_id: str, after_cursor: int | None, limit: int):
+    async def list_events(
+        self, run_id: str, after_cursor: int | None, limit: int
+    ) -> list[RunEvent]:
         return [
             event
             for event in self.events
             if event.run_id == run_id and (after_cursor is None or event.cursor > after_cursor)
         ][:limit]
 
-    async def wait_events(self, run_id: str, after_cursor: int | None, timeout_seconds: float):
+    async def wait_events(
+        self, run_id: str, after_cursor: int | None, timeout_seconds: float
+    ) -> list[RunEvent]:
         return await self.list_events(run_id, after_cursor, limit=100)
 
-    async def trim_events(self, run_id: str, policy) -> None:
+    async def trim_events(self, run_id: str, policy: EventRetentionPolicy) -> None:
         return None
 
     async def first_cursor(self, run_id: str) -> int | None:
@@ -381,7 +389,7 @@ class _FakeExecutor:
         *,
         delay_seconds: float = 0,
         raise_error: Exception | None = None,
-        after_execute=None,
+        after_execute: Callable[[str], None] | None = None,
     ) -> None:
         self.outcome = outcome or RunExecutionOutcome(
             status=RunStatus.SUCCEEDED,
@@ -393,7 +401,9 @@ class _FakeExecutor:
         self.after_execute = after_execute
         self.calls: list[str] = []
 
-    async def execute(self, snapshot: RunSnapshot, progress) -> RunExecutionOutcome:
+    async def execute(
+        self, snapshot: RunSnapshot, progress: RunProgressSink
+    ) -> RunExecutionOutcome:
         self.calls.append(snapshot.run_id)
         await progress.segment_started(snapshot.run_id, 1)
         if self.delay_seconds:
@@ -791,7 +801,7 @@ async def test_lost_sweep_marks_expired_lease_and_writes_event() -> None:
     )
     store.put(expired)
     manager = RunWorkerManager(
-        run_store=store,
+        run_store=cast(RunStorePort, store),
         event_store=events,
         executor=_FakeExecutor(),
         config=_config(worker_count=1, lost_sweep_interval_seconds=10),
@@ -826,7 +836,7 @@ async def test_concurrent_workers_execute_single_claim_only_once() -> None:
 async def test_worker_manager_start_stop_wake_up_does_not_leave_running_tasks() -> None:
     store, events, coordinator = _fixture()
     manager = RunWorkerManager(
-        run_store=store,
+        run_store=cast(RunStorePort, store),
         event_store=events,
         executor=coordinator,
         config=_config(
@@ -880,7 +890,7 @@ def _worker(
     auto_continue_max_segments: int = 20,
 ) -> RunWorker:
     return RunWorker(
-        run_store=store,
+        run_store=cast(RunStorePort, store),
         event_store=events,
         executor=executor,
         owner_id=owner_id,

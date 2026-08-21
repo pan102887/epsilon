@@ -20,7 +20,7 @@ from infrastructure.tools.web_search.web_search_tool import WebSearchTool
 # ── Hypothesis 策略 ──
 
 # 搜索结果条目策略：生成包含 title/url/content 的字典
-search_result_st = st.fixed_dictionaries(
+search_result_st: st.SearchStrategy[dict[str, str]] = st.fixed_dictionaries(
     {
         "title": st.text(min_size=1, max_size=100),
         "url": st.text(min_size=1, max_size=200),
@@ -29,7 +29,9 @@ search_result_st = st.fixed_dictionaries(
 )
 
 # 搜索结果列表策略：1~10 条结果
-search_results_list_st = st.lists(search_result_st, min_size=1, max_size=10)
+search_results_list_st: st.SearchStrategy[list[dict[str, str]]] = st.lists(
+    search_result_st, min_size=1, max_size=10
+)
 
 # 异常消息策略
 exception_message_st = st.text(min_size=1, max_size=200)
@@ -95,7 +97,7 @@ def test_conditional_registration(api_key: str) -> None:
 @settings(max_examples=100, deadline=5000)
 @given(results=search_results_list_st)
 @pytest.mark.asyncio
-async def test_format_completeness(results: list[dict]) -> None:
+async def test_format_completeness(results: list[dict[str, str]]) -> None:
     """验证格式化输出包含每条结果的标题、URL 和内容摘要，且用 --- 分隔。
 
     对于任意包含 title、url、content 字段的搜索结果列表，

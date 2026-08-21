@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -17,6 +18,7 @@ from domain.agent.exceptions import (
     ApprovalNotFoundError,
 )
 from domain.agent.segmented_execution import SegmentExecutionPolicy
+from domain.agent.ports import ApprovalStateStorePort
 from domain.agent.value_objects import (
     AgentConfig,
     AgentResult,
@@ -25,9 +27,11 @@ from domain.agent.value_objects import (
     ApprovalInterrupt,
     ApprovalRequiredPayload,
     PendingActionRequest,
+    ApprovalDecisionType,
 )
 from domain.chat.context import ConversationContext, ToolMessage, UserMessage
 from domain.chat.exceptions import ContinuationUnavailableError
+from domain.chat.ports import SessionContextStorePort
 from domain.chat.value_objects import ApprovalResumeRequestVO, ChatContinueRequestVO
 from domain.model_access.value_objects import ToolCallRequest
 
@@ -88,7 +92,7 @@ def _valid_context() -> ConversationContext:
 def _action(
     tool_call_id: str = "call-1",
     *,
-    allowed: frozenset[str] = frozenset({"approve", "reject"}),
+    allowed: frozenset[ApprovalDecisionType] = frozenset({"approve", "reject"}),
 ) -> PendingActionRequest:
     """构造审批动作。"""
 
@@ -130,7 +134,12 @@ def _service(
     """构造测试用应用服务。"""
 
     store = _MemorySessionStore(context or ConversationContext())
-    workflow = ChatSessionContextWorkflow(store, None, "system", "chat-default@v1")
+    workflow = ChatSessionContextWorkflow(
+        cast(SessionContextStorePort, store),
+        None,
+        "system",
+        "chat-default@v1",
+    )
 
     def _make_config(model: str | None) -> AgentConfig:
         return AgentConfig(
@@ -144,7 +153,7 @@ def _service(
     service = ChatApplicationService(
         session_workflow=workflow,
         agent=agent or MagicMock(),
-        approval_store=approval_store,
+        approval_store=cast(ApprovalStateStorePort | None, approval_store),
         segment_policy=segment_policy or SegmentExecutionPolicy(),
         resolve_model_access=lambda _model: (MagicMock(), "gpt-test"),
         make_agent_config=_make_config,

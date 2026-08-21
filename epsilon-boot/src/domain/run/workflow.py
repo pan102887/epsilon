@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 _STABLE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 _REQUIRED_PHASES = frozenset({"plan", "execute", "evaluate", "finalize"})
@@ -118,9 +118,9 @@ class WorkflowExecutionPolicy:
     """
 
     role_capability_enabled: bool = False
-    phase_handoff_required: dict[str, str] = field(default_factory=dict)
+    phase_handoff_required: dict[str, str] = field(default_factory=dict[str, str])
     review_required_phases: frozenset[str] = frozenset()
-    revise_target_phase: dict[str, str] = field(default_factory=dict)
+    revise_target_phase: dict[str, str] = field(default_factory=dict[str, str])
     child_run_enabled: bool = False
 
     def validate(self) -> None:
@@ -237,7 +237,7 @@ class WorkflowPhaseRecord:
     status: str
     started_at: datetime
     completed_at: datetime | None = None
-    summary: dict[str, Any] = field(default_factory=dict)
+    summary: dict[str, Any] = field(default_factory=dict[str, Any])
     error: dict[str, Any] | None = None
     revise_count: int = 0
 
@@ -315,14 +315,13 @@ def canonicalize_collaboration_summary(
         return None
     if isinstance(value, CollaborationSummary):
         return _dataclass_to_json_safe_dict(value)
-    if not isinstance(value, dict):
-        return {"latest_steps": []}
-
-    payload = _json_safe(value)
-    latest_steps = payload.get("latest_steps")
-    if not isinstance(latest_steps, list):
-        recent_steps = payload.get("recent_steps")
-        latest_steps = recent_steps if isinstance(recent_steps, list) else []
+    payload = cast(dict[str, Any], _json_safe(value))
+    raw_latest_steps = cast(object, payload.get("latest_steps"))
+    if isinstance(raw_latest_steps, list):
+        latest_steps = cast(list[object], raw_latest_steps)
+    else:
+        recent_steps = cast(object, payload.get("recent_steps"))
+        latest_steps = cast(list[object], recent_steps) if isinstance(recent_steps, list) else []
 
     canonical = {key: item for key, item in payload.items() if key != "recent_steps"}
     canonical["latest_steps"] = latest_steps
@@ -339,7 +338,7 @@ class WorkflowRunState:
     phase_history: tuple[WorkflowPhaseRecord, ...] = ()
     phase_result_summary: dict[str, Any] | None = None
     phase_error_summary: dict[str, Any] | None = None
-    revise_counts: dict[str, int] = field(default_factory=dict)
+    revise_counts: dict[str, int] = field(default_factory=dict[str, int])
     active_role: str | None = None
     handoff_state: dict[str, Any] | None = None
 
@@ -436,16 +435,14 @@ def _validate_phases(
 
     phase_names: set[str] = set()
     for item in phases:
-        if not isinstance(item.phase, WorkflowPhase):
-            raise ValueError("workflow.phases.phase 必须为 WorkflowPhase")
-        phase_names.add(item.phase.value)
+        phase = _require_workflow_phase(item.phase)
+        phase_names.add(phase.value)
         if item.role is not None:
             _require_stable_name("workflow.phases.role", item.role)
             if item.role not in role_names:
                 raise ValueError(f"workflow.phases 引用未知 role: {item.role}")
         _require_positive_int("workflow.phases.max_attempts", item.max_attempts)
-        if not isinstance(item.summary, str):
-            raise ValueError("workflow.phases.summary 必须为字符串")
+        _require_string("workflow.phases.summary", item.summary)
     return frozenset(phase_names)
 
 
@@ -457,16 +454,12 @@ def _validate_applicable(applicable: WorkflowApplicableCondition) -> None:
         ("applicable.task_classes", applicable.task_classes),
         ("applicable.payload_keywords", applicable.payload_keywords),
     ):
-        if not isinstance(values, frozenset):
-            raise ValueError(f"workflow.{field_name} 必须为 frozenset[str]")
-        for value in values:
-            if not isinstance(value, str) or not value.strip():
-                raise ValueError(f"workflow.{field_name} 包含非法空字符串")
+        _validate_string_frozenset(field_name, values, stable_name=False)
 
 
 def _validate_string_frozenset(
     field_name: str,
-    values: frozenset[str],
+    values: object,
     *,
     stable_name: bool = True,
 ) -> None:
@@ -474,38 +467,56 @@ def _validate_string_frozenset(
 
     if not isinstance(values, frozenset):
         raise ValueError(f"workflow.{field_name} 必须为 frozenset[str]")
-    for value in values:
+    for value in cast(frozenset[object], values):
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"workflow.{field_name} 包含非法空字符串")
         if stable_name:
             _require_stable_name(f"workflow.{field_name}", value)
 
 
-def _validate_string_mapping(field_name: str, values: dict[str, str]) -> None:
+def _validate_string_mapping(field_name: str, values: object) -> None:
     """校验字符串到字符串的策略映射字段。"""
 
     if not isinstance(values, dict):
         raise ValueError(f"workflow.{field_name} 必须为 dict[str, str]")
-    for key, value in values.items():
+    for key, value in cast(dict[object, object], values).items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise ValueError(f"workflow.{field_name} 必须为 dict[str, str]")
         _require_stable_name(f"workflow.{field_name}.key", key)
         _require_stable_name(f"workflow.{field_name}.value", value)
 
 
-def _require_stable_name(field_name: str, value: str) -> None:
+def _require_stable_name(field_name: str, value: object) -> None:
     """校验字段为稳定小写 snake_case 名称。"""
 
     if not isinstance(value, str) or not _STABLE_NAME_PATTERN.fullmatch(value):
         raise ValueError(f"{field_name} 必须为小写 snake_case 标识符")
 
 
-def _require_positive_int(field_name: str, value: int) -> None:
+def _require_workflow_phase(value: object) -> WorkflowPhase:
+    """校验并返回工作流阶段枚举。"""
+
+    if not isinstance(value, WorkflowPhase):
+        raise ValueError("workflow.phases.phase 必须为 WorkflowPhase")
+    return value
+
+
+def _require_string(field_name: str, value: object) -> str:
+    """校验并返回字符串字段。"""
+
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} 必须为字符串")
+    return value
+
+
+def _require_positive_int(field_name: str, value: object) -> None:
     """校验字段为正整数。"""
 
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise ValueError(f"{field_name} 必须为正整数")
 
 
-def _require_non_negative_int(field_name: str, value: int) -> None:
+def _require_non_negative_int(field_name: str, value: object) -> None:
     """校验字段为非负整数。"""
 
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
@@ -530,11 +541,15 @@ def _json_safe(value: Any) -> Any:
     if is_dataclass(value):
         return _dataclass_to_json_safe_dict(value)
     if isinstance(value, tuple):
-        return [_json_safe(item) for item in value]
+        items = cast(tuple[object, ...], value)
+        return [_json_safe(item) for item in items]
     if isinstance(value, frozenset):
-        return [_json_safe(item) for item in sorted(value)]
+        items = cast(frozenset[str], value)
+        return [_json_safe(item) for item in sorted(items)]
     if isinstance(value, list):
-        return [_json_safe(item) for item in value]
+        items = cast(list[object], value)
+        return [_json_safe(item) for item in items]
     if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
+        mapping = cast(dict[object, object], value)
+        return {str(key): _json_safe(item) for key, item in mapping.items()}
     return value

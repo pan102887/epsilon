@@ -68,7 +68,7 @@ def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSessi
     return async_sessionmaker(engine, expire_on_commit=False)
 
 
-async def _init_db() -> None:
+async def init_db() -> None:
     """异步初始化回调：创建引擎和会话工厂，并验证数据库连通性。
 
     由 DI 容器通过 ``register_async_resource`` 在启动时调用。
@@ -88,7 +88,7 @@ async def _init_db() -> None:
     logger.info("Database engine initialized and connectivity verified")
 
 
-async def _cleanup_db() -> None:
+async def cleanup_db() -> None:
     """异步清理回调：释放引擎连接池资源。
 
     由 DI 容器通过 ``register_async_resource`` 在关闭时调用。

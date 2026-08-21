@@ -71,7 +71,7 @@ class TestSuccessReturnsResultAndFalse:
         ctx = ConversationContext()
         cfg = _config(allowed=["echo"])
 
-        result, is_error = await adapter._execute_tool_call(ctx, _tool_call(), cfg)
+        result, is_error = await adapter.execute_tool_call_result(ctx, _tool_call(), cfg)
 
         assert isinstance(result, ToolExecutionResult)
         assert result.content == "ok-result"
@@ -83,7 +83,7 @@ class TestSuccessReturnsResultAndFalse:
         ctx = ConversationContext()
         cfg = _config(allowed=["echo"])
 
-        await adapter._execute_tool_call(ctx, _tool_call(), cfg)
+        await adapter.execute_tool_call_result(ctx, _tool_call(), cfg)
 
         last = ctx.get_messages()[-1]
         assert isinstance(last, ToolMessage)
@@ -96,7 +96,9 @@ class TestPermissionDeniedReturnsErrorTuple:
     """``ToolPermissionDeniedError`` → 返回 ``(str(exc), True)``,metadata 标记 error。"""
 
     @pytest.mark.asyncio
-    async def test_returns_tuple_with_true(self, caplog) -> None:
+    async def test_returns_tuple_with_true(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         import logging
 
         adapter = _adapter_with_tool_result("ok")
@@ -106,7 +108,7 @@ class TestPermissionDeniedReturnsErrorTuple:
         bad_call = ToolCallRequest(id="call-x", name="echo", arguments="{}")
 
         with caplog.at_level(logging.WARNING):
-            result, is_error = await adapter._execute_tool_call(ctx, bad_call, cfg)
+            result, is_error = await adapter.execute_tool_call_result(ctx, bad_call, cfg)
 
         assert is_error is True
         assert result.content  # 非空 str(exc)
@@ -124,7 +126,9 @@ class TestExecutionErrorReturnsErrorTuple:
     """运行期 ``Exception`` → 同 permission_denied 但 reason=execution_error。"""
 
     @pytest.mark.asyncio
-    async def test_returns_tuple_with_true(self, caplog) -> None:
+    async def test_returns_tuple_with_true(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         import logging
 
         adapter = _adapter_with_tool_exc(RuntimeError("model died"))
@@ -132,7 +136,7 @@ class TestExecutionErrorReturnsErrorTuple:
         cfg = _config(allowed=["echo"])
 
         with caplog.at_level(logging.WARNING):
-            result, is_error = await adapter._execute_tool_call(ctx, _tool_call(), cfg)
+            result, is_error = await adapter.execute_tool_call_result(ctx, _tool_call(), cfg)
 
         assert is_error is True
         assert "model died" in result.content
@@ -152,7 +156,7 @@ class TestStampEventOnFailure:
         ctx = ConversationContext()
         cfg = _config(allowed=["echo"])
 
-        await adapter._execute_tool_call(ctx, _tool_call(), cfg)
+        await adapter.execute_tool_call_result(ctx, _tool_call(), cfg)
 
         # 应当为新追加的 ToolMessage(索引 0)写入时间戳
         assert 0 in ctx.event_timestamps
@@ -163,7 +167,9 @@ class TestLogToolFailureFieldsNotDegraded:
     """NFR-7: ``_log_tool_failure`` warning 字段集合不降级。"""
 
     @pytest.mark.asyncio
-    async def test_log_tool_failure_includes_required_fields(self, caplog) -> None:
+    async def test_log_tool_failure_includes_required_fields(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         import logging
 
         adapter = _adapter_with_tool_exc(ValueError("bad"))
@@ -171,7 +177,7 @@ class TestLogToolFailureFieldsNotDegraded:
         cfg = _config(allowed=["echo"])
 
         with caplog.at_level(logging.WARNING):
-            await adapter._execute_tool_call(ctx, _tool_call(), cfg)
+            await adapter.execute_tool_call_result(ctx, _tool_call(), cfg)
 
         # 至少 1 条 warning 日志
         warnings = [r for r in caplog.records if r.levelname == "WARNING"]

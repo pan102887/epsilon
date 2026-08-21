@@ -1,20 +1,23 @@
 """任务继续上下文不变量属性测试。"""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from domain.agent.value_objects import AgentResult
+from domain.agent.ports import AgentPort
+from domain.agent.value_objects import AgentConfig, AgentResult
 from domain.chat.context import ConversationContext, SystemMessage, ToolMessage
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import ToolCallRequest
 from domain.prompt.value_objects import LoadedPrompt
 from domain.task.value_objects import TaskContinueRequest, TaskStatus
 from infrastructure.task.task_agent_adapter import TaskAgentAdapter
 
 
-def _schema(name: str) -> dict:
+def _schema(name: str) -> dict[str, Any]:
     return {"type": "function", "function": {"name": name, "parameters": {}}}
 
 
@@ -36,7 +39,7 @@ def _context(user_count: int) -> ConversationContext:
     return context
 
 
-def _adapter(agent, context: ConversationContext) -> TaskAgentAdapter:
+def _adapter(agent: AgentPort, context: ConversationContext) -> TaskAgentAdapter:
     registry = MagicMock()
     registry.get_schemas.return_value = [_schema("search")]
     model_registry = MagicMock()
@@ -71,7 +74,11 @@ async def test_continue_task_preserves_user_count(user_count: int) -> None:
     """Property 3：继续请求不追加用户消息。"""
     context = _context(user_count)
 
-    async def run(ctx, _config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         assert sum(1 for message in ctx.get_messages() if message.role == "user") == user_count
         return AgentResult(content="done", model="test-model")
 

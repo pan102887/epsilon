@@ -114,7 +114,7 @@ async def test_task_construction_correctness(
     config: NamedAgentConfig,
     current_depth: int,
     task_goal: str,
-    input_data: dict,
+    input_data: dict[str, object],
 ) -> None:
     """验证 DelegateToAgentTool 正确调用 DelegationPort.delegate 并传递参数。
 

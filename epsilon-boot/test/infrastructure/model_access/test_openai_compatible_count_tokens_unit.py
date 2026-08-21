@@ -2,7 +2,7 @@
 
 import pytest
 
-from domain.chat.context import AssistantMessage, SystemMessage, ToolMessage, UserMessage
+from domain.chat.context import BaseMessage, AssistantMessage, SystemMessage, ToolMessage, UserMessage
 from domain.model_access.value_objects import ToolCallRequest
 from infrastructure.model_access.openai_compatible_adapter import OpenAICompatibleAdapter
 from infrastructure.model_access.provider_config import ProviderConfig
@@ -29,7 +29,7 @@ class TestCountTokens:
     def test_pure_text_messages_is_positive_int(self) -> None:
         """纯文本消息应返回正整数。"""
         adapter = _make_adapter()
-        messages = [
+        messages: list[BaseMessage] = [
             SystemMessage(content="你是一个助手"),
             UserMessage(content="你好"),
         ]
@@ -40,7 +40,7 @@ class TestCountTokens:
     def test_with_tool_calls_is_positive_int(self) -> None:
         """携带 tool_calls 的消息列表应返回正整数。"""
         adapter = _make_adapter()
-        messages = [
+        messages: list[BaseMessage] = [
             UserMessage(content="查天气"),
             AssistantMessage(
                 content="",
@@ -64,7 +64,7 @@ class TestCountTokens:
     def test_message_list_equals_sum_of_individual_messages(self) -> None:
         """列表 token 数等于逐条消息 token 数之和。"""
         adapter = _make_adapter()
-        messages = [
+        messages: list[BaseMessage] = [
             SystemMessage(content="system"),
             UserMessage(content="hello"),
             AssistantMessage(content="world"),

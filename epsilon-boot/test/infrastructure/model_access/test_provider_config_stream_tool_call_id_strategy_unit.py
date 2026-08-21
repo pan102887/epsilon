@@ -8,7 +8,7 @@
 from pathlib import Path
 
 import pytest
-from pydantic_settings import SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from common.configuration import PropertiesFileSettingsSource
 from infrastructure.model_access.provider_config import ProviderConfig
@@ -40,13 +40,14 @@ def test_config_reads_strategy_from_properties_file(tmp_path: Path) -> None:
 
         @classmethod
         def settings_customise_sources(
-            cls,
-            settings_cls,
-            init_settings,
-            env_settings,
-            dotenv_settings,
-            file_secret_settings,
-        ):
+            cls: type[BaseSettings],
+            settings_cls: type[BaseSettings],
+            init_settings: PydanticBaseSettingsSource,
+            env_settings: PydanticBaseSettingsSource,
+            dotenv_settings: PydanticBaseSettingsSource,
+            file_secret_settings: PydanticBaseSettingsSource,
+        ) -> tuple[PydanticBaseSettingsSource, ...]:
+            del cls, init_settings, env_settings, dotenv_settings, file_secret_settings
             return (
                 PropertiesFileSettingsSource(
                     settings_cls,

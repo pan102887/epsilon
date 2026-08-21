@@ -11,14 +11,16 @@
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
+from typing import Any
 
 import pytest
 
 from domain.agent.exceptions import HandoffPerformed
-from domain.agent.tools import Tool
+from domain.agent.tools import Tool, ToolExecutionResult
 from domain.agent.value_objects import AgentConfig, AgentResult, AgentStreamEvent
 from domain.chat.context import (
     ConversationContext,
+    BaseMessage,
     ToolMessage,
 )
 from domain.chat.value_objects import ContextBuilderResult
@@ -27,6 +29,7 @@ from domain.model_access.value_objects import (
     StreamingChunk,
     ToolCallRequest,
 )
+from domain.model_access.ports import ModelAccessPort
 from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 from test.infrastructure.agent._v3_stream_helpers import install_stream_mock
 
@@ -47,10 +50,10 @@ class _FakeHandoffTool(Tool):
         return "test handoff tool"
 
     @property
-    def parameters(self) -> dict:
+    def parameters(self) -> dict[str, Any]:
         return {"type": "object", "properties": {}, "required": []}
 
-    async def execute(self, **kwargs) -> str:
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
         raise HandoffPerformed(
             target_agent=self._target,
             content=self._content,
@@ -75,7 +78,7 @@ def _make_adapter() -> tuple[ReActAgentAdapter, _FakeHandoffTool]:
     """构造适配器：tool_registry 委托给 fake handoff tool。"""
     handoff_tool = _FakeHandoffTool()
 
-    async def _execute_proxy(req: ToolCallRequest) -> str:
+    async def _execute_proxy(req: ToolCallRequest) -> ToolExecutionResult:
         # 模拟 ToolRegistry.execute 走完整 run() 流水线：直接 await 工具.execute
         return await handoff_tool.execute()
 
@@ -83,13 +86,18 @@ def _make_adapter() -> tuple[ReActAgentAdapter, _FakeHandoffTool]:
     tool_registry.execute = AsyncMock(side_effect=_execute_proxy)
     tool_registry.get = MagicMock(return_value=handoff_tool)
 
-    context_builder = MagicMock()
-    context_builder.build = AsyncMock(
-        side_effect=lambda msgs, **kwargs: ContextBuilderResult(
-            messages=msgs,
-            usage={},
-        )
-    )
+    class _ContextBuilder:
+        async def build(
+            self,
+            messages: list[BaseMessage],
+            *,
+            model_access: ModelAccessPort | None = None,
+            model: str | None = None,
+        ) -> ContextBuilderResult:
+            del model_access, model
+            return ContextBuilderResult(messages=messages, usage={})
+
+    context_builder = _ContextBuilder()
     adapter = ReActAgentAdapter(
         tool_registry=tool_registry,
         context_builder=context_builder,

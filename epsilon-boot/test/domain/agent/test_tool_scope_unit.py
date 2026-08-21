@@ -11,7 +11,7 @@ from domain.agent.exceptions import (
     ToolExecutionError,
     ToolPermissionDeniedError,
 )
-from domain.agent.tools import ScopedToolRegistry, Tool, ToolRegistry
+from domain.agent.tools import ScopedToolRegistry, Tool, ToolExecutionResult, ToolRegistry
 
 # ═══════════════════════════════════════════════════════════════
 # 1.3 ToolPermissionDeniedError 继承关系和边界条件
@@ -101,8 +101,8 @@ class FakeTool(Tool):
         self,
         tool_name: str = "fake_tool",
         tool_description: str = "A fake tool",
-        tool_parameters: dict | None = None,
-    ):
+        tool_parameters: dict[str, Any] | None = None,
+    ) -> None:
         self._name = tool_name
         self._description = tool_description
         self._parameters = tool_parameters or {"type": "object", "properties": {}}
@@ -116,11 +116,11 @@ class FakeTool(Tool):
         return self._description
 
     @property
-    def parameters(self) -> dict:
+    def parameters(self) -> dict[str, Any]:
         return self._parameters
 
-    async def execute(self, **kwargs: Any) -> str:
-        return "ok"
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
+        return ToolExecutionResult(content="ok")
 
 
 class TestGetSchemasBoundaryConditions:

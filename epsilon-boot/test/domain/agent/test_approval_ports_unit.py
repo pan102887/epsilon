@@ -3,6 +3,7 @@
 import inspect
 
 from domain.agent.ports import AgentPort, ApprovalPolicyPort, ApprovalStateStorePort
+from domain.agent.value_objects import ApprovalInterrupt, ApprovalInterruptSummary
 
 
 def _annotation_text(annotation: object) -> str:
@@ -60,7 +61,7 @@ def test_approval_state_store_list_pending_by_session_signature() -> None:
 class DummyPolicyProvider:
     """用于验证策略端口形状的 dummy 实现。"""
 
-    def policy_for(self, tool_name: str):
+    def policy_for(self, tool_name: str) -> None:
         """返回 None 即可，测试只验证协议方法可被调用。"""
         return None
 
@@ -68,15 +69,15 @@ class DummyPolicyProvider:
 class DummyStateStore:
     """用于验证状态存储端口形状的 dummy 实现。"""
 
-    async def save(self, interrupt):
+    async def save(self, interrupt: ApprovalInterrupt) -> None:
         """保存 dummy 状态。"""
         return None
 
-    async def load(self, session_id: str, approval_id: str):
+    async def load(self, session_id: str, approval_id: str) -> ApprovalInterrupt | None:
         """加载 dummy 状态。"""
         return None
 
-    async def consume(self, session_id: str, approval_id: str):
+    async def consume(self, session_id: str, approval_id: str) -> ApprovalInterrupt | None:
         """消费 dummy 状态。"""
         return None
 
@@ -88,7 +89,9 @@ class DummyStateStore:
         """删除 dummy 会话状态。"""
         return None
 
-    async def list_pending_by_session(self, session_id: str):
+    async def list_pending_by_session(
+        self, session_id: str
+    ) -> list[ApprovalInterruptSummary]:
         """列出 dummy 会话审批摘要。"""
         return []
 

@@ -89,7 +89,7 @@ def _make_api_connection_error(message: str = "connection refused") -> APIConnec
 
 def _make_rate_limit_error(retry_after: str | None = None) -> RateLimitError:
     """构造 RateLimitError 实例，可选携带 ``retry-after`` 响应头。"""
-    headers = {}
+    headers: dict[str, str] = {}
     if retry_after is not None:
         headers["retry-after"] = retry_after
     response = httpx.Response(

@@ -8,9 +8,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from domain.agent.segmented_execution import SegmentExecutionPolicy
-from domain.agent.value_objects import AgentStreamEvent
+from domain.agent.value_objects import AgentConfig, AgentStreamEvent
 from domain.chat.context import ConversationContext, UserMessage
 from domain.chat.value_objects import ChatContinueRequestVO, ChatRequestVO
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import ToolCallRequest
 from domain.prompt.value_objects import LoadedPrompt
 from infrastructure.chat.chat_service_adapter import ChatServiceAdapter
@@ -81,7 +82,11 @@ async def test_segment_done_control_event_contains_budget_metadata() -> None:
     """单段暂停后产出 segment_done 控制事件。"""
     context = ConversationContext()
 
-    async def run_events(ctx, _config, _model_access) -> AsyncIterator[AgentStreamEvent]:
+    async def run_events(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AsyncIterator[AgentStreamEvent]:
         _append_tool_tail(ctx)
         yield AgentStreamEvent(
             kind="assistant_done",
@@ -117,7 +122,11 @@ async def test_segmented_stream_auto_continue_yields_two_boundaries_and_final_me
     context = ConversationContext()
     user_counts: list[int] = []
 
-    async def run_events(ctx, config, _model_access) -> AsyncIterator[AgentStreamEvent]:
+    async def run_events(
+        ctx: ConversationContext,
+        config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AsyncIterator[AgentStreamEvent]:
         user_counts.append(sum(isinstance(message, UserMessage) for message in ctx.get_messages()))
         assert config.max_rounds == 3
         if len(user_counts) == 1:
@@ -174,7 +183,11 @@ async def test_segmented_stream_approval_required_stops_without_auto_continue() 
     """审批事件停止自动续跑，不被映射为 paused。"""
     context = ConversationContext()
 
-    async def run_events(_ctx, _config, _model_access) -> AsyncIterator[AgentStreamEvent]:
+    async def run_events(
+        _ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AsyncIterator[AgentStreamEvent]:
         yield AgentStreamEvent(
             kind="approval_required",
             metadata={"approval_id": "approval-1"},
@@ -208,7 +221,11 @@ async def test_segmented_stream_guardrail_approval_sets_risk_gate_required() -> 
     """guardrail 来源审批事件应把风险门禁透传到 segment_done。"""
     context = ConversationContext()
 
-    async def run_events(_ctx, _config, _model_access) -> AsyncIterator[AgentStreamEvent]:
+    async def run_events(
+        _ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AsyncIterator[AgentStreamEvent]:
         yield AgentStreamEvent(
             kind="approval_required",
             metadata={
@@ -250,7 +267,11 @@ async def test_segmented_continue_stream_does_not_append_user() -> None:
     context.add_user_message("goal")
     _append_tool_tail(context)
 
-    async def run_events(ctx, _config, _model_access) -> AsyncIterator[AgentStreamEvent]:
+    async def run_events(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AsyncIterator[AgentStreamEvent]:
         assert sum(isinstance(message, UserMessage) for message in ctx.get_messages()) == 1
         yield AgentStreamEvent(kind="assistant_delta", content="done")
         yield AgentStreamEvent(kind="assistant_done", usage={"total_tokens": 1})

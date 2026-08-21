@@ -10,8 +10,9 @@
 from __future__ import annotations
 
 import inspect
+from typing import Any
 
-from domain.agent.tools import Tool
+from domain.agent.tools import Tool, ToolExecutionResult
 
 
 class _MinimalTool(Tool):
@@ -26,11 +27,11 @@ class _MinimalTool(Tool):
         return "minimal tool"
 
     @property
-    def parameters(self) -> dict:
+    def parameters(self) -> dict[str, Any]:
         return {"type": "object", "properties": {}, "required": []}
 
-    async def execute(self, **kwargs) -> str:
-        return "ok"
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
+        return ToolExecutionResult(content="ok")
 
 
 class _TimedTool(Tool):
@@ -45,15 +46,15 @@ class _TimedTool(Tool):
         return "timed tool"
 
     @property
-    def parameters(self) -> dict:
+    def parameters(self) -> dict[str, Any]:
         return {"type": "object", "properties": {}, "required": []}
 
     @property
     def timeout_seconds(self) -> float | None:
         return 0.5
 
-    async def execute(self, **kwargs) -> str:
-        return "ok"
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
+        return ToolExecutionResult(content="ok")
 
 
 def test_default_timeout_seconds_is_none() -> None:

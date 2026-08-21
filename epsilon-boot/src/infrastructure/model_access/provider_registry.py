@@ -37,7 +37,7 @@ class _ProviderRecord:
 
     name: str
     adapter: ModelAccessPort
-    models: set[str] = field(default_factory=set)
+    models: set[str] = field(default_factory=lambda: set[str]())
 
 
 class ProviderRegistry(ModelRegistryPort):
@@ -67,9 +67,17 @@ class ProviderRegistry(ModelRegistryPort):
         """
         self._providers: dict[str, _ProviderRecord] = {}
         self._model_providers: dict[str, set[str]] = {}
-        self._model_rr: dict[str, itertools.cycle] = {}
+        self._model_rr: dict[str, itertools.cycle[str]] = {}
         self._default_model: str = default_model
         self._health_policy = health_policy or ProviderHealthPolicy()
+
+    @property
+    def model_providers(self) -> dict[str, frozenset[str]]:
+        """返回模型到提供商的只读快照。"""
+        return {
+            model_name: frozenset(provider_names)
+            for model_name, provider_names in self._model_providers.items()
+        }
 
     def register_provider(
         self,
@@ -254,3 +262,11 @@ class ProviderRegistry(ModelRegistryPort):
             已注册的提供商名称列表。
         """
         return list(self._providers.keys())
+
+    def get_provider_adapter(self, provider_name: str) -> ModelAccessPort:
+        """Return the adapter registered under a provider name.
+
+        Raises:
+            KeyError: If the provider is not registered.
+        """
+        return self._providers[provider_name].adapter

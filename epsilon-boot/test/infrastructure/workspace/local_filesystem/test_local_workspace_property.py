@@ -58,7 +58,7 @@ class TestToHostPathStaysUnderRoot:
             # Policy 拒绝：本样本跳过
             return
 
-        host = ws._to_host_path(wp)
+        host = ws.to_host_path(wp)
         # 不得触发 I/O：_to_host_path 是纯字符串拼接
         common = os.path.commonpath([str(host), str(root)])
         assert common == str(root), (

@@ -41,7 +41,9 @@ def get_parent_context() -> ConversationContext | None:
     return _current_parent_context.get()
 
 
-def set_parent_context(ctx: ConversationContext) -> Token:
+def set_parent_context(
+    ctx: ConversationContext,
+) -> Token[ConversationContext | None]:
     """把父 ``ConversationContext`` 设置到当前协程链上，返回 reset token。
 
     Args:
@@ -54,6 +56,6 @@ def set_parent_context(ctx: ConversationContext) -> Token:
     return _current_parent_context.set(ctx)
 
 
-def reset_parent_context(token: Token) -> None:
+def reset_parent_context(token: Token[ConversationContext | None]) -> None:
     """通过 token 还原 ContextVar 至 ``set`` 前的值。"""
     _current_parent_context.reset(token)

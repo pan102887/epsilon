@@ -50,6 +50,14 @@ class ContextBuilderAdapter(ContextBuilderPort):
         self._compaction = compaction
         self._environment_provider = environment_provider
 
+    @property
+    def compaction(self) -> ContextCompactionPort:
+        return self._compaction
+
+    @property
+    def environment_provider(self) -> EnvironmentContextProvider:
+        return self._environment_provider
+
     async def build(
         self,
         messages: list[BaseMessage],

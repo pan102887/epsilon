@@ -33,8 +33,8 @@ class _CriticalTool(Tool):
     def risk_level(self) -> ToolRiskLevel:
         return ToolRiskLevel.CRITICAL
 
-    async def execute(self, **kwargs: Any) -> str:
-        return "should not run"
+    async def execute(self, **kwargs: Any) -> ToolExecutionResult:
+        return ToolExecutionResult(content="should not run")
 
 
 def _config() -> AgentConfig:
@@ -65,7 +65,7 @@ async def test_observe_mode_does_not_block_critical_tool() -> None:
     )
     ctx = ConversationContext()
 
-    result, is_error = await adapter._execute_tool_call(ctx, _tool_call(), _config())
+    result, is_error = await adapter.execute_tool_call_result(ctx, _tool_call(), _config())
 
     assert result.content == "tool ok"
     assert is_error is False
@@ -84,7 +84,7 @@ async def test_enforce_mode_blocks_critical_tool_before_execution() -> None:
     )
     ctx = ConversationContext()
 
-    executable, approval = await adapter._prepare_tool_calls_for_execution(
+    executable, approval = await adapter.prepare_tool_calls_for_execution(
         context=ctx,
         config=_config(),
         tool_calls=(_tool_call(),),
@@ -103,3 +103,9 @@ async def test_enforce_mode_blocks_critical_tool_before_execution() -> None:
     assert last.metadata["guardrail_reason"] == "tool_risk_gate_required"
     assert last.metadata["guardrail_action"] == "stop"
     assert last.metadata["risk_gate_required"] is True
+
+
+# Public test builders reused by integration coverage.
+guardrail_config = _config
+CriticalTool = _CriticalTool
+tool_call = _tool_call

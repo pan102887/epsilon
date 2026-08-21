@@ -5,13 +5,16 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from domain.agent.value_objects import (
+    AgentConfig,
     AgentResult,
+    AgentTerminationReason,
     ApprovalRequiredPayload,
     PendingActionRequest,
 )
 from domain.chat.context import AssistantMessage, ConversationContext, ToolMessage
 from domain.chat.value_objects import ChatRequestVO
 from domain.model_access.value_objects import ToolCallRequest
+from domain.model_access.ports import ModelAccessPort
 from domain.prompt.value_objects import LoadedPrompt
 from infrastructure.chat.chat_service_adapter import ChatServiceAdapter
 from test.infrastructure.chat.chat_adapter_test_utils import make_chat_adapter_dependencies
@@ -64,11 +67,17 @@ def _adapter(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminated_reason", ["max_rounds", "token_budget_exceeded"])
-async def test_chat_returns_paused_and_saves_tool_tail(terminated_reason: str) -> None:
+async def test_chat_returns_paused_and_saves_tool_tail(
+    terminated_reason: AgentTerminationReason,
+) -> None:
     """验证同步 chat 对阶段边界返回 paused，且保存上下文不追加空 assistant。"""
     context = ConversationContext()
 
-    async def run(ctx, _config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        _config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         ctx.add_assistant_message_with_tool_calls(
             "",
             [ToolCallRequest(id="call-1", name="search", arguments="{}")],

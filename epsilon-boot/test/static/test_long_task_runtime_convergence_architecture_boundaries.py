@@ -235,6 +235,11 @@ def _read(path: Path) -> str:
 def _has_chinese_docstring(node: ast.AST) -> bool:
     """判断 AST 节点是否具备中文 docstring。"""
 
+    if not isinstance(
+        node,
+        (ast.AsyncFunctionDef, ast.FunctionDef, ast.ClassDef, ast.Module),
+    ):
+        return False
     docstring = ast.get_docstring(node)
     return bool(docstring and _CHINESE_RE.search(docstring))
 

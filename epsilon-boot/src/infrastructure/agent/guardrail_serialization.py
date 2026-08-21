@@ -13,9 +13,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 from domain.agent.guardrails import (
     GuardrailModelPricing,
@@ -43,11 +44,13 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, datetime):
         return _resolve_datetime(value).isoformat()
     if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
+        mapping = cast(dict[object, object], value)
+        return {str(key): _json_safe(item) for key, item in mapping.items()}
     if isinstance(value, (list, tuple)):
-        return [_json_safe(item) for item in value]
+        return [_json_safe(item) for item in cast(Iterable[object], value)]
     if isinstance(value, (set, frozenset)):
-        return [_json_safe(item) for item in sorted(value, key=str)]
+        values = cast(set[object] | frozenset[object], value)
+        return [_json_safe(item) for item in sorted(values, key=str)]
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return str(value)

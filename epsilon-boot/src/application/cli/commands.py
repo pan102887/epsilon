@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from common.exceptions import BizException
 from domain.agent.value_objects import ApprovalDecision, ApprovalInterruptSummary
@@ -24,7 +24,7 @@ from domain.run.exceptions import (
 from domain.run.value_objects import RunSnapshot
 from domain.run.workflow import canonicalize_collaboration_summary
 
-from .approval_mode import _APPROVAL_MODES
+from .approval_mode import APPROVAL_MODES
 from .runtime import CliRuntime
 from .session import TuiSessionState
 
@@ -305,7 +305,7 @@ class SlashCommandRouter:
         action, _, value = rest.partition(" ")
         if action == "mode":
             value = value.strip()
-            if value not in _APPROVAL_MODES:
+            if value not in APPROVAL_MODES:
                 return CommandResult(APPROVAL_MODE_USAGE)
             state.approval_mode = value
             return CommandResult(f"已切换审批模式: {value}")
@@ -361,6 +361,11 @@ def _format_resume_result(
                 f"expires_at={_format_epoch(summary.expires_at_epoch)}"
             )
     return "\n".join(lines)
+
+
+def format_run_snapshot(snapshot: RunSnapshot) -> str:
+    """格式化 Run 快照供 CLI 展示。"""
+    return _format_run_snapshot(snapshot)
 
 
 def _format_epoch_ms(epoch_ms: int) -> str:
@@ -432,10 +437,12 @@ def _render_workflow_metadata(snapshot: RunSnapshot) -> list[str]:
 def _phase_history_summary(value: Any) -> str:
     if not isinstance(value, list):
         return ""
+    value = cast(list[Any], value)
     phases: list[str] = []
     for item in value[-4:]:
         if not isinstance(item, dict):
             continue
+        item = cast(dict[str, Any], item)
         phase = _string_value(item.get("phase"))
         status = _string_value(item.get("status"))
         if phase and status:
@@ -453,10 +460,12 @@ def _collaboration_summary(value: dict[str, Any] | None) -> str:
         return ""
     latest_steps = canonical.get("latest_steps")
     if isinstance(latest_steps, list) and latest_steps:
+        latest_steps = cast(list[Any], latest_steps)
         steps: list[str] = []
         for item in latest_steps[-3:]:
             if not isinstance(item, dict):
                 continue
+            item = cast(dict[str, Any], item)
             action = _string_value(item.get("action"))
             target = _string_value(item.get("target_agent"))
             result = _string_value(item.get("result_summary") or item.get("task_summary"))
@@ -465,7 +474,7 @@ def _collaboration_summary(value: dict[str, Any] | None) -> str:
                 steps.append(" / ".join(parts))
         if steps:
             return "; ".join(steps)
-    counters = []
+    counters: list[str] = []
     for key in ("delegation_count", "handoff_count", "max_depth_seen", "limit_hit_reason"):
         if key in canonical:
             counters.append(f"{key}={canonical[key]}")

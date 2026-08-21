@@ -178,6 +178,10 @@ class IdentityGuard:
         self._root: Path = root
         self._root_dev: int = os.stat(root).st_dev
 
+    @property
+    def root_dev(self) -> int:
+        return self._root_dev
+
     def check(self, host_path: Path) -> None:
         """对目标路径或其最近存在的祖先做跨设备身份校验。
 

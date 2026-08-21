@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import Protocol, cast
 
 import pytest
+import redis.asyncio as aioredis
 
 fakeredis = pytest.importorskip("fakeredis.aioredis")
 
@@ -27,14 +30,30 @@ pytestmark = pytest.mark.asyncio
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-@pytest.fixture
-def redis_client():
-    return fakeredis.FakeRedis()
+class _TestRedisClient(Protocol):
+    """测试断言直接使用的最小 Redis 命令集合。"""
+
+    async def llen(self, name: str) -> int: ...
+
+    async def get(self, name: str) -> str | bytes | None: ...
+
+    async def hlen(self, name: str) -> int: ...
+
+    async def lindex(self, name: str, index: int) -> str | bytes | None: ...
+
+    async def lset(self, name: str, index: int, value: str) -> bool: ...
 
 
 @pytest.fixture
-def store(redis_client) -> RedisRunCheckpointStoreAdapter:
-    return RedisRunCheckpointStoreAdapter(redis_client=redis_client, conflict_retry_max=8)
+def redis_client() -> _TestRedisClient:
+    return cast(_TestRedisClient, fakeredis.FakeRedis())
+
+
+@pytest.fixture
+def store(redis_client: _TestRedisClient) -> RedisRunCheckpointStoreAdapter:
+    return RedisRunCheckpointStoreAdapter(
+        redis_client=cast(aioredis.Redis, redis_client), conflict_retry_max=8
+    )
 
 
 def _checkpoint() -> DurableCheckpoint:
@@ -58,12 +77,7 @@ def _checkpoint() -> DurableCheckpoint:
 
 
 def _checkpoint_at(created_at: datetime) -> DurableCheckpoint:
-    return DurableCheckpoint(
-        **{
-            **_checkpoint().__dict__,
-            "created_at": created_at,
-        }
-    )
+    return replace(_checkpoint(), created_at=created_at)
 
 
 def _ledger(key: str = "key-1") -> ToolResultLedgerEntry:
@@ -87,7 +101,7 @@ def _ledger(key: str = "key-1") -> ToolResultLedgerEntry:
 
 async def test_save_latest_and_list_checkpoints_use_redis_keys(
     store: RedisRunCheckpointStoreAdapter,
-    redis_client,
+    redis_client: _TestRedisClient,
 ) -> None:
     first = await store.save_checkpoint(_checkpoint())
     second = await store.save_checkpoint(_checkpoint())
@@ -96,12 +110,14 @@ async def test_save_latest_and_list_checkpoints_use_redis_keys(
     assert await store.latest_checkpoint("run-1") == second
     assert await store.list_checkpoints("run-1", after_sequence=1, limit=10) == [second]
     assert await redis_client.llen("run:run-1:checkpoints") == 2
-    assert int(await redis_client.get("run:run-1:checkpoint_seq")) == 2
+    sequence = await redis_client.get("run:run-1:checkpoint_seq")
+    assert sequence is not None
+    assert int(sequence) == 2
 
 
 async def test_tool_ledger_pending_and_completed_roundtrip(
     store: RedisRunCheckpointStoreAdapter,
-    redis_client,
+    redis_client: _TestRedisClient,
 ) -> None:
     pending = await store.put_tool_pending(_ledger())
     completed = await store.complete_tool_result(
@@ -129,10 +145,12 @@ async def test_put_tool_pending_is_idempotent_for_same_key(
 
 async def test_latest_checkpoint_rejects_incompatible_schema(
     store: RedisRunCheckpointStoreAdapter,
-    redis_client,
+    redis_client: _TestRedisClient,
 ) -> None:
     await store.save_checkpoint(_checkpoint())
-    raw = (await redis_client.lindex("run:run-1:checkpoints", -1)).decode("utf-8")
+    stored = await redis_client.lindex("run:run-1:checkpoints", -1)
+    assert stored is not None
+    raw = stored.decode("utf-8") if isinstance(stored, bytes) else stored
     await redis_client.lset(
         "run:run-1:checkpoints",
         0,

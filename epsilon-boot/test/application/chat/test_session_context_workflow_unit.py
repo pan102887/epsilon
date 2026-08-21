@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hypothesis.strategies as st
 import pytest
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
 from hypothesis import given, settings
 
 from application.chat.session_context_workflow import ChatSessionContextWorkflow
@@ -26,6 +28,7 @@ _NON_SYSTEM_MESSAGE_ST = st.one_of(
 _SYSTEM_MESSAGE_ST = st.builds(SystemMessage, content=_MESSAGE_CONTENT_ST)
 _ANY_MESSAGE_ST = st.one_of(_NON_SYSTEM_MESSAGE_ST, _SYSTEM_MESSAGE_ST)
 _SYSTEM_PROMPT_ST = st.text(min_size=1, max_size=200).filter(lambda value: value.strip() != "")
+_T = TypeVar("_T")
 
 
 class _MemorySessionStore:
@@ -45,6 +48,21 @@ class _MemorySessionStore:
 
         self.saved.append((session_id, context))
 
+    async def delete(self, session_id: str) -> None:
+        self.context = ConversationContext()
+
+    async def exists(self, session_id: str) -> bool:
+        return bool(self.context.get_messages())
+
+    async def compare_and_swap(
+        self,
+        session_id: str,
+        mutator: Callable[[ConversationContext], Awaitable[_T]],
+    ) -> _T:
+        result = await mutator(self.context)
+        await self.save(session_id, self.context)
+        return result
+
 
 class _MemorySessionIndex:
     """测试用内存会话索引。"""
@@ -62,6 +80,13 @@ class _MemorySessionIndex:
         """记录 upsert 调用。"""
 
         self.upserts.append(metadata)
+
+    async def list_recent(self, limit: int = 20) -> list[SessionMetadata]:
+        return ([self.existing] if self.existing is not None else [])[:limit]
+
+    async def delete(self, session_id: str) -> None:
+        if self.existing is not None and self.existing.session_id == session_id:
+            self.existing = None
 
 
 def _build_context(messages: list[BaseMessage]) -> ConversationContext:

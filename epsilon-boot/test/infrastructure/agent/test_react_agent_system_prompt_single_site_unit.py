@@ -27,8 +27,9 @@ import pytest
 
 from domain.agent.tools import ToolExecutionResult
 from domain.agent.value_objects import AgentConfig
-from domain.chat.context import ConversationContext
+from domain.chat.context import BaseMessage, ConversationContext
 from domain.chat.value_objects import ContextBuilderResult
+from domain.model_access.ports import ModelAccessPort
 from domain.model_access.value_objects import (
     ChatRequest,
     LLMResponse,
@@ -40,7 +41,13 @@ from infrastructure.agent.react_agent_adapter import ReActAgentAdapter
 class _FakeContextBuilder:
     """测试用上下文构建器。"""
 
-    async def build(self, messages, **kwargs) -> ContextBuilderResult:
+    async def build(
+        self,
+        messages: list[BaseMessage],
+        *,
+        model_access: ModelAccessPort | None = None,
+        model: str | None = None,
+    ) -> ContextBuilderResult:
         return ContextBuilderResult(
             messages=messages,
             usage={},
@@ -58,6 +65,9 @@ class _FakeModel:
 
     async def stream(self, request: ChatRequest) -> AsyncIterator[StreamingChunk]:
         yield StreamingChunk(delta_content=self._content, finished=True, usage={})
+
+    def count_tokens(self, messages: list[BaseMessage]) -> int:
+        return 0
 
 
 def _adapter() -> ReActAgentAdapter:
@@ -83,7 +93,9 @@ class TestRunStreamingInjectionSingleSite:
     """验证 ``run_streaming`` 入口移除调用且注入仅发生一次。"""
 
     @pytest.mark.asyncio
-    async def test_run_streaming_max_rounds_one_injects_once(self, monkeypatch) -> None:
+    async def test_run_streaming_max_rounds_one_injects_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """``max_rounds == 1`` 分支显式注入,SystemMessage 应仅出现 1 次。"""
         adapter = _adapter()
         ctx = ConversationContext()
@@ -91,14 +103,17 @@ class TestRunStreamingInjectionSingleSite:
 
         # 计数 _ensure_agent_system_prompt 调用次数
         call_count = {"n": 0}
-        original = ReActAgentAdapter._ensure_agent_system_prompt
+        original = ReActAgentAdapter.ensure_agent_system_prompt
 
-        def _wrapped(context, config):
+        def _wrapped(
+            context: ConversationContext,
+            config: AgentConfig,
+        ) -> None:
             call_count["n"] += 1
             original(context, config)
 
         monkeypatch.setattr(
-            ReActAgentAdapter, "_ensure_agent_system_prompt", staticmethod(_wrapped)
+            ReActAgentAdapter, "ensure_agent_system_prompt", staticmethod(_wrapped)
         )
 
         async for _ in adapter.run_streaming(ctx, _config(max_rounds=1), _FakeModel()):
@@ -113,7 +128,7 @@ class TestRunStreamingInjectionSingleSite:
 
     @pytest.mark.asyncio
     async def test_run_streaming_max_rounds_gt_one_injects_inside_iter_rounds(
-        self, monkeypatch
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``max_rounds > 1`` 时入口不调用 _ensure_agent_system_prompt，
         由 _iter_rounds 内一次注入。
@@ -124,14 +139,17 @@ class TestRunStreamingInjectionSingleSite:
 
         # 模型直接返回纯文本 → 第一轮自然终止
         call_count = {"n": 0}
-        original = ReActAgentAdapter._ensure_agent_system_prompt
+        original = ReActAgentAdapter.ensure_agent_system_prompt
 
-        def _wrapped(context, config):
+        def _wrapped(
+            context: ConversationContext,
+            config: AgentConfig,
+        ) -> None:
             call_count["n"] += 1
             original(context, config)
 
         monkeypatch.setattr(
-            ReActAgentAdapter, "_ensure_agent_system_prompt", staticmethod(_wrapped)
+            ReActAgentAdapter, "ensure_agent_system_prompt", staticmethod(_wrapped)
         )
 
         async for _ in adapter.run_streaming(ctx, _config(max_rounds=3), _FakeModel("text")):
@@ -147,21 +165,26 @@ class TestRunEventsInjectionSingleSite:
     """验证 ``run_events`` 入口移除调用且注入仅发生一次。"""
 
     @pytest.mark.asyncio
-    async def test_run_events_max_rounds_one_injects_once(self, monkeypatch) -> None:
+    async def test_run_events_max_rounds_one_injects_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """``max_rounds == 1`` 分支显式注入,SystemMessage 应仅出现 1 次。"""
         adapter = _adapter()
         ctx = ConversationContext()
         ctx.add_user_message("hi")
 
         call_count = {"n": 0}
-        original = ReActAgentAdapter._ensure_agent_system_prompt
+        original = ReActAgentAdapter.ensure_agent_system_prompt
 
-        def _wrapped(context, config):
+        def _wrapped(
+            context: ConversationContext,
+            config: AgentConfig,
+        ) -> None:
             call_count["n"] += 1
             original(context, config)
 
         monkeypatch.setattr(
-            ReActAgentAdapter, "_ensure_agent_system_prompt", staticmethod(_wrapped)
+            ReActAgentAdapter, "ensure_agent_system_prompt", staticmethod(_wrapped)
         )
 
         async for _ in adapter.run_events(ctx, _config(max_rounds=1), _FakeModel()):
@@ -173,21 +196,24 @@ class TestRunEventsInjectionSingleSite:
 
     @pytest.mark.asyncio
     async def test_run_events_max_rounds_gt_one_injects_inside_iter_rounds(
-        self, monkeypatch
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         adapter = _adapter()
         ctx = ConversationContext()
         ctx.add_user_message("hi")
 
         call_count = {"n": 0}
-        original = ReActAgentAdapter._ensure_agent_system_prompt
+        original = ReActAgentAdapter.ensure_agent_system_prompt
 
-        def _wrapped(context, config):
+        def _wrapped(
+            context: ConversationContext,
+            config: AgentConfig,
+        ) -> None:
             call_count["n"] += 1
             original(context, config)
 
         monkeypatch.setattr(
-            ReActAgentAdapter, "_ensure_agent_system_prompt", staticmethod(_wrapped)
+            ReActAgentAdapter, "ensure_agent_system_prompt", staticmethod(_wrapped)
         )
 
         async for _ in adapter.run_events(ctx, _config(max_rounds=3), _FakeModel("text")):

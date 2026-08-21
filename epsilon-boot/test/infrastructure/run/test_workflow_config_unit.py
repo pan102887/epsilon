@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 from common.configuration import ConfigurationError, PropertiesFileSettingsSource
 from infrastructure.run.workflow_config import RunWorkflowConfig
@@ -64,15 +65,16 @@ def test_workflow_config_loads_from_config_properties(tmp_path: Path) -> None:
 
         @classmethod
         def settings_customise_sources(
-            cls,
-            settings_cls,
-            init_settings,
-            env_settings,
-            dotenv_settings,
-            file_secret_settings,
-        ):
+            cls: type[BaseSettings],
+            settings_cls: type[BaseSettings],
+            init_settings: PydanticBaseSettingsSource,
+            env_settings: PydanticBaseSettingsSource,
+            dotenv_settings: PydanticBaseSettingsSource,
+            file_secret_settings: PydanticBaseSettingsSource,
+        ) -> tuple[PydanticBaseSettingsSource, ...]:
             """仅从测试提供的 config.properties 加载配置。"""
 
+            del cls, init_settings, env_settings, dotenv_settings, file_secret_settings
             return (
                 PropertiesFileSettingsSource(
                     settings_cls,
@@ -137,7 +139,7 @@ def test_workflow_config_rejects_invalid_values(
 ) -> None:
     """非法 workflow 配置应 fail-fast。"""
     with pytest.raises(ConfigurationError, match=message):
-        RunWorkflowConfig(**{field_name: value})
+        RunWorkflowConfig.model_validate({field_name: value})
 
 
 def test_workflow_config_rejects_default_not_in_enabled_workflows() -> None:

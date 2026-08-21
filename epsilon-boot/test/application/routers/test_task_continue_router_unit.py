@@ -18,6 +18,7 @@ def _load_task_module():
     spec = importlib.util.spec_from_file_location(
         "test_task_continue_router_module", str(task_path)
     )
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.TaskContinueRequestBody.model_rebuild()

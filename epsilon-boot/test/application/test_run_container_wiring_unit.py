@@ -72,6 +72,9 @@ def _set_run_config(
     checkpoint_auto_recovery_enabled: bool = True,
 ) -> Any:
     class _RunConfig:
+        worker_enabled: bool = True
+        checkpoint_enabled: bool = True
+        checkpoint_auto_recovery_enabled: bool = True
         worker_count = 1
         lease_seconds = 60
         heartbeat_interval_seconds = 10
@@ -315,6 +318,7 @@ async def test_run_guardrail_recorder_resolves_when_convergence_enabled(
     """收敛开关开启时应解析真实 RunGuardrailRecorder。"""
 
     from common.container import container
+    from application.run.run_guardrail_recorder import RunGuardrailRecorder
     from domain.agent.ports import RunGuardrailRecorderPort
 
     _set_backend(monkeypatch, "redis")
@@ -328,8 +332,9 @@ async def test_run_guardrail_recorder_resolves_when_convergence_enabled(
     observation_store = await container.resolve(_config_module.RunObservationStorePort)
 
     assert isinstance(recorder, _config_module.RunGuardrailRecorder)
-    assert recorder._run_store is run_store
-    assert recorder._observation_store is observation_store
+    recorder_impl = cast(RunGuardrailRecorder, recorder)
+    assert recorder_impl.run_store is run_store
+    assert recorder_impl.observation_store is observation_store
 
 
 async def test_run_guardrail_recorder_resolves_none_when_convergence_disabled(
@@ -504,7 +509,10 @@ async def test_task_agent_port_resolves_with_callable_resume_approval(
     container.register(ApprovalStateStorePort, lambda: approval_store, Scope.SINGLETON)
     workspace = MagicMock()
     workspace.display_root_hint.return_value = "/workspace"
-    workspace.resolve_path.side_effect = lambda path: path
+    def _identity_path(path: Any) -> Any:
+        return path
+
+    workspace.resolve_path.side_effect = _identity_path
     container.register(Workspace, lambda: workspace, Scope.SINGLETON)
 
     task_agent = await container.resolve(TaskAgentPort)

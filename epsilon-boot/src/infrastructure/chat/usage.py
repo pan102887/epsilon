@@ -1,5 +1,7 @@
 """模型 usage 合并工具。"""
 
+from typing import cast
+
 
 def merge_usage(*usages: dict[str, int] | None) -> dict[str, int]:
     """合并多个 usage 字典。
@@ -12,7 +14,7 @@ def merge_usage(*usages: dict[str, int] | None) -> dict[str, int]:
         if usage is None:
             continue
         for key, value in usage.items():
-            if not isinstance(value, int):
+            if not isinstance(cast(object, value), int):
                 raise ValueError(f"usage[{key!r}] 必须为 int")
             if value < 0:
                 raise ValueError(f"usage[{key!r}] 必须为非负整数")

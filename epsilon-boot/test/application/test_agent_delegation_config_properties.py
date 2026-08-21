@@ -7,10 +7,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 from common.configuration.configuration_utils import PropertiesFileSettingsSource
 from domain.agent.tools import ToolRegistry
@@ -37,7 +40,9 @@ def resolve_max_delegation_depth(raw_value: str) -> int:
     Returns:
         解析后的最大委派深度（正整数）
     """
-    return AgentRuntimeConfig(max_delegation_depth=raw_value).max_delegation_depth
+    return AgentRuntimeConfig.model_validate(
+        {"max_delegation_depth": raw_value}
+    ).max_delegation_depth
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +84,7 @@ def test_positive_max_delegation_depth_preserved(
 class TestDelegateToolEnabledConfig:
     """验证 AGENT_DELEGATE_TOOL_ENABLED 配置项对工具注册的影响。"""
 
-    def test_config_reads_values_from_config_properties(self, tmp_path) -> None:
+    def test_config_reads_values_from_config_properties(self, tmp_path: Path) -> None:
         """验证 AgentRuntimeConfig 能通过 config.properties source 读取配置。"""
         props_file = tmp_path / "config.properties"
         props_file.write_text(
@@ -99,12 +104,13 @@ class TestDelegateToolEnabledConfig:
             @classmethod
             def settings_customise_sources(
                 cls,
-                settings_cls,
-                init_settings,
-                env_settings,
-                dotenv_settings,
-                file_secret_settings,
-            ):
+                settings_cls: type[BaseSettings],
+                init_settings: PydanticBaseSettingsSource,
+                env_settings: PydanticBaseSettingsSource,
+                dotenv_settings: PydanticBaseSettingsSource,
+                file_secret_settings: PydanticBaseSettingsSource,
+            ) -> tuple[PydanticBaseSettingsSource, ...]:
+                del cls, init_settings, env_settings, dotenv_settings, file_secret_settings
                 return (
                     PropertiesFileSettingsSource(
                         settings_cls,
@@ -120,27 +126,29 @@ class TestDelegateToolEnabledConfig:
 
     def test_handoff_max_rounds_positive_value_preserved(self) -> None:
         """正整数 AGENT_HANDOFF_MAX_ROUNDS 保持原值。"""
-        config = AgentRuntimeConfig(handoff_max_rounds="64")
+        config = AgentRuntimeConfig.model_validate({"handoff_max_rounds": "64"})
 
         assert config.handoff_max_rounds == 64
 
     def test_handoff_max_rounds_non_positive_maps_to_unlimited(self) -> None:
         """非正 AGENT_HANDOFF_MAX_ROUNDS 映射为长任务不限制轮次哨兵。"""
-        config = AgentRuntimeConfig(handoff_max_rounds="0")
+        config = AgentRuntimeConfig.model_validate({"handoff_max_rounds": "0"})
 
         assert config.handoff_max_rounds == UNLIMITED_HANDOFF_MAX_ROUNDS_SENTINEL
 
     def test_config_reads_delegate_tool_enabled_false(self) -> None:
         """验证配置类能解析 AGENT_DELEGATE_TOOL_ENABLED=false 对应的布尔值。"""
-        config = AgentRuntimeConfig(delegate_tool_enabled="false")
+        config = AgentRuntimeConfig.model_validate({"delegate_tool_enabled": "false"})
         assert config.delegate_tool_enabled is False
 
     def test_config_reads_delegate_tool_enabled_true(self) -> None:
         """验证配置类能解析 AGENT_DELEGATE_TOOL_ENABLED=true 对应的布尔值。"""
-        config = AgentRuntimeConfig(delegate_tool_enabled="true")
+        config = AgentRuntimeConfig.model_validate({"delegate_tool_enabled": "true"})
         assert config.delegate_tool_enabled is True
 
-    def test_config_reads_environment_override(self, monkeypatch) -> None:
+    def test_config_reads_environment_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """验证环境变量覆盖仍由 AgentRuntimeConfig 统一处理。"""
         monkeypatch.setenv("AGENT_MAX_DELEGATION_DEPTH", "6")
         monkeypatch.setenv("AGENT_HANDOFF_MAX_ROUNDS", "88")

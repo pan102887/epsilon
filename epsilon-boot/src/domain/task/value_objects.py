@@ -29,6 +29,22 @@ _PROMPT_ID_PATTERN = re.compile(r"^[a-z][a-z0-9\-]*@v[1-9]\d*$")
 """
 
 
+def _input_dict() -> dict[str, Any]:
+    return {}
+
+
+def _constraint_list() -> list[str]:
+    return []
+
+
+def _usage_dict() -> dict[str, int]:
+    return {}
+
+
+def _trace_list() -> list[TraceEntry]:
+    return []
+
+
 class TaskStatus(Enum):
     """任务执行状态枚举。
 
@@ -67,8 +83,8 @@ class Task:
     """
 
     goal: str
-    input_data: dict[str, Any] = field(default_factory=dict)
-    constraints: list[str] = field(default_factory=list)
+    input_data: dict[str, Any] = field(default_factory=_input_dict)
+    constraints: list[str] = field(default_factory=_constraint_list)
     output_format: str | None = None
     model: str | None = None
     session_id: str | None = None
@@ -163,8 +179,8 @@ class TaskResult:
     status: TaskStatus
     model: str
     prompt_id: str
-    usage: dict[str, int] = field(default_factory=dict)
-    trace: list[TraceEntry] = field(default_factory=list)
+    usage: dict[str, int] = field(default_factory=_usage_dict)
+    trace: list[TraceEntry] = field(default_factory=_trace_list)
     latency_ms: float = 0.0
     terminated_reason: AgentTerminationReason = "completed"
     can_continue: bool = False

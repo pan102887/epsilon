@@ -8,21 +8,47 @@
 * 既有 ``max_rounds`` / ``prompt_id`` 校验行为不变。
 """
 
+from typing import Any, NotRequired, TypedDict, Unpack
+
 import pytest
 
 from domain.agent.value_objects import AgentConfig
 
 
-def _base_kwargs(**overrides) -> dict:
+class _AgentConfigKwargs(TypedDict):
+    system_prompt: str
+    tool_schemas: list[dict[str, Any]]
+    model: str
+    max_rounds: int
+    prompt_id: str
+    tool_timeout_seconds: NotRequired[float | None]
+    max_total_tokens: NotRequired[int | None]
+
+
+class _AgentConfigOverrides(TypedDict, total=False):
+    max_rounds: int
+    prompt_id: str
+    tool_timeout_seconds: float | None
+    max_total_tokens: int | None
+
+
+def _base_kwargs(**overrides: Unpack[_AgentConfigOverrides]) -> _AgentConfigKwargs:
     """构造一份合法的 ``AgentConfig`` 关键字参数。"""
-    base = {
+    base: _AgentConfigKwargs = {
         "system_prompt": "你是助手",
         "tool_schemas": [],
         "model": "m",
         "max_rounds": 3,
         "prompt_id": "chat-default@v1",
     }
-    base.update(overrides)
+    if "max_rounds" in overrides:
+        base["max_rounds"] = overrides["max_rounds"]
+    if "prompt_id" in overrides:
+        base["prompt_id"] = overrides["prompt_id"]
+    if "tool_timeout_seconds" in overrides:
+        base["tool_timeout_seconds"] = overrides["tool_timeout_seconds"]
+    if "max_total_tokens" in overrides:
+        base["max_total_tokens"] = overrides["max_total_tokens"]
     return base
 
 

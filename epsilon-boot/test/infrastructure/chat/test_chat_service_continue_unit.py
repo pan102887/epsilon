@@ -4,11 +4,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from domain.agent.value_objects import AgentResult
+from domain.agent.value_objects import AgentConfig, AgentResult
 from domain.chat.context import ConversationContext, UserMessage
 from domain.chat.exceptions import ContinuationUnavailableError
 from domain.chat.value_objects import ChatContinueRequestVO
 from domain.model_access.value_objects import ToolCallRequest
+from domain.model_access.ports import ModelAccessPort
 from domain.prompt.value_objects import LoadedPrompt
 from infrastructure.chat.chat_service_adapter import ChatServiceAdapter
 from test.infrastructure.chat.chat_adapter_test_utils import make_chat_adapter_dependencies
@@ -77,7 +78,11 @@ async def test_continue_chat_does_not_append_user_and_completes() -> None:
     context = _valid_context()
     captured_user_counts: list[int] = []
 
-    async def run(ctx, config, _model_access):
+    async def run(
+        ctx: ConversationContext,
+        config: AgentConfig,
+        _model_access: ModelAccessPort,
+    ) -> AgentResult:
         captured_user_counts.append(
             sum(1 for message in ctx.get_messages() if isinstance(message, UserMessage))
         )

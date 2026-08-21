@@ -16,7 +16,7 @@ import json
 import logging
 import re
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol, cast
 
 from fastmcp import Client
 
@@ -33,6 +33,21 @@ _DEFAULT_MAX_RETRIES = 2
 _DEFAULT_RETRY_BASE_DELAY = 0.5  # 秒
 
 
+class _RemoteToolDefinition(Protocol):
+    name: str
+    description: str | None
+    inputSchema: dict[str, Any]
+
+
+class _SessionOwner(Protocol):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object | None,
+    ) -> None: ...
+
+
 def _sanitize(name: str) -> str:
     """将工具名清洗为满足 function calling 命名约束的形式。"""
     return _NAME_INVALID.sub("_", name)
@@ -41,7 +56,8 @@ def _sanitize(name: str) -> str:
 def _extract_text(result: Any) -> str:
     """从 ``CallToolResult`` 提取文本表示。"""
     parts: list[str] = []
-    for block in getattr(result, "content", None) or []:
+    content = cast(list[Any] | None, getattr(result, "content", None)) or []
+    for block in content:
         text = getattr(block, "text", None)
         if text is not None:
             parts.append(text)
@@ -65,8 +81,8 @@ class MCPTool(Tool):
 
     def __init__(
         self,
-        client: Client,
-        mcp_tool: Any,
+        client: Client[Any],
+        mcp_tool: _RemoteToolDefinition,
         prefix: str = "",
         max_retries: int = _DEFAULT_MAX_RETRIES,
         retry_base_delay: float = _DEFAULT_RETRY_BASE_DELAY,
@@ -77,7 +93,10 @@ class MCPTool(Tool):
         self._mcp_name = mcp_tool.name
         self._name = _sanitize(f"{prefix}{mcp_tool.name}")
         self._description = mcp_tool.description or mcp_tool.name
-        self._parameters = mcp_tool.inputSchema or {"type": "object", "properties": {}}
+        self._parameters: dict[str, Any] = mcp_tool.inputSchema or {
+            "type": "object",
+            "properties": {},
+        }
         self._max_retries = max_retries
         self._retry_base_delay = retry_base_delay
         # 远端 MCP server 标识，供 trace metadata 使用；未知时退化为 prefix。
@@ -87,6 +106,11 @@ class MCPTool(Tool):
     @property
     def name(self) -> str:
         return self._name
+
+    def rename(self, name: str) -> None:
+        """Set the collision-free registry name assigned during discovery."""
+
+        self._name = name
 
     @property
     def description(self) -> str:
@@ -179,12 +203,17 @@ class MCPToolBridge:
         retry_base_delay: float = _DEFAULT_RETRY_BASE_DELAY,
         server_name: str = "",
     ) -> None:
-        self._client = Client(transport, timeout=timeout)
+        self._client: Client[Any] = Client(transport, timeout=timeout)
         self._prefix = tool_prefix
         self._max_retries = max_retries
         self._retry_base_delay = retry_base_delay
         self._server_name = server_name
         self._session_owner: bool = False
+
+    @property
+    def session_owner(self) -> bool:
+        """Return whether this bridge currently owns an open MCP session."""
+        return self._session_owner
 
     async def discover(self) -> list[MCPTool]:
         """连接远端 Server 并发现其工具。
@@ -217,7 +246,7 @@ class MCPToolBridge:
         """显式关闭持久 session，幂等（重复调用不抛异常）。"""
         if self._session_owner:
             try:
-                await self._client.__aexit__(None, None, None)
+                await cast(_SessionOwner, self._client).__aexit__(None, None, None)
             except Exception as exc:
                 logger.warning("MCPToolBridge.aclose() 异常: %s", exc)
             finally:

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from domain.chat.context import AssistantMessage, SystemMessage, UserMessage
+from domain.chat.context import AssistantMessage, BaseMessage, SystemMessage, UserMessage
 from domain.chat.value_objects import ContextCompactionResult
 from infrastructure.chat.context_builder_adapter import ContextBuilderAdapter
 from infrastructure.chat.environment_context_provider import (
@@ -55,8 +55,8 @@ def _build_adapter(
 @pytest.mark.asyncio
 async def test_build_passes_model_access_and_model_to_compaction() -> None:
     """build 应把 model_access 与 model 原样透传给压缩策略。"""
-    messages = [UserMessage(content="用户输入")]
-    model_access = object()
+    messages: list[BaseMessage] = [UserMessage(content="用户输入")]
+    model_access = MagicMock()
     adapter, compaction = _build_adapter(
         ContextCompactionResult(messages=messages, usage={}, summary_created=False)
     )
@@ -134,8 +134,10 @@ async def test_build_inserts_environment_at_head_when_no_system_message() -> Non
 @pytest.mark.asyncio
 async def test_build_does_not_mutate_input_or_compaction_result_messages() -> None:
     """build 不应原地修改输入列表或压缩返回列表。"""
-    source_messages = [UserMessage(content="source", metadata={"trace": "input"})]
-    compacted_messages = [
+    source_messages: list[BaseMessage] = [
+        UserMessage(content="source", metadata={"trace": "input"})
+    ]
+    compacted_messages: list[BaseMessage] = [
         SystemMessage(content="system", metadata={"trace": "compacted-system"}),
         UserMessage(content="question", metadata={"trace": "compacted-user"}),
     ]

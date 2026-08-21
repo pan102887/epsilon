@@ -12,7 +12,7 @@ import importlib
 from collections.abc import Collection
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -23,7 +23,7 @@ from application.run.run_application_service import (
 from domain.agent.value_objects import ApprovalDecision
 from domain.run.exceptions import RunContinuationUnavailableError, RunLeaseConflictError
 from domain.run.outcome import RunExecutionOutcome
-from domain.run.ports import ApprovalResumeStoreResult
+from domain.run.ports import ApprovalResumeStoreResult, RunProgressSink, RunStorePort
 from domain.run.value_objects import (
     EventRetentionPolicy,
     RunCapacityPolicy,
@@ -470,7 +470,11 @@ class _SequenceCoordinator:
         self.release = asyncio.Event()
         self.calls: list[RunSnapshot] = []
 
-    async def execute(self, snapshot: RunSnapshot, progress) -> RunExecutionOutcome:
+    async def execute(
+        self,
+        snapshot: RunSnapshot,
+        progress: RunProgressSink,
+    ) -> RunExecutionOutcome:
         self.calls.append(snapshot)
         self.started.set()
         if self._block:
@@ -671,7 +675,7 @@ def _fixture_with_coordinator(
         )
 
     service = RunApplicationService(
-        run_store=store,
+        run_store=cast(RunStorePort, store),
         event_store=events,
         capacity_policy=RunCapacityPolicy(max_queued_runs=20, max_running_runs=20),
         event_retention_policy=EventRetentionPolicy(
@@ -683,7 +687,7 @@ def _fixture_with_coordinator(
         event_stream_wait_seconds=0.01,
     )
     worker = RunWorker(
-        run_store=store,
+        run_store=cast(RunStorePort, store),
         event_store=events,
         executor=coordinator,  # type: ignore[arg-type]
         lease_seconds=30,

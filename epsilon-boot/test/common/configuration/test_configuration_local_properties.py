@@ -19,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from pydantic_settings import SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 import common.configuration.config_proxy as config_proxy_module
 from common.configuration import ConfigProxy, PropertiesBaseSettings
@@ -29,11 +29,17 @@ _ENV_PREFIX = "LOCALPROP_TEST_"
 _ENV_KEY = f"{_ENV_PREFIX}VALUE"
 
 
+class _ValueSettings(PropertiesBaseSettings):
+    """Typed base for dynamically configured value settings."""
+
+    value: str = "default"
+
+
 def _build_config_cls(
     props_file: Path,
     local_props_file: Path,
     env_file: Path | None,
-) -> type[PropertiesBaseSettings]:
+) -> type[_ValueSettings]:
     """构造隔离的配置类：源顺序与生产一致（env > local > properties > .env）。
 
     源顺序刻意复刻 ``PropertiesBaseSettings.settings_customise_sources`` 的新契约：
@@ -49,7 +55,7 @@ def _build_config_cls(
         隔离后的 ``PropertiesBaseSettings`` 子类。
     """
 
-    class _IsolatedConfig(PropertiesBaseSettings):
+    class _IsolatedConfig(_ValueSettings):
         model_config = SettingsConfigDict(
             env_prefix=_ENV_PREFIX,
             env_file=str(env_file) if env_file is not None else None,
@@ -57,17 +63,16 @@ def _build_config_cls(
             extra="ignore",
             frozen=True,
         )
-        value: str = "default"
-
         @classmethod
-        def settings_customise_sources(  # type: ignore[override]
-            cls,
-            settings_cls,
-            init_settings,
-            env_settings,
-            dotenv_settings,
-            file_secret_settings,
-        ):
+        def settings_customise_sources(
+            cls: type[BaseSettings],
+            settings_cls: type[BaseSettings],
+            init_settings: PydanticBaseSettingsSource,
+            env_settings: PydanticBaseSettingsSource,
+            dotenv_settings: PydanticBaseSettingsSource,
+            file_secret_settings: PydanticBaseSettingsSource,
+        ) -> tuple[PydanticBaseSettingsSource, ...]:
+            del cls
             return (
                 init_settings,
                 env_settings,

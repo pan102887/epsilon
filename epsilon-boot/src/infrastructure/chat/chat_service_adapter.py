@@ -243,6 +243,15 @@ class ChatServiceAdapter(ChatServicePort):
         """
         return self._prompt_id
 
+    @property
+    def system_prompt(self) -> str:
+        """返回构造期加载并追加工作区规范后的系统提示词。"""
+        return self._system_prompt
+
+    def resolve_model_access(self, model: str | None) -> tuple[ModelAccessPort, str]:
+        """解析指定模型或默认模型对应的访问适配器。"""
+        return self._resolve_model_access(model)
+
     def _resolve_model_access(self, model: str | None) -> tuple[ModelAccessPort, str]:
         """根据请求中的 model 参数解析对应的模型适配器。
 
@@ -298,6 +307,16 @@ class ChatServiceAdapter(ChatServicePort):
             model=model,
         )
 
+    async def save_context_and_index(
+        self,
+        session_id: str,
+        context: ConversationContext,
+        *,
+        model: str | None = None,
+    ) -> None:
+        """保存会话上下文并刷新会话索引。"""
+        await self._save_context_and_index(session_id, context, model=model)
+
     @staticmethod
     def _segment_risk_gate_required(
         *,
@@ -337,6 +356,22 @@ class ChatServiceAdapter(ChatServicePort):
         if approval_required and approval_data.get("source") == "guardrail":
             return True, approval_data.get("guardrail_reason") or guardrail_reason
         return False, guardrail_reason
+
+    @staticmethod
+    def segment_risk_gate_required(
+        *,
+        context: ConversationContext,
+        pre_message_count: int,
+        approval_required: bool = False,
+        approval_metadata: dict[str, Any] | None = None,
+    ) -> tuple[bool, str | None]:
+        """Expose the stable segment risk-gate decision for orchestration checks."""
+        return ChatServiceAdapter._segment_risk_gate_required(
+            context=context,
+            pre_message_count=pre_message_count,
+            approval_required=approval_required,
+            approval_metadata=approval_metadata,
+        )
 
     def _to_chat_response(
         self,

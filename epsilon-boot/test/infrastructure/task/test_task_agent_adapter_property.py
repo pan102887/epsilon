@@ -17,7 +17,7 @@ import pytest
 from hypothesis import given, settings
 
 from domain.agent.value_objects import AgentResult
-from domain.chat.context import AssistantMessage, ConversationContext, ToolMessage
+from domain.chat.context import AssistantMessage, BaseMessage, ConversationContext, ToolMessage
 from domain.model_access.value_objects import ToolCallRequest
 from domain.prompt.value_objects import LoadedPrompt
 from domain.task.value_objects import Task, TaskStatus
@@ -46,7 +46,7 @@ output_format_st = st.none() | st.text(min_size=1, max_size=50)
 )
 def test_system_prompt_contains_goal(
     goal: str,
-    input_data: dict,
+    input_data: dict[str, str],
     constraints: list[str],
     output_format: str | None,
 ) -> None:
@@ -82,7 +82,7 @@ def test_system_prompt_contains_goal(
 )
 def test_system_prompt_contains_input_data_json(
     goal: str,
-    input_data: dict,
+    input_data: dict[str, str],
     constraints: list[str],
     output_format: str | None,
 ) -> None:
@@ -118,7 +118,7 @@ def test_system_prompt_contains_input_data_json(
 )
 def test_system_prompt_contains_every_constraint(
     goal: str,
-    input_data: dict,
+    input_data: dict[str, str],
     constraints: list[str],
     output_format: str | None,
 ) -> None:
@@ -152,7 +152,7 @@ def test_system_prompt_contains_every_constraint(
 )
 def test_system_prompt_contains_output_format(
     goal: str,
-    input_data: dict,
+    input_data: dict[str, str],
     constraints: list[str],
     output_format: str,
 ) -> None:
@@ -185,7 +185,7 @@ def test_system_prompt_contains_output_format(
 )
 def test_system_prompt_determinism(
     goal: str,
-    input_data: dict,
+    input_data: dict[str, str],
     constraints: list[str],
     output_format: str | None,
 ) -> None:
@@ -213,7 +213,10 @@ def test_system_prompt_determinism(
 # ── 辅助工厂函数 ──
 
 
-def _create_mock_adapter(agent_result=None, agent_exception=None):
+def _create_mock_adapter(
+    agent_result: AgentResult | None = None,
+    agent_exception: BaseException | None = None,
+) -> tuple[TaskAgentAdapter, AsyncMock, MagicMock]:
     """创建带有 mock 依赖的 TaskAgentAdapter 实例。
 
     根据参数配置 AgentPort.run() 的行为：返回指定结果或抛出指定异常。
@@ -296,7 +299,7 @@ latency_st = st.floats(min_value=0.0, max_value=100000.0, allow_nan=False, allow
 )
 async def test_session_context_load_save_with_session_id(
     goal: str,
-    input_data: dict,
+    input_data: dict[str, str],
     constraints: list[str],
     output_format: str | None,
     session_id: str,
@@ -339,7 +342,7 @@ async def test_session_context_load_save_with_session_id(
 )
 async def test_session_context_no_load_save_without_session_id(
     goal: str,
-    input_data: dict,
+    input_data: dict[str, str],
     constraints: list[str],
     output_format: str | None,
     model: str | None,
@@ -386,7 +389,7 @@ async def test_session_context_no_load_save_without_session_id(
 )
 async def test_successful_execution_produces_success_result(
     goal: str,
-    input_data: dict,
+    input_data: dict[str, str],
     constraints: list[str],
     output_format: str | None,
     model: str | None,
@@ -450,7 +453,7 @@ async def test_successful_execution_produces_success_result(
 )
 async def test_exception_handling_produces_failed_result(
     goal: str,
-    input_data: dict,
+    input_data: dict[str, str],
     constraints: list[str],
     output_format: str | None,
     model: str | None,
@@ -520,7 +523,7 @@ message_sequence_st = st.lists(
 @settings(max_examples=100, deadline=5000)
 @given(messages=message_sequence_st)
 def test_trace_extraction_from_context_messages(
-    messages: list,
+    messages: list[BaseMessage],
 ) -> None:
     """验证 _extract_trace 正确提取执行轨迹。
 
@@ -533,7 +536,7 @@ def test_trace_extraction_from_context_messages(
     """
     adapter, _, _ = _create_mock_adapter()
 
-    trace = adapter._extract_trace(messages, start_index=0)
+    trace = adapter.extract_trace(messages, start_index=0)
 
     # 计算期望的 trace 条目数
     expected_count = 0
@@ -583,7 +586,7 @@ def test_trace_extraction_from_context_messages(
     step_ms=st.integers(min_value=0, max_value=10**6),
 )
 def test_trace_timestamps_non_decreasing(
-    messages: list,
+    messages: list[BaseMessage],
     start_ms: int,
     step_ms: int,
 ) -> None:
@@ -600,7 +603,7 @@ def test_trace_timestamps_non_decreasing(
     adapter, _, _ = _create_mock_adapter()
     event_timestamps = {i: start_ms + step_ms * i for i in range(len(messages))}
 
-    trace = adapter._extract_trace(
+    trace = adapter.extract_trace(
         messages,
         start_index=0,
         event_timestamps=event_timestamps,

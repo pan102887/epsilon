@@ -25,7 +25,7 @@ from domain.chat.context import AssistantMessage, BaseMessage
 @pytest.fixture(autouse=True)
 def force_filter_strategy(monkeypatch: pytest.MonkeyPatch) -> None:
     """模块级 _HISTORY_RESTORE_STRATEGY 强制为 'filter'。"""
-    monkeypatch.setattr(ctx_module, "_HISTORY_RESTORE_STRATEGY", "filter")
+    monkeypatch.setattr(ctx_module, "history_restore_strategy", "filter")
 
 
 def test_t8_filter_strategy_drops_empty_id() -> None:

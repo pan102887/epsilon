@@ -47,7 +47,7 @@ def _configure_cli_file_logging() -> None:
     """
     try:
         from application.api.middlewares.logging_config import RequestLoggingConfig
-        from application.container_config import _create_tier_resolver
+        from application.container_config import create_tier_resolver
         from infrastructure.storage.local_file_log_sink import (
             configure_local_file_logging,
         )
@@ -57,12 +57,17 @@ def _configure_cli_file_logging() -> None:
             RequestLoggingConfig().get_sensitive_body_fields_set()
         )
         configure_local_file_logging(
-            _create_tier_resolver(),
+            create_tier_resolver(),
             LogSinkConfig(),
             sensitive_keys,
         )
     except Exception:  # 文件日志属非关键路径，装配失败降级为跳过，不阻断 CLI 启动
         logger.warning("装配本地文件日志失败，已跳过文件日志", exc_info=True)
+
+
+def configure_cli_file_logging() -> None:
+    """Configure optional CLI file logging."""
+    _configure_cli_file_logging()
 
 
 async def _run_tui() -> int:

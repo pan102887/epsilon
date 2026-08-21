@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from application.run.run_execution_coordinator import RunExecutionCoordinator
 from domain.chat.context import ConversationContext
+from domain.chat.ports import ChatServicePort
 from domain.chat.value_objects import ChatContinueRequestVO, ChatRequestVO, ChatResponseVO
 from domain.run.checkpoint_context import get_run_checkpoint_context
+from domain.run.ports import RunCheckpointStorePort, RunEventStorePort
 from domain.run.runtime_context import get_run_execution_context
 from domain.run.value_objects import (
     CheckpointPhase,
@@ -21,6 +24,7 @@ from domain.run.value_objects import (
     RunSnapshot,
     RunStatus,
 )
+from domain.task.ports import TaskAgentPort
 from infrastructure.run.run_serialization_adapters import SegmentSerializerAdapter
 
 pytestmark = pytest.mark.asyncio
@@ -61,7 +65,7 @@ class _ObservingChatService:
         return ChatResponseVO(
             session_id=request.session_id,
             reply="ok",
-            model=request.model,
+            model=request.model or "m1",
             usage={},
             prompt_id="chat-default@v1",
         )
@@ -78,7 +82,7 @@ class _ObservingChatService:
         return ChatResponseVO(
             session_id=request.session_id,
             reply="ok",
-            model=request.model,
+            model=request.model or "m1",
             usage={},
             prompt_id="chat-default@v1",
         )
@@ -174,11 +178,11 @@ def _context_message_count(current: Any) -> int | None:
 async def test_checkpoint_enabled_sets_context_during_execution_and_resets_after() -> None:
     chat = _ObservingChatService()
     coordinator = RunExecutionCoordinator(
-        chat_service=chat,
-        task_agent=_UnusedTaskAgent(),
+        chat_service=cast(ChatServicePort, chat),
+        task_agent=cast(TaskAgentPort, _UnusedTaskAgent()),
         segment_serializer=SegmentSerializerAdapter(),
-        checkpoint_store=_FakeCheckpointStore(),
-        event_store=_FakeEventStore(),
+        checkpoint_store=cast(RunCheckpointStorePort, _FakeCheckpointStore()),
+        event_store=cast(RunEventStorePort, _FakeEventStore()),
         retention_policy=_policy(),
         checkpoint_enabled=True,
     )
@@ -196,11 +200,11 @@ async def test_checkpoint_enabled_sets_context_during_execution_and_resets_after
 async def test_checkpoint_disabled_does_not_set_context() -> None:
     chat = _ObservingChatService()
     coordinator = RunExecutionCoordinator(
-        chat_service=chat,
-        task_agent=_UnusedTaskAgent(),
+        chat_service=cast(ChatServicePort, chat),
+        task_agent=cast(TaskAgentPort, _UnusedTaskAgent()),
         segment_serializer=SegmentSerializerAdapter(),
-        checkpoint_store=_FakeCheckpointStore(),
-        event_store=_FakeEventStore(),
+        checkpoint_store=cast(RunCheckpointStorePort, _FakeCheckpointStore()),
+        event_store=cast(RunEventStorePort, _FakeEventStore()),
         retention_policy=_policy(),
         checkpoint_enabled=False,
     )
@@ -214,11 +218,11 @@ async def test_checkpoint_disabled_does_not_set_context() -> None:
 async def test_checkpoint_disabled_still_sets_run_execution_context() -> None:
     chat = _ObservingChatService()
     coordinator = RunExecutionCoordinator(
-        chat_service=chat,
-        task_agent=_UnusedTaskAgent(),
+        chat_service=cast(ChatServicePort, chat),
+        task_agent=cast(TaskAgentPort, _UnusedTaskAgent()),
         segment_serializer=SegmentSerializerAdapter(),
-        checkpoint_store=_FakeCheckpointStore(),
-        event_store=_FakeEventStore(),
+        checkpoint_store=cast(RunCheckpointStorePort, _FakeCheckpointStore()),
+        event_store=cast(RunEventStorePort, _FakeEventStore()),
         retention_policy=_policy(),
         checkpoint_enabled=False,
     )
@@ -236,11 +240,11 @@ async def test_checkpoint_disabled_still_sets_run_execution_context() -> None:
 async def test_checkpoint_context_resets_when_execution_fails() -> None:
     chat = _ObservingChatService(fail=True)
     coordinator = RunExecutionCoordinator(
-        chat_service=chat,
-        task_agent=_UnusedTaskAgent(),
+        chat_service=cast(ChatServicePort, chat),
+        task_agent=cast(TaskAgentPort, _UnusedTaskAgent()),
         segment_serializer=SegmentSerializerAdapter(),
-        checkpoint_store=_FakeCheckpointStore(),
-        event_store=_FakeEventStore(),
+        checkpoint_store=cast(RunCheckpointStorePort, _FakeCheckpointStore()),
+        event_store=cast(RunEventStorePort, _FakeEventStore()),
         retention_policy=_policy(),
         checkpoint_enabled=True,
     )
@@ -260,20 +264,15 @@ async def test_recovered_chat_run_sets_run_execution_context_recovery_mode() -> 
     checkpoint_store = _FakeCheckpointStore(checkpoint)
     chat = _ObservingChatService()
     coordinator = RunExecutionCoordinator(
-        chat_service=chat,
-        task_agent=_UnusedTaskAgent(),
+        chat_service=cast(ChatServicePort, chat),
+        task_agent=cast(TaskAgentPort, _UnusedTaskAgent()),
         segment_serializer=SegmentSerializerAdapter(),
-        checkpoint_store=checkpoint_store,
-        event_store=_FakeEventStore(),
+        checkpoint_store=cast(RunCheckpointStorePort, checkpoint_store),
+        event_store=cast(RunEventStorePort, _FakeEventStore()),
         retention_policy=_policy(),
         checkpoint_enabled=True,
     )
-    snapshot = RunSnapshot(
-        **{
-            **_snapshot().__dict__,
-            "latest_checkpoint_id": checkpoint.checkpoint_id,
-        }
-    )
+    snapshot = replace(_snapshot(), latest_checkpoint_id=checkpoint.checkpoint_id)
 
     await coordinator.execute(snapshot, _FakeProgress())
 
@@ -288,20 +287,15 @@ async def test_recovered_chat_run_loads_latest_checkpoint_and_uses_continue_path
     checkpoint_store = _FakeCheckpointStore(checkpoint)
     chat = _ObservingChatService()
     coordinator = RunExecutionCoordinator(
-        chat_service=chat,
-        task_agent=_UnusedTaskAgent(),
+        chat_service=cast(ChatServicePort, chat),
+        task_agent=cast(TaskAgentPort, _UnusedTaskAgent()),
         segment_serializer=SegmentSerializerAdapter(),
-        checkpoint_store=checkpoint_store,
-        event_store=_FakeEventStore(),
+        checkpoint_store=cast(RunCheckpointStorePort, checkpoint_store),
+        event_store=cast(RunEventStorePort, _FakeEventStore()),
         retention_policy=_policy(),
         checkpoint_enabled=True,
     )
-    snapshot = RunSnapshot(
-        **{
-            **_snapshot().__dict__,
-            "latest_checkpoint_id": checkpoint.checkpoint_id,
-        }
-    )
+    snapshot = replace(_snapshot(), latest_checkpoint_id=checkpoint.checkpoint_id)
 
     await coordinator.execute(snapshot, _FakeProgress())
 

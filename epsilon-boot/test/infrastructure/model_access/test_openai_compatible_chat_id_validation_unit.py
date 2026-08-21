@@ -66,7 +66,7 @@ async def test_t1_chat_sync_id_none_raises(caplog: pytest.LogCaptureFixture) -> 
     """T1: id=None 抛 InvalidToolCallIdError(source='chat_sync', raw_id_value=None)。"""
     adapter = _make_adapter("deepseek")
     completion = _make_completion(tool_call_id=None)
-    adapter._chat_completion = AsyncMock(return_value=completion)
+    adapter.set_chat_completion_handler(AsyncMock(return_value=completion))
 
     request = ChatRequest(messages=[UserMessage(content="hi")])
     caplog.set_level(
@@ -95,14 +95,15 @@ async def test_t1_chat_sync_id_none_raises(caplog: pytest.LogCaptureFixture) -> 
         "tool_call_index",
         "raw_id_value",
     }
-    record_keys = set(record.__dict__.keys())
+    record_data: dict[str, object] = record.__dict__
+    record_keys = set(record_data)
     assert expected_keys <= record_keys
-    assert record.source == "chat_sync"
-    assert record.provider == "deepseek"
-    assert record.model == "deepseek-chat"
-    assert record.tool_name == "web_search"
-    assert record.tool_call_index == 0
-    assert record.raw_id_value is None
+    assert record_data["source"] == "chat_sync"
+    assert record_data["provider"] == "deepseek"
+    assert record_data["model"] == "deepseek-chat"
+    assert record_data["tool_name"] == "web_search"
+    assert record_data["tool_call_index"] == 0
+    assert record_data["raw_id_value"] is None
 
 
 @pytest.mark.asyncio
@@ -110,7 +111,7 @@ async def test_t2_chat_sync_id_empty_string_raises(caplog: pytest.LogCaptureFixt
     """T2: id='' 抛 InvalidToolCallIdError(raw_id_value='')。"""
     adapter = _make_adapter("zhipu")
     completion = _make_completion(tool_call_id="", model="glm-4-plus")
-    adapter._chat_completion = AsyncMock(return_value=completion)
+    adapter.set_chat_completion_handler(AsyncMock(return_value=completion))
 
     request = ChatRequest(messages=[UserMessage(content="hi")])
     caplog.set_level(
@@ -131,7 +132,7 @@ async def test_t3_chat_sync_valid_id_no_warning(caplog: pytest.LogCaptureFixture
     """T3: id='call_xxx' 合法时返回 tool_calls 长度 1，无 WARN 日志。"""
     adapter = _make_adapter("deepseek")
     completion = _make_completion(tool_call_id="call_xxx")
-    adapter._chat_completion = AsyncMock(return_value=completion)
+    adapter.set_chat_completion_handler(AsyncMock(return_value=completion))
 
     request = ChatRequest(messages=[UserMessage(content="hi")])
     caplog.set_level(

@@ -36,6 +36,12 @@ from infrastructure.tools.filesystem.read_file_tool import ReadFileTool
 from infrastructure.tools.filesystem.write_file_tool import WriteFileTool
 
 
+def _source_path(cls: type[object]) -> Path:
+    source_file = inspect.getsourcefile(cls)
+    assert source_file is not None
+    return Path(source_file)
+
+
 def _iter_tool_source_paths() -> list[Path]:
     """构造 6 个工具源文件路径列表。
 
@@ -44,7 +50,7 @@ def _iter_tool_source_paths() -> list[Path]:
     对当前测试文件的已知布局推导。
     """
     fs_paths = [
-        Path(inspect.getsourcefile(cls))
+        _source_path(cls)
         for cls in (ReadFileTool, WriteFileTool, EditFileTool, ListDirTool)
     ]
     # 从 filesystem 工具文件推导 src/infrastructure/tools 根。

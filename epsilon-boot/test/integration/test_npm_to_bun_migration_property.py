@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from typing import Any
 
 import hypothesis.strategies as st
 import pytest
@@ -28,8 +29,14 @@ _PACKAGE_JSON_PATH = os.path.join(_CLIENT_DIR, "package.json")
 _npm_package_name_st = st.from_regex(r"[a-z][a-z0-9\-]{0,20}", fullmatch=True)
 
 # 语义化版本号策略
+
+
+def _semver(major: int, minor: int, patch: int) -> str:
+    return f"{major}.{minor}.{patch}"
+
+
 _semver_st = st.builds(
-    lambda major, minor, patch: f"{major}.{minor}.{patch}",
+    _semver,
     major=st.integers(min_value=0, max_value=99),
     minor=st.integers(min_value=0, max_value=99),
     patch=st.integers(min_value=0, max_value=99),
@@ -98,7 +105,7 @@ _package_json_st = st.fixed_dictionaries(
 @settings(max_examples=100, deadline=60_000)
 @given(package_json=_package_json_st)
 def test_bun_install_does_not_modify_package_json(
-    package_json: dict,
+    package_json: dict[str, Any],
 ) -> None:
     """验证 bun install 不修改 package.json 的内容。
 
@@ -176,10 +183,18 @@ _agents_md_line_st = st.one_of(
 )
 
 # 完整 AGENTS.md 内容策略：至少包含 1 行后端命令和 1 行前端命令
+
+
+def _join_agents_lines(
+    backend_lines: list[str],
+    frontend_lines: list[str],
+    other_lines: list[str],
+) -> str:
+    return "\n".join(backend_lines + frontend_lines + other_lines)
+
+
 _agents_md_content_st = st.builds(
-    lambda backend_lines, frontend_lines, other_lines: "\n".join(
-        backend_lines + frontend_lines + other_lines
-    ),
+    _join_agents_lines,
     backend_lines=st.lists(
         _backend_command_st.map(lambda cmd: f"- `{cmd}`"), min_size=1, max_size=5
     ),

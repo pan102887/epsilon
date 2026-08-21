@@ -4,29 +4,35 @@ import logging
 
 import pytest
 
-from domain.chat.context import AssistantMessage, ToolMessage, UserMessage
+from domain.chat.context import (
+    AssistantMessage,
+    BaseMessage,
+    SystemMessage,
+    ToolMessage,
+    UserMessage,
+)
 from domain.model_access.value_objects import ToolCallRequest
 from infrastructure.chat.sliding_window_compaction_adapter import (
     SlidingWindowCompactionAdapter,
 )
 
 
-def _system_msg(content="sys"):
+def _system_msg(content: str = "sys") -> SystemMessage:
     """快捷创建 system 消息。"""
-    from domain.chat.context import SystemMessage
-
     return SystemMessage(content=content)
 
 
-def _user_msg(content="u"):
+def _user_msg(content: str = "u") -> UserMessage:
     return UserMessage(content=content)
 
 
-def _assistant_msg(content="a"):
+def _assistant_msg(content: str = "a") -> AssistantMessage:
     return AssistantMessage(content=content)
 
 
-def _assistant_with_tools(tool_call_ids: list[str], content=""):
+def _assistant_with_tools(
+    tool_call_ids: list[str], content: str = ""
+) -> AssistantMessage:
     """创建带 tool_calls 的 AssistantMessage。"""
     tool_calls = [
         ToolCallRequest(id=tc_id, name=f"tool_{tc_id}", arguments="{}") for tc_id in tool_call_ids
@@ -34,7 +40,7 @@ def _assistant_with_tools(tool_call_ids: list[str], content=""):
     return AssistantMessage(content=content, tool_calls=tool_calls)
 
 
-def _tool_msg(tool_call_id: str, content="result"):
+def _tool_msg(tool_call_id: str, content: str = "result") -> ToolMessage:
     return ToolMessage(content=content, tool_name=f"tool_{tool_call_id}", tool_call_id=tool_call_id)
 
 
@@ -43,7 +49,7 @@ class TestPairingAwareTrimming:
 
     def test_window_boundary_splits_pair_drops_whole_group(self):
         """窗口边界恰好切在 assistant 与 ToolMessage 之间 → 整组丢弃。"""
-        messages = [
+        messages: list[BaseMessage] = [
             _user_msg("old"),
             _assistant_with_tools(["tc1"]),
             _tool_msg("tc1"),
@@ -60,7 +66,7 @@ class TestPairingAwareTrimming:
 
     def test_three_tool_calls_one_outside_window_drops_group(self):
         """assistant 含 3 id，1 条 ToolMessage 被配额挤出 → 整组丢弃。"""
-        messages = [
+        messages: list[BaseMessage] = [
             _assistant_with_tools(["a", "b", "c"]),
             _tool_msg("a"),
             _tool_msg("b"),
@@ -87,7 +93,7 @@ class TestPairingAwareTrimming:
 
     def test_chained_groups_recent_kept_older_dropped(self):
         """多组串联：最近完整组保留，上一组半组丢弃。"""
-        messages = [
+        messages: list[BaseMessage] = [
             _assistant_with_tools(["old1"]),
             _tool_msg("old1"),
             _assistant_with_tools(["new1", "new2"]),
@@ -106,7 +112,7 @@ class TestPairingAwareTrimming:
 
     def test_no_tool_messages_falls_back_to_v3_literal(self):
         """无 ToolMessage 时退化为 v3 逻辑。"""
-        messages = [
+        messages: list[BaseMessage] = [
             _system_msg(),
             _user_msg("u1"),
             _assistant_msg("a1"),
@@ -123,7 +129,7 @@ class TestPairingAwareTrimming:
 
     def test_system_messages_fully_preserved(self):
         """system 消息全保留。"""
-        messages = [
+        messages: list[BaseMessage] = [
             _system_msg("sys1"),
             _system_msg("sys2"),
             _user_msg("u1"),
@@ -142,9 +148,11 @@ class TestPairingAwareTrimming:
         adapter = SlidingWindowCompactionAdapter(max_messages=5)
         assert adapter.compact_messages([]) == []
 
-    def test_logger_debug_records_dropped_count(self, caplog):
+    def test_logger_debug_records_dropped_count(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """丢弃时 logger.debug 记录信息。"""
-        messages = [
+        messages: list[BaseMessage] = [
             _assistant_with_tools(["tc1"]),
             _tool_msg("tc1"),
             _user_msg("recent"),
@@ -159,7 +167,7 @@ class TestPairingAwareTrimming:
         """compact() 异步入口返回 ContextCompactionResult。"""
         from domain.chat.value_objects import ContextCompactionResult
 
-        messages = [_user_msg("u")]
+        messages: list[BaseMessage] = [_user_msg("u")]
         adapter = SlidingWindowCompactionAdapter(max_messages=5)
         result = await adapter.compact(messages)
         assert isinstance(result, ContextCompactionResult)
