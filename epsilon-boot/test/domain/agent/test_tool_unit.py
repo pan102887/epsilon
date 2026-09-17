@@ -6,6 +6,7 @@
 
 import json
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -234,6 +235,26 @@ class TestToolRegistryExecuteDelegation:
             await registry.execute(request)
         assert exc_info.value.tool_name == "strict"
         assert len(exc_info.value.errors) > 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "arguments",
+        ["null", "42", "1.5", "true", "false", '"hello"', '""', "[]", "[1]", '[["x", 1]]'],
+    )
+    async def test_execute_rejects_non_object_arguments(self, arguments: str) -> None:
+        """拒绝所有非对象顶层值，包括可被 dict 转换的数组，且不执行工具。"""
+        execute_fn = AsyncMock(return_value="unexpected")
+        tool = FakeTool(execute_fn=execute_fn)
+        registry = ToolRegistry()
+        registry.register(tool)
+        request = ToolCallRequest(id="call_non_object", name=tool.name, arguments=arguments)
+
+        with pytest.raises(ToolParameterValidationError) as exc_info:
+            await registry.execute(request)
+
+        assert exc_info.value.tool_name == tool.name
+        assert exc_info.value.errors == ["工具参数顶层必须是 JSON 对象"]
+        execute_fn.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_execute_wraps_unexpected_exception_from_tool(self) -> None:
