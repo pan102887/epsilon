@@ -2,6 +2,8 @@
 
 ## 内置工具一览
 
+工具调用参数统一经过 `Tool.run()` 的 JSON 解析、顶层对象检查、类型转换和 JSON Schema 校验。顶层必须是 JSON 对象；`null`、数字、布尔值、字符串和数组（包括可转换为字典的键值对数组）均抛出 `ToolParameterValidationError`，不会进入工具执行。Agent 将校验错误回填为工具消息，供模型后续修正；该异常不计入工具熔断失败统计。
+
 所有工具实现位于 `epsilon-boot/src/infrastructure/tools/`，均继承 `domain/agent/tools.py` 中的 `Tool` ABC。文件系统与 exec 类工具统一接受 `Workspace` 注入，**不直接**访问宿主 `os` / `pathlib`。
 
 > **工具返回类型**：`Tool.execute()` 已从返回 `str` 升级为返回领域 frozen 值对象 `ToolExecutionResult`（`content: str` + `metadata: dict[str, Any]`，见 [domain-model.md](domain-model.md)）。`content` 等价于原字符串、完整回灌 LLM；`metadata` 为工具特有的结构化 trace 元数据，透传到 `ToolCallTrace.metadata`（见 [architecture.md](architecture.md)），不影响 LLM 可见内容。各工具的 `metadata` 字段概览：

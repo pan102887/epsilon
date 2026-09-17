@@ -15,7 +15,7 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from common.json_schema_params import cast_json_schema_params, validate_json_schema_params
 from domain.agent.exceptions import (
@@ -207,7 +207,7 @@ class Tool(ABC):
         """处理 ToolCallRequest，执行完整的工具调用流水线。
 
         流水线步骤：
-        1. 将 request.arguments（JSON 字符串）解析为 dict
+        1. 解析 request.arguments（JSON 字符串），并确认顶层为对象
         2. cast_params 类型转换
         3. validate_params 参数校验
         4. execute 执行工具逻辑
@@ -231,8 +231,15 @@ class Tool(ABC):
                 errors=[f"JSON 解析失败: {e}"],
             ) from e
 
+        # 顶层必须是对象，避免 dict() 将数组隐式转成参数或抛出非校验异常。
+        if not isinstance(params, dict):
+            raise ToolParameterValidationError(
+                tool_name=self.name,
+                errors=["工具参数顶层必须是 JSON 对象"],
+            )
+
         # 2. 类型转换
-        params = self.cast_params(params)
+        params = self.cast_params(cast(dict[str, object], params))
 
         # 3. 参数校验
         errors = self.validate_params(params)
